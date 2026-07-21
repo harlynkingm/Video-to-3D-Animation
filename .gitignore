@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Session data (user-generated, not part of repo)
+/data/
+
+# Shared model files (download separately, see README)
+shared_data/*.npz
+shared_data/*.pt
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Release assets (for Google Drive upload, not part of repo)
+release_assets/
+
+# Runtime
+*.lock
+temp/
+
+# Local files (not for release)
+release_assets.tar.gz
+/video_optimizer
+*.png
