@@ -24,3 +24,37 @@ channel = "pozzettiandrea"
 [environments.fbx-export]
 features = ["fbx-export"]
 no-default-feature = true
+
+# main: the shared environment for most pipeline stages (GVHMR, SAM 3.1, etc.).
+# Trimmed relative to ComfyUI-MotionCapture's own declared deps: no hydra-core/
+# hydra-zen/hydra-colorlog (never actually imported in its code), no
+# torch_scatter/dpvo_cuda (DPVO-only, and DPVO is skipped for this project's
+# static-camera-only scope), no pycolmap (moving-camera VO only), no pytorch3d
+# (replaced by a portable pure-PyTorch shim). See docs/ARCHITECTURE.md's GVHMR
+# implementation notes for the reasoning.
+[feature.main.dependencies]
+python = "3.13.*"
+
+[feature.main.pypi-dependencies]
+smplx = ">=0.1.28"
+timm = ">=0.9.0"
+einops = ">=0.6.0"
+roma = ">=1.3.0"
+trimesh = ">=3.20.0"
+scipy = "*"
+scikit-image = ">=0.19.0"
+opencv-python-headless = ">=4.8.0"
+safetensors = "*"
+huggingface-hub = ">=0.16.0"
+
+[feature.main.pypi-dependencies.torch]
+version = "==2.8.*"
+index = "https://download.pytorch.org/whl/cu128"
+
+[feature.main.pypi-dependencies.torchvision]
+version = "==0.23.*"
+index = "https://download.pytorch.org/whl/cu128"
+
+[environments.main]
+features = ["main"]
+no-default-feature = true
