@@ -24,6 +24,20 @@ FIELD_OBJECT_SHAPE_HINT = "object_shape_hint"
 
 PROGRESS_JSON_NAME = "progress.json"
 
+
+class StageName(enum.StrEnum):
+    STAGE_0_INGEST = "ingest"
+    STAGE_1_SEGMENT_AND_TRACK = "segment_and_track"
+    STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion"
+    STAGE_3_ESTIMATE_DEPTH = "estimate_depth"
+    STAGE_4_ESTIMATE_HANDS = "estimate_hands"
+    STAGE_5_RETARGET_HANDS = "retarget_hands"
+    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale"
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts"
+    STAGE_8_OPTIMIZE_HOI = "optimize_hoi"
+    STAGE_9_EXPORT_FBX = "export_fbx"
+
+
 class StageStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -75,7 +89,7 @@ class RunOutputs:
 @dataclass
 class ProgressRecord:
     run_id: str
-    run_dir: str
+    progress_dir: str
     input: RunInput
     scene: SceneInfo = field(default_factory=SceneInfo)
     stages: dict[str, StageRecord] = field(default_factory=dict)
@@ -84,7 +98,7 @@ class ProgressRecord:
 
     @property
     def path(self) -> Path:
-        return Path(self.run_dir) / PROGRESS_JSON_NAME
+        return Path(self.progress_dir) / PROGRESS_JSON_NAME
 
     def save(self) -> None:
         data = asdict(self)
@@ -93,8 +107,8 @@ class ProgressRecord:
         tmp_path.replace(self.path)  # atomic rename on the same filesystem
 
     @classmethod
-    def load(cls, run_dir: str | Path) -> ProgressRecord:
-        data = json.loads((Path(run_dir) / PROGRESS_JSON_NAME).read_text())
+    def load(cls, progress_dir: str | Path) -> ProgressRecord:
+        data = json.loads((Path(progress_dir) / PROGRESS_JSON_NAME).read_text())
         data[FIELD_INPUT] = RunInput(
             **{
                 **data[FIELD_INPUT],
@@ -109,16 +123,16 @@ class ProgressRecord:
         data[FIELD_OUTPUTS] = RunOutputs(**data[FIELD_OUTPUTS])
         return cls(**data)
 
-    def is_complete(self, stage_name: str) -> bool:
+    def is_complete(self, stage_name: StageName) -> bool:
         record = self.stages.get(stage_name)
         return record is not None and record.status == StageStatus.COMPLETE
 
-    def dependencies_met(self, stage_name: str) -> bool:
+    def dependencies_met(self, stage_name: StageName) -> bool:
         return all(self.is_complete(dep) for dep in self.stages[stage_name].depends_on)
 
     def mark_progress(
         self,
-        stage_name: str,
+        stage_name: StageName,
         status: StageStatus,
         outputs: dict[str, str] | None = None,
         error: str | None = None,
