@@ -1,0 +1,26 @@
+[workspace]
+authors = ["Max Harlynking <harlynkingm@gmail.com>"]
+channels = ["conda-forge", "pozzettiandrea"]
+name = "Video-to-3D-Animation"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+
+# fbx-export: the export_fbx pipeline stage. Isolated in its own environment
+# because bpy pins Python tightly to its own release, independent of the rest
+# of the ML stack. Sourced from the pozzettiandrea conda channel (not PyPI's
+# bpy package) because it's already proven working on Python 3.13 via
+# ComfyUI Desktop's own pixi-managed environments on this machine.
+[feature.fbx-export.dependencies]
+python = "3.13.*"
+
+[feature.fbx-export.dependencies.bpy]
+version = "*"
+channel = "pozzettiandrea"
+
+[environments.fbx-export]
+features = ["fbx-export"]
+no-default-feature = true

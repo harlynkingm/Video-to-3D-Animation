@@ -9,6 +9,9 @@ build/
 # Session data (user-generated, not part of repo)
 /data/
 
+# Planning docs
+/docs/
+
 # Shared model files (download separately, see README)
 shared_data/*.npz
 shared_data/*.pt
@@ -34,3 +37,7 @@ temp/
 release_assets.tar.gz
 /video_optimizer
 *.png
+
+# pixi environments
+.pixi/*
+!.pixi/config.toml
