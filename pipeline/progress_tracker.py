@@ -26,8 +26,8 @@ PROGRESS_JSON_NAME = "progress.json"
 
 
 class StageName(enum.StrEnum):
-    STAGE_0_INGEST = "ingest"
-    STAGE_1_SEGMENT_AND_TRACK = "segment_and_track"
+    STAGE_0_INGEST_VIDEO = "ingest_video"
+    STAGE_1_MASK_AND_TRACK = "mask_and_track"
     STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion"
     STAGE_3_ESTIMATE_DEPTH = "estimate_depth"
     STAGE_4_ESTIMATE_HANDS = "estimate_hands"

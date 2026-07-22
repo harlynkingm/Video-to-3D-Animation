@@ -5,6 +5,7 @@ produces a very different field of view on a phone sensor than on a
 full-frame camera. Sensor width disambiguates that.
 """
 
+from __future__ import annotations
 
 def compute_intrinsics_matrix(
     focal_length_mm: float,

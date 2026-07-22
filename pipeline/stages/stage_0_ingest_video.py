@@ -4,6 +4,8 @@ The only stage with no dependencies -- everything else in the pipeline builds
 on the frames and scene info this produces.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
 
 import cv2
@@ -59,4 +61,4 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    cli_entrypoint(run, stage_name=StageName.STAGE_0_INGEST)
+    cli_entrypoint(run, stage_name=StageName.STAGE_0_INGEST_VIDEO)

@@ -12,6 +12,9 @@ build/
 # Planning docs
 /docs/
 
+# Model checkpoints (download separately, see docs/SETUP_WINDOWS.md)
+/checkpoints/
+
 # Shared model files (download separately, see README)
 shared_data/*.npz
 shared_data/*.pt

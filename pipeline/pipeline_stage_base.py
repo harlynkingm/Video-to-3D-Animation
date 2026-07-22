@@ -10,8 +10,10 @@ A stage file should look like:
         return {"some_output": "path/to/it"}
 
     if __name__ == "__main__":
-        cli_entrypoint(run, stage_name=StageName.STAGE_0_INGEST)
+        cli_entrypoint(run, stage_name=StageName.STAGE_0_INGEST_VIDEO)
 """
+
+from __future__ import annotations
 
 import argparse
 import sys
