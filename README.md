@@ -53,11 +53,9 @@ pixi run -e main python scripts/convert_hamer_checkpoint.py path/to/hamer_demo_d
 
 ## Processing a Video
 
-The pipeline shares state through a single `progress.json` file per run (a "run" being one video processed start to finish). Each stage checks its dependencies already completed before running, and records its own outputs when done. If a stage crashes or you stop partway through, rerunning the same command picks up where it left off instead of starting over.
+The pipeline shares state through a single `progress.json` file which tracks the progress of a single run. If a stage crashes or you stop partway through, rerunning the same command picks up where it left off instead of starting over.
 
 **Today, running a video end to end means two steps: create a run, then run each implemented stage in sequence.** This will change in the future.
-
-A single one-shot command is planned (see the [Pipeline](#pipeline) section), but until then, this is the full process:
 
 **Create a run:**
 
@@ -71,12 +69,13 @@ pixi run -e main python -m pipeline.create_run \
   --sensor-width-mm 36
 ```
 
-All available options:
+<details>
+<summary>All available run options</summary>
 
 | Option | Required | Default | Description |
 |---|---|---|---|
 | `--progress-dir` | **Yes** | | Directory to create for this run's state and outputs. |
-| `--video-path` | **Yes** | | Path to the source video file. |
+| `--video-path` | **Yes** | | Path to the source video file (MP4, MOV, MPEG, FLV, or WMV). |
 | `--human-prompt` | **Yes** | | Text description of the person to track, e.g. `"a tennis player"`. |
 | `--focal-length-mm` | **Yes** | | Camera focal length in mm, used to build the intrinsics matrix stage 0 requires. |
 | `--sensor-width-mm` | **Yes** | | Camera sensor width in mm, used alongside focal length to build the intrinsics matrix. |
@@ -89,6 +88,7 @@ All available options:
 | `--dump-depth-preview` | No | off | Stage 3 also writes a colored `.ply` point cloud importable into Blender for visual spot-checking. See [stage 3](#3-estimate-depth) below. |
 | `--dump-hands-preview` | No | off | Stage 4 also writes a `.bvh` hand-skeleton animation (both hands, bones only) importable into Blender for visual spot-checking. See [stage 4](#4-estimate-hands) below. |
 | `--dump-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#6-align-scene-scale) below. |
+</details>
 
 **Run each implemented stage, in order**, pointing every one at the same `--progress-dir`:
 
@@ -101,11 +101,12 @@ pixi run -e main python -m pipeline.stages.stage_4_estimate_hands --progress-dir
 pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-dir runs/my_clip
 ```
 
-Stage 5 (hand retargeting) isn't implemented yet, and stage 6 doesn't depend on it, so the current runnable sequence skips from stage 4 to stage 6. See [Pipeline](#pipeline) below for what each stage does.
-
 ## Pipeline
 
 The pipeline is a sequence of stages, each a separate script. This section documents each one individually: what it does, how to run just that stage on its own, and any optional outputs it can produce.
+
+<details>
+<summary>Pipeline stage input/output details</summary>
 
 | Stage | Script | Input | Output |
 |---|---|---|---|
@@ -119,6 +120,8 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 7. Annotate contacts *(not yet implemented)* | `stage_7_annotate_contacts` | SMPL-X sequence <br> object proxy shape | per-frame hand↔object contact points |
 | 8. Optimize HOI *(not yet implemented)* | `stage_8_optimize_hoi` | contact points <br> object proxy shape | refined SMPL-X sequence <br> per-frame object 6DoF pose |
 | 9. Export FBX *(not yet implemented)* | `stage_9_export_fbx` | refined SMPL-X sequence <br> object pose | final `.fbx` |
+
+</details>
 
 **Every stage skips itself if `progress.json` already shows it as complete.** Re-running the same command after a successful run just prints `already complete, skipping` rather than redoing the work. Pass `--force` to re-run a stage anyway.
 
