@@ -47,6 +47,7 @@ opencv-python-headless = ">=4.8.0"
 safetensors = "*"
 huggingface-hub = ">=0.16.0"
 transformers = ">=4.40.0"
+pytest = ">=7.0"
 
 [feature.main.pypi-dependencies.torch]
 version = "==2.8.*"
