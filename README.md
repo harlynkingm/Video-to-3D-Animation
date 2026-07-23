@@ -11,33 +11,29 @@ Uses SAM3, GVHMR, DepthAnything, and 4DHOI to convert a single monocular video t
   pixi install
   ```
 
-  This sets up two environments, each pinned to **Python 3.13**:
-  - `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
-  - `fbx-export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
-
-  Run any script inside one of these with `pixi run -e <environment> python ...` (e.g. `pixi run -e main python -m pipeline.stages.stage_0_ingest_video ...`).
+Run any script from this project with `pixi run -e <environment> python ...`
 
 ## Setup
 
 ### 1. Download 3D body models
 
-**These three steps must be done by hand, no matter how you setup the rest.** SMPL-X and MANO sit behind free registration and license acceptance on their respective sites, and their files cannot be redistributed or scripted around. The checkpoint download script in step 2 deliberately does **not** fetch them (it only reminds you whether they're in place). If you skip this section, stages that require a body or hand model will fail with a missing-file error.
+**These three steps must be done by hand.** SMPL-X and MANO are projects that sit behind free registration and license acceptance on their respective sites, and cannot be auto-downloaded. If you skip this section, stages that require a body or hand model will fail.
 
-1. **SMPL-X**: register at [smpl-x.is.tue.mpg.de](https://smpl-x.is.tue.mpg.de) (free, academic license), download the model files, and place `SMPLX_NEUTRAL.npz` at `body_models/smplx/SMPLX_NEUTRAL.npz` (gitignored, same as `checkpoints/`).
-2. **MANO** (hand model, required by stage 4): register at [mano.is.tue.mpg.de](https://mano.is.tue.mpg.de) (free), download the models zip file, and place `MANO_RIGHT.pkl` at `body_models/mano/MANO_RIGHT.pkl`.
-3. **Blender addon**: install [`jtesch/smplx_blender_addon`](https://gitlab.tuebingen.mpg.de/jtesch/smplx_blender_addon) from GitLab (Blender 4.2+, via the Extensions system). Use this one specifically, not the older archived `Meshcapade/SMPL_blender_addon`.
+1. **SMPL-X**: register at [smpl-x.is.tue.mpg.de](https://smpl-x.is.tue.mpg.de) (free, academic license), download the model files, and place `SMPLX_NEUTRAL.npz` in `body_models/smplx/SMPLX_NEUTRAL.npz`
+2. **MANO** (hand model, required by stage 4): register at [mano.is.tue.mpg.de](https://mano.is.tue.mpg.de) (free), download the models zip file, and place `MANO_RIGHT.pkl` in `body_models/mano/MANO_RIGHT.pkl`
+3. **Blender addon**: install [`jtesch/smplx_blender_addon`](https://gitlab.tuebingen.mpg.de/jtesch/smplx_blender_addon) from GitLab (Blender 4.2+)
 
 ### 2. Download model checkpoints
 
-After `pixi install` and downloading the body models above, the quickest way to get every checkpoint is:
+After `pixi install` and downloading the body models, the quickest way to get every checkpoint is:
 
 ```bash
 bash scripts/download_checkpoints.sh
 ```
 
-This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts the HaMeR checkpoint to a safetensors file, placing everything in `checkpoints/` (gitignored). It skips files you already have and reminds you about the registration-gated body models that it can't fetch. Depth-Anything-3 isn't included, since it auto-downloads into `checkpoints/depth_anything_3/` when you run the pipeline for the first time.
+This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts the HaMeR checkpoint to a safetensors file, placing everything in `checkpoints/`. It skips files you already have and reminds you about the registration-gated body models that it can't fetch, if you don't have them downloaded.
 
-**Manual alternative:** If you want, you can download each file into `checkpoints/` yourself:
+**Manual alternative:** If you want, you can download each file into `checkpoints/` yourself.
 
 | File | Source | Size |
 |---|---|---|
@@ -47,7 +43,7 @@ This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts t
 | `gvhmr.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~163MB |
 | `hamer.safetensors` (+ `mano_mean_params.npz`) | converted from the HaMeR tarball, see below | ~2.6GB |
 
-None of these require registration. HaMeR ships a PyTorch-Lightning `.ckpt` inside a ~6GB tarball. Download [hamer_demo_data.tar.gz](https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz), then convert it using the following script (this writes both `checkpoints/hamer.safetensors` and `checkpoints/mano_mean_params.npz`):
+HaMeR ships a PyTorch-Lightning `.ckpt` inside a ~6GB tarball. Download [hamer_demo_data.tar.gz](https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz) then convert it using the following script:
 
 ```bash
 pixi run -e main python scripts/convert_hamer_checkpoint.py path/to/hamer_demo_data.tar.gz
@@ -213,6 +209,12 @@ pixi run -e main python -m pytest tests/
 ```
 
 Stage tests require the real SAM 3.1/GVHMR checkpoints and a CUDA GPU (see [Setup](#setup)). If either are missing, tests are skipped, not failed.
+
+## Pixi Details
+
+Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
+- `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
+- `fbx-export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
 
 ## Licensing
 

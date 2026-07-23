@@ -13,10 +13,12 @@ build/
 /docs/
 
 # Model checkpoints (download separately, see README)
-/checkpoints/
+checkpoints/*
+!checkpoints/README.md
 
 # SMPL-X body model files (registration required, see README)
-/body_models/
+body_models/*
+!body_models/README.md
 
 # Shared model files (download separately, see README)
 shared_data/*.npz
