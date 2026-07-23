@@ -153,7 +153,7 @@ pixi run -e main python -m pipeline.stages.stage_1_mask_and_track --progress-dir
 SAM 3.1 tracks the human (and object, if `--object-prompt` was given). Also resolves which frame to use as an object "anchor" frame, which has the clearest object view. Uses `--anchor-frame-override` if you specify one when creating the run.
 
 <details>
-<summary><strong>Optional: JPEG Mask Output</strong><summary>
+<summary><strong>Optional: JPEG Mask Output</strong></summary>
 
 Use `--dump-mask-previews` when creating the run to also have this stage write `runs/my_clip/masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white mask images at the video's native resolution. You can scroll through these images on disk to confirm SAM 3.1 tracked the right thing.
 </details>
@@ -167,7 +167,7 @@ pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progr
 GVHMR turns the human mask into a 3D SMPL-X body pose animation. Works at any source video resolution, however larger frames mean more disk space and slightly slower per-frame I/O.
 
 <details>
-<summary><strong>Optional: 3D Motion Preview Output</strong><summary>
+<summary><strong>Optional: 3D Motion Preview Output</strong></summary>
 
 Use `--dump-motion-preview` when creating the run to also have this stage write `runs/my_clip/motion/blender_preview.npz` This NPZ is importable in Blender via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) if the addon is installed (see [Setup](#setup)). **For accurate preview,** when the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
 </details>
@@ -181,7 +181,7 @@ pixi run -e main python -m pipeline.stages.stage_3_estimate_depth --progress-dir
 Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on a single anchor frame, not the whole clip. This produces a depth map in real-world meters.
 
 <details>
-<summary><strong>Optional: PLY Point Cloud Output</strong><summary>
+<summary><strong>Optional: PLY Point Cloud Output</strong></summary>
 
 Use `--dump-depth-preview` when creating the run to also have this stage write `runs/my_clip/depth/anchor_pointcloud.ply`, a colored point cloud estimating the depth in the image. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)**
 </details>
@@ -218,7 +218,7 @@ HaMeR estimates per-frame MANO hand pose for both hands. It finds the person fro
 This stage requires the MANO body model (see [Setup](#setup)).
 
 <details>
-<summary><strong>Optional: Hand Skeleton Preview</strong><summary>
+<summary><strong>Optional: Hand Skeleton Preview</strong></summary>
 
 Use `--dump-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, animating over the clip, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 </details>
@@ -232,7 +232,7 @@ pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-
 The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage 2](#stage-2-estimate-human-motion)) are both represented in real-world meters, but disagree on scale. This stage reconciles them at the anchor frame by matching the SMPL-X body pose against depth values within the SAM-3 human mask. The result is written to `runs/my_clip/scale/scene_scale.json`
 
 <details>
-<summary><strong>Optional: Aligned Scene Preview</strong><summary>
+<summary><strong>Optional: Aligned Scene Preview</strong></summary>
 
 Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
 </details>
