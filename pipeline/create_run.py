@@ -20,6 +20,15 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     StageName.STAGE_1_MASK_AND_TRACK: [StageName.STAGE_0_INGEST_VIDEO],
     StageName.STAGE_2_ESTIMATE_HUMAN_MOTION: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
     StageName.STAGE_3_ESTIMATE_DEPTH: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
+    # align_scene_scale's eventual DAG position routes its SMPL-X input through
+    # retarget_hands, but scene *scale* only needs the body's overall size,
+    # which the body-only estimate_human_motion already gives -- so it depends
+    # on that directly and does not wait on the (not-yet-built) hand stages.
+    StageName.STAGE_6_ALIGN_SCENE_SCALE: [
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+        StageName.STAGE_3_ESTIMATE_DEPTH,
+    ],
 }
 
 
@@ -60,6 +69,8 @@ def main() -> None:
                          help="Stage 2 also writes an AMASS .npz importable into Blender for visual spot-checking")
     parser.add_argument("--dump-depth-preview", action="store_true",
                          help="Stage 3 also writes a colored .ply point cloud importable into Blender for visual spot-checking")
+    parser.add_argument("--dump-scene-preview", action="store_true",
+                         help="Stage 6 also writes a .ply combining human, object, and scene in one aligned space for visual spot-checking")
     args = parser.parse_args()
 
     run_input = RunInput(
@@ -73,6 +84,7 @@ def main() -> None:
         dump_mask_previews=args.dump_mask_previews,
         dump_motion_preview=args.dump_motion_preview,
         dump_depth_preview=args.dump_depth_preview,
+        dump_scene_preview=args.dump_scene_preview,
     )
     progress = create_run(Path(args.progress_dir), run_input, run_id=args.run_id)
     print(f"Created run {progress.run_id!r} at {args.progress_dir}")

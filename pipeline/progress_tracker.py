@@ -64,6 +64,7 @@ class RunInput:
     dump_mask_previews: bool = False
     dump_motion_preview: bool = False
     dump_depth_preview: bool = False
+    dump_scene_preview: bool = False
 
 
 @dataclass

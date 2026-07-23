@@ -10,7 +10,7 @@ from pathlib import Path
 
 import cv2
 
-from ..camera_info_helpers import compute_intrinsics_matrix
+from ..helpers.camera_info_helpers import compute_intrinsics_matrix
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import StageName, ProgressRecord
 

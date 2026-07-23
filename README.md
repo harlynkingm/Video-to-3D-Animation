@@ -76,6 +76,7 @@ All available options:
 | `--dump-mask-previews` | No | off | Stage 1 also writes black/white JPEG mask previews for visual spot-checking. See [stage 1](#1-mask-and-track) below. |
 | `--dump-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#2-estimate-human-motion) below. |
 | `--dump-depth-preview` | No | off | Stage 3 also writes a colored `.ply` point cloud importable into Blender for visual spot-checking. See [stage 3](#3-estimate-depth) below. |
+| `--dump-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#6-align-scene-scale) below. |
 
 **Run each implemented stage, in order**, pointing every one at the same `--progress-dir`:
 
@@ -84,9 +85,10 @@ pixi run -e main python -m pipeline.stages.stage_0_ingest_video --progress-dir r
 pixi run -e main python -m pipeline.stages.stage_1_mask_and_track --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_3_estimate_depth --progress-dir runs/my_clip
+pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-dir runs/my_clip
 ```
 
-That's everything implemented so far. See [Pipeline](#pipeline) below for what each stage does.
+Stages 4 and 5 (hands) aren't implemented yet, and stage 6 doesn't depend on them, so the current runnable sequence skips straight from stage 3 to stage 6. See [Pipeline](#pipeline) below for what each stage does.
 
 ## Pipeline
 
@@ -100,7 +102,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 3. Estimate depth | `stage_3_estimate_depth` | `frames/*.jpg` (anchor frame), anchor frame index | `depth/anchor_depth.npy` (metric depth, meters), `depth/anchor_pointcloud.ply` (optional) |
 | 4. Estimate hands *(not yet implemented)* | `stage_4_estimate_hands` | `frames/*.jpg` | per-frame hand pose params |
 | 5. Retarget hands *(not yet implemented)* | `stage_5_retarget_hands` | `motion/human_motion.pt`, hand pose params | unified per-frame SMPL-X body+hands sequence |
-| 6. Align scene scale *(not yet implemented)* | `stage_6_align_scene_scale` | depth map, SMPL-X sequence, `masks/object.pt` | metric scale factor, object proxy shape (box/sphere) |
+| 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy`, `motion/human_motion.pt`, `masks/human.pt` | `scale/scene_scale.json` (metric scale + translation reconciling depth to the SMPL-X human). Object proxy shape (box/sphere) is planned here too but not yet implemented. |
 | 7. Annotate contacts *(not yet implemented)* | `stage_7_annotate_contacts` | SMPL-X sequence, object proxy shape | per-frame hand↔object contact points |
 | 8. Optimize HOI *(not yet implemented)* | `stage_8_optimize_hoi` | contact points, object proxy shape | refined SMPL-X sequence, per-frame object 6DoF pose |
 | 9. Export FBX *(not yet implemented)* | `stage_9_export_fbx` | refined SMPL-X sequence, object pose | final `.fbx` |
@@ -161,9 +163,19 @@ Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on the anchor frame resolved in s
 11. Go back to Geometry Node Editor
 12. Set Material of 'Set Material' Node to the material you just created. Color will appear! (Must be in Material Preview or Rendered mode)
 
-### 4–9. Hands, scene scale, contacts, optimization, FBX export
+### 6. Align scene scale
 
-Not yet implemented. These will estimate per-frame hand pose, align everything to real-world metric scale, detect and score hand-object contact, refine the full motion against those contacts, and finally export an animated FBX. Each will get its own subsection here once it exists, following the same pattern as the stages above.
+```bash
+pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-dir runs/my_clip
+```
+
+The depth map ([stage 3](#3-estimate-depth)) and the SMPL-X human body ([stage 2](#2-estimate-human-motion)) are both nominally in real-world meters, but on real footage they disagree by a systematic factor. This stage fits the single scale + translation that reconciles them at the anchor frame by matching the SMPL-X body's visible surface against the depth values under the human mask. The result is written to `runs/my_clip/scale/scene_scale.json` and lets any depth-derived geometry be placed correctly in the human's metric space.
+
+**Optional: Aligned Scene Preview.** Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit in Blender: the **green** SMPL-X body mesh, the **red** tracked object, and the **RGB** depth scene. Import and enable vertex colors the same way as the [stage 3 preview](#3-estimate-depth) above.
+
+### 4, 5, 7, 8, 9. Hands, contacts, optimization, FBX export
+
+Not yet implemented. These will estimate per-frame hand pose, retarget it onto the body, detect and score hand-object contact, refine the full motion against those contacts, and finally export an animated FBX. Each will get its own subsection here once it exists, following the same pattern as the stages above.
 
 ## Testing
 

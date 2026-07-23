@@ -19,6 +19,7 @@ import numpy as np
 from ..adapters.depth_anything3_adapter import DepthAnything3Adapter, KEY_DEPTH, KEY_SKY
 from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unproject_depth_to_points
 from ..pipeline_stage_base import cli_entrypoint
+from ..helpers.ply_export_helper import write_colored_ply
 from ..progress_tracker import ProgressRecord, StageName
 
 # stage_0_ingest_video.py's own output key, consumed here.
@@ -46,38 +47,21 @@ def _dump_pointcloud_preview(
     preview). Excludes sky pixels (set to max depth by the model) so they
     don't dominate the point cloud as a distracting dome.
 
-    Points are unprojected in the standard computer-vision camera convention
-    (X right, Y down, Z forward) but written out rotated into Blender's Z-up
-    world convention (X right, Y forward, Z up -- a fixed -90 degree rotation
-    about X) so the cloud imports upright with no manual rotation needed.
-    This rotation is specific to this preview file; `anchor_depth.npy` (this
-    stage's real output) stays in plain camera-space coordinates for
-    `align_scene_scale`'s future math.
+    Points are unprojected in camera space; `write_colored_ply` rotates them
+    into Blender's Z-up convention so the cloud imports upright. This rotation
+    is specific to the preview file; `anchor_depth.npy` (this stage's real
+    output) stays in plain camera-space coordinates for `align_scene_scale`.
     """
     depth_hw = depth.shape
     K_scaled = scale_intrinsics_to_resolution(K, native_hw, depth_hw)
     points = unproject_depth_to_points(depth, K_scaled)
-    points = np.stack([points[:, 0], points[:, 2], -points[:, 1]], axis=-1)
 
     anchor_bgr = cv2.imread(str(anchor_frame_path))
     anchor_rgb = cv2.cvtColor(anchor_bgr, cv2.COLOR_BGR2RGB)
-    colors = cv2.resize(anchor_rgb, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_LINEAR)
+    colors = cv2.resize(anchor_rgb, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_LINEAR).reshape(-1, 3)
 
     valid = ~sky.reshape(-1) if sky is not None else np.ones(points.shape[0], dtype=bool)
-    points = points[valid]
-    colors = colors.reshape(-1, 3)[valid]
-
-    header = (
-        "ply\nformat ascii 1.0\n"
-        f"element vertex {points.shape[0]}\n"
-        "property float x\nproperty float y\nproperty float z\n"
-        "property uchar red\nproperty uchar green\nproperty uchar blue\n"
-        "end_header\n"
-    )
-    rows = np.hstack([points, colors.astype(np.float32)])
-    with open(out_path, "w") as f:
-        f.write(header)
-        np.savetxt(f, rows, fmt="%.4f %.4f %.4f %d %d %d")
+    write_colored_ply(points[valid], colors[valid], out_path)
 
 
 def run(progress: ProgressRecord) -> dict[str, str]:

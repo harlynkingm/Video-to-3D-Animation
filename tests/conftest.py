@@ -30,6 +30,7 @@ from pipeline.stages import (
     stage_1_mask_and_track,
     stage_2_estimate_human_motion,
     stage_3_estimate_depth,
+    stage_6_align_scene_scale,
 )
 
 TESTS_DIR = Path(__file__).parent
@@ -69,6 +70,7 @@ def progress(tmp_path_factory) -> ProgressRecord:
         dump_mask_previews=True,
         dump_motion_preview=True,
         dump_depth_preview=True,
+        dump_scene_preview=True,
     )
     return create_run(run_dir, run_input, run_id="test")
 
@@ -112,4 +114,16 @@ def stage_3_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 
     outputs = stage_3_estimate_depth.run(progress)
     progress.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
+    return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_6_result(
+    progress: ProgressRecord, stage_2_result: dict[str, str], stage_3_result: dict[str, str]
+) -> dict[str, str]:
+    if not stage_6_align_scene_scale.SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    outputs = stage_6_align_scene_scale.run(progress)
+    progress.mark_progress(StageName.STAGE_6_ALIGN_SCENE_SCALE, StageStatus.COMPLETE, outputs=outputs)
     return outputs
