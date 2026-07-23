@@ -63,6 +63,7 @@ class RunInput:
     anchor_frame_override: int | None = None
     dump_mask_previews: bool = False
     dump_motion_preview: bool = False
+    dump_depth_preview: bool = False
 
 
 @dataclass

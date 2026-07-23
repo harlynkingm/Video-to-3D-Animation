@@ -19,6 +19,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     StageName.STAGE_0_INGEST_VIDEO: [],
     StageName.STAGE_1_MASK_AND_TRACK: [StageName.STAGE_0_INGEST_VIDEO],
     StageName.STAGE_2_ESTIMATE_HUMAN_MOTION: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
+    StageName.STAGE_3_ESTIMATE_DEPTH: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
 }
 
 
@@ -57,6 +58,8 @@ def main() -> None:
                          help="Stage 1 also writes black/white JPEG mask previews for visual spot-checking")
     parser.add_argument("--dump-motion-preview", action="store_true",
                          help="Stage 2 also writes an AMASS .npz importable into Blender for visual spot-checking")
+    parser.add_argument("--dump-depth-preview", action="store_true",
+                         help="Stage 3 also writes a colored .ply point cloud importable into Blender for visual spot-checking")
     args = parser.parse_args()
 
     run_input = RunInput(
@@ -69,6 +72,7 @@ def main() -> None:
         anchor_frame_override=args.anchor_frame_override,
         dump_mask_previews=args.dump_mask_previews,
         dump_motion_preview=args.dump_motion_preview,
+        dump_depth_preview=args.dump_depth_preview,
     )
     progress = create_run(Path(args.progress_dir), run_input, run_id=args.run_id)
     print(f"Created run {progress.run_id!r} at {args.progress_dir}")

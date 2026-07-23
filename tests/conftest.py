@@ -11,7 +11,9 @@ per test function.
 Stage 1/2 need the real SAM 3.1/GVHMR checkpoints (gitignored, see README's
 Setup section) and a CUDA GPU -- fixtures that need them call `pytest.skip()`
 rather than failing when either is missing, so this suite still runs
-(partially) on a machine that hasn't set those up yet.
+(partially) on a machine that hasn't set those up yet. Stage 3's checkpoint
+auto-downloads on first use (see depth_anything3_adapter.py), so its fixture
+only gates on a CUDA GPU, not on the checkpoint already being present.
 """
 
 from __future__ import annotations
@@ -23,7 +25,12 @@ import torch
 
 from pipeline.create_run import create_run
 from pipeline.progress_tracker import ProgressRecord, RunInput, StageName, StageStatus
-from pipeline.stages import stage_0_ingest_video, stage_1_mask_and_track, stage_2_estimate_human_motion
+from pipeline.stages import (
+    stage_0_ingest_video,
+    stage_1_mask_and_track,
+    stage_2_estimate_human_motion,
+    stage_3_estimate_depth,
+)
 
 TESTS_DIR = Path(__file__).parent
 TEST_VIDEO_PATH = TESTS_DIR / "assets" / "tiny_tennis_clip.mp4"
@@ -61,6 +68,7 @@ def progress(tmp_path_factory) -> ProgressRecord:
         sensor_width_mm=SENSOR_WIDTH_MM,
         dump_mask_previews=True,
         dump_motion_preview=True,
+        dump_depth_preview=True,
     )
     return create_run(run_dir, run_input, run_id="test")
 
@@ -94,4 +102,14 @@ def stage_2_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 
     outputs = stage_2_estimate_human_motion.run(progress)
     progress.mark_progress(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.COMPLETE, outputs=outputs)
+    return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_3_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA GPU")
+
+    outputs = stage_3_estimate_depth.run(progress)
+    progress.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
     return outputs

@@ -36,6 +36,8 @@ Download these files and place them in a `checkpoints/` folder at the repo root 
 | `hmr2.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~2.7GB |
 | `gvhmr.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~163MB |
 
+Depth-Anything-3's checkpoint (`DA3METRIC-LARGE`, ~1.3GB) isn't in this table because it needs no manual step: it auto-downloads into `checkpoints/depth_anything_3/` the first time that stage runs.
+
 None of these require registration.
 
 ## Processing a Video
@@ -73,6 +75,7 @@ All available options:
 | `--anchor-frame-override` | No | auto-selected | Forces a specific frame index as the "anchor" frame instead of letting stage 1 pick the frame with the clearest view of the object. |
 | `--dump-mask-previews` | No | off | Stage 1 also writes black/white JPEG mask previews for visual spot-checking. See [stage 1](#1-mask-and-track) below. |
 | `--dump-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#2-estimate-human-motion) below. |
+| `--dump-depth-preview` | No | off | Stage 3 also writes a colored `.ply` point cloud importable into Blender for visual spot-checking. See [stage 3](#3-estimate-depth) below. |
 
 **Run each implemented stage, in order**, pointing every one at the same `--progress-dir`:
 
@@ -80,6 +83,7 @@ All available options:
 pixi run -e main python -m pipeline.stages.stage_0_ingest_video --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_1_mask_and_track --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progress-dir runs/my_clip
+pixi run -e main python -m pipeline.stages.stage_3_estimate_depth --progress-dir runs/my_clip
 ```
 
 That's everything implemented so far. See [Pipeline](#pipeline) below for what each stage does.
@@ -93,7 +97,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 0. Ingest video | `stage_0_ingest_video` | source video file | `frames/*.jpg`, camera intrinsics `K` (stored in `progress.json`) |
 | 1. Mask and track | `stage_1_mask_and_track` | `frames/*.jpg` | `masks/human.pt`, `masks/object.pt` (if object given), anchor frame index, `masks/preview_human/*.jpg` (optional), `masks/preview_object/*.jpg` (optional) |
 | 2. Estimate human motion | `stage_2_estimate_human_motion` | `frames/*.jpg`, `masks/human.pt` | `motion/human_motion.pt` (camera-space + world-grounded SMPL-X body pose), `motion/blender_preview.npz` (optional) |
-| 3. Estimate depth *(not yet implemented)* | `stage_3_estimate_depth` | `frames/*.jpg` (anchor frame) | depth map + confidence |
+| 3. Estimate depth | `stage_3_estimate_depth` | `frames/*.jpg` (anchor frame), anchor frame index | `depth/anchor_depth.npy` (metric depth, meters), `depth/anchor_pointcloud.ply` (optional) |
 | 4. Estimate hands *(not yet implemented)* | `stage_4_estimate_hands` | `frames/*.jpg` | per-frame hand pose params |
 | 5. Retarget hands *(not yet implemented)* | `stage_5_retarget_hands` | `motion/human_motion.pt`, hand pose params | unified per-frame SMPL-X body+hands sequence |
 | 6. Align scene scale *(not yet implemented)* | `stage_6_align_scene_scale` | depth map, SMPL-X sequence, `masks/object.pt` | metric scale factor, object proxy shape (box/sphere) |
@@ -133,9 +137,33 @@ GVHMR turns the tracked human mask into a full-clip SMPL-X body pose, producing 
 
 The NPZ is an AMASS-format file (hands and face are left flat/neutral, since GVHMR doesn't estimate those). This NPZ is importable via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) in Blender, once the addon is installed per [Setup](#setup). **Important (for accurate preview):** When the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
 
-### 3–9. Depth, hands, scene scale, contacts, optimization, FBX export
+### 3. Estimate depth
 
-Not yet implemented. These will estimate scene depth, per-frame hand pose, align everything to real-world metric scale, detect and score hand-object contact, refine the full motion against those contacts, and finally export an animated FBX. Each will get its own subsection here once it exists, following the same pattern as the stages above.
+```bash
+pixi run -e main python -m pipeline.stages.stage_3_estimate_depth --progress-dir runs/my_clip
+```
+
+Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on the anchor frame resolved in stage 1, not the whole clip. This produces a metric depth map in real-world meters. The Depth-Anything-3 checkpoint (~1.3GB) auto-downloads into `checkpoints/depth_anything_3/` the first time this stage runs, with no manual action needed.
+
+**Optional: PLY Point Cloud Output.** Use `--dump-depth-preview` when creating the run to also have this stage write `runs/my_clip/depth/anchor_pointcloud.ply`, a colored point cloud (meters) built by unprojecting the depth map using the anchor frame's own pixel colors. Sky pixels (if any are detected) are excluded. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)** with no addon needed.
+
+**Note:** Blender's default Solid shading mode doesn't display vertex colors. Here is how to get the vertex colors to appear in Blender, from the PLY file:
+1. Import the PLY
+2. Go to the Geometry Node editor
+3. Press 'New'
+4. Add > Mesh > Operations > Mesh to Points
+5. Add > Geometry > Material > Set Material 
+6. Connect these Nodes
+7. Open the Shader Editor
+8. Press 'New'
+9. Add > Input > Attributes > Col
+10. Connect 'Color' to 'Base Color' on 'Principled BSDF'
+11. Go back to Geometry Node Editor
+12. Set Material of 'Set Material' Node to the material you just created. Color will appear! (Must be in Material Preview or Rendered mode)
+
+### 4–9. Hands, scene scale, contacts, optimization, FBX export
+
+Not yet implemented. These will estimate per-frame hand pose, align everything to real-world metric scale, detect and score hand-object contact, refine the full motion against those contacts, and finally export an animated FBX. Each will get its own subsection here once it exists, following the same pattern as the stages above.
 
 ## Testing
 

@@ -36,6 +36,19 @@ no-default-feature = true
 python = "3.13.*"
 
 [feature.main.pypi-dependencies]
+# depth-anything-3 (below) unconditionally declares open3d as a PyPI
+# dependency, even though nothing in its actual source imports it (confirmed
+# by searching its real repo) -- but PyPI has no cp313 wheel for open3d at
+# all, which would otherwise break resolution outright. A first attempt
+# pulled real open3d in via conda-forge (which does have a py313 win-64
+# build), but that silently swapped in a conda-built numpy/BLAS stack that
+# conflicts with torch's own bundled OpenMP runtime -- a real, confirmed
+# crash (`OMP: Error #15`, a hard `Fatal Python error: Aborted`) during
+# stage 2 (GVHMR). Fixed instead with a tiny local stub package
+# (vendor/open3d_stub/) that satisfies the declared dependency without
+# installing anything real -- safe specifically because nothing ever calls
+# `import open3d` in the code paths this project's adapter exercises.
+open3d = { path = "vendor/open3d_stub", editable = true }
 smplx = ">=0.1.28"
 timm = ">=0.9.0"
 einops = ">=0.6.0"
@@ -48,6 +61,11 @@ safetensors = "*"
 huggingface-hub = ">=0.16.0"
 transformers = ">=4.40.0"
 pytest = ">=7.0"
+depth-anything-3 = ">=0.1.1"
+# depth-anything-3's own model code imports addict directly (depth_anything_3/model/da3.py)
+# but its pyproject.toml never declares it -- a real gap in the upstream package's
+# own metadata, confirmed by actually importing the package and hitting this.
+addict = "*"
 
 [feature.main.pypi-dependencies.torch]
 version = "==2.8.*"

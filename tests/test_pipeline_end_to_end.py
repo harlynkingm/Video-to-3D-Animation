@@ -65,12 +65,13 @@ def test_full_pipeline_runs_end_to_end(tmp_path):
         "pipeline.stages.stage_0_ingest_video",
         "pipeline.stages.stage_1_mask_and_track",
         "pipeline.stages.stage_2_estimate_human_motion",
+        "pipeline.stages.stage_3_estimate_depth",
     ):
         result = _run_stage(module, run_dir)
         assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    for stage_name in ("ingest_video", "mask_and_track", "estimate_human_motion"):
+    for stage_name in ("ingest_video", "mask_and_track", "estimate_human_motion", "estimate_depth"):
         assert progress_json["stages"][stage_name]["status"] == "complete"
 
     motion_path = Path(progress_json["stages"]["estimate_human_motion"]["outputs"]["human_motion"])
