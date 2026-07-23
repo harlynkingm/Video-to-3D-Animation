@@ -27,7 +27,7 @@ Installing pixi sets up two environments for this project, each pinned to **Pyth
 
 **These three steps must be done by hand.** SMPL-X and MANO are projects that sit behind free registration and license acceptance on their respective sites, and cannot be auto-downloaded. If you skip this section, stages that require a body or hand model will fail.
 
-1. **SMPL-X**: register at [smpl-x.is.tue.mpg.de](https://smpl-x.is.tue.mpg.de) (free, academic license), download the model files, and place `SMPLX_NEUTRAL.npz` in `body_models/smplx/SMPLX_NEUTRAL.npz`
+1. **SMPL-X**: register at [smpl-x.is.tue.mpg.de](https://smpl-x.is.tue.mpg.de) (free), download the model files, and place `SMPLX_NEUTRAL.npz` in `body_models/smplx/SMPLX_NEUTRAL.npz`
 2. **MANO** (hand model, required by stage 4): register at [mano.is.tue.mpg.de](https://mano.is.tue.mpg.de) (free), download the models zip file, and place `MANO_RIGHT.pkl` in `body_models/mano/MANO_RIGHT.pkl`
 3. **Blender addon**: install [`jtesch/smplx_blender_addon`](https://gitlab.tuebingen.mpg.de/jtesch/smplx_blender_addon) from GitLab (Blender 4.2+)
 
@@ -41,7 +41,9 @@ bash scripts/download_checkpoints.sh
 
 This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts the HaMeR checkpoint to a safetensors file, placing everything in `checkpoints/`. It skips files you already have and reminds you about the registration-gated body models that it can't fetch, if you don't have them downloaded.
 
-**Manual alternative:** If you want, you can download each file into `checkpoints/` yourself.
+<details>
+<summary>Manual installation instructions</summary>
+If you want, you can download each file into `checkpoints/` yourself.
 
 | File | Source | Size |
 |---|---|---|
@@ -58,12 +60,11 @@ pixi run -e main python scripts/convert_hamer_checkpoint.py path/to/hamer_demo_d
 ```
 
 There is an additional ~1.3GB Depth-Anything-3 checkpoint which is automatically downloaded when [Stage 3. Estimate Depth]((#stage-3-estimate-depth)) runs for the first time.
-
-**Note:** All of the above manual steps can be automatically handled by `scripts/download_checkpoints.sh`
+</details>
 
 ## Processing a Video
 
-The pipeline shares state through a single `progress.json` file which tracks the progress of a single run. If a stage crashes or you stop partway through, rerunning the same command picks up where it left off instead of starting over.
+The pipeline shares state through a single `progress.json` file which tracks the progress of a single run. If a stage crashes or you stop partway through, rerunning the same command picks up where it left off.
 
 **Today, running a video end to end means two steps: create a run, then run each implemented stage in sequence.** This will change in the future.
 
@@ -100,7 +101,7 @@ pixi run -e main python -m pipeline.create_run \
 | `--dump-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#stage-6-align-scene-scale) below. |
 </details>
 
-**Run each implemented stage, in order**, pointing every one at the same `--progress-dir`:
+**Run each stage, in order**, pointing every one at the same `--progress-dir`:
 
 ```bash
 pixi run -e main python -m pipeline.stages.stage_0_ingest_video --progress-dir runs/my_clip
@@ -113,7 +114,7 @@ pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-
 
 ## Pipeline
 
-The pipeline is a sequence of stages, each a separate script. This section documents each one individually: what it does, how to run just that stage on its own, and any optional outputs it can produce.
+The pipeline is a sequence of stages, each a separate script. This section documents each one individually: what the stage does, how to run just that stage on its own, and any optional outputs it can produce.
 
 <details>
 <summary>All stage input/output details</summary>
@@ -149,9 +150,9 @@ Extracts every frame to disk as JPEG (to `runs/my_clip/frames/`), and computes t
 pixi run -e main python -m pipeline.stages.stage_1_mask_and_track --progress-dir runs/my_clip
 ```
 
-SAM 3.1 tracks the human (and object, if `--object-prompt` was given). Also resolves which frame later stages use as their object "anchor" (the frame with the clearest object view). Uses `--anchor-frame-override` if you specify one when creating the run.
+SAM 3.1 tracks the human (and object, if `--object-prompt` was given). Also resolves which frame to use as an object "anchor" frame, which has the clearest object view. Uses `--anchor-frame-override` if you specify one when creating the run.
 
-**Optional: JPEG Mask Output.** Use `--dump-mask-previews` when creating the run to also have this stage write `runs/my_clip/masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white mask images at the video's native resolution. You can scroll through these images on disk to confirm it tracked the right thing.
+**Optional: JPEG Mask Output.** Use `--dump-mask-previews` when creating the run to also have this stage write `runs/my_clip/masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white mask images at the video's native resolution. You can scroll through these images on disk to confirm SAM 3.1 tracked the right thing.
 
 ### Stage 2. Estimate human motion
 
@@ -161,7 +162,7 @@ pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progr
 
 GVHMR turns the human mask into a 3D SMPL-X body pose animation. Works at any source video resolution, however larger frames mean more disk space and slightly slower per-frame I/O.
 
-**Optional: 3D Motion Preview Output.** Use `--dump-motion-preview` when creating the run to also have this stage write `runs/my_clip/motion/blender_preview.npz` This NPZ is importable in Blender via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) if the addon is installed (see [Setup](#setup) for details). **For accurate preview,** when the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
+**Optional: 3D Motion Preview Output.** Use `--dump-motion-preview` when creating the run to also have this stage write `runs/my_clip/motion/blender_preview.npz` This NPZ is importable in Blender via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) if the addon is installed (see [Setup](#setup)). **For accurate preview,** when the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
 
 ### Stage 3. Estimate depth
 
@@ -173,10 +174,11 @@ Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on a single anchor frame, not the
 
 **Optional: PLY Point Cloud Output.** Use `--dump-depth-preview` when creating the run to also have this stage write `runs/my_clip/depth/anchor_pointcloud.ply`, a colored point cloud estimating the depth in the image. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)**
 
-**Note:** The imported .ply points may appear all-black in Blender by default.
+**Note:** The imported .ply may appear all-black in Blender by default.
 
 <details>
-<summary>Details on how to get vertex colors to appear</summary>
+<summary>Details on how to get colors to appear</summary>
+
 1. `File > Import > Stanford PLY (.ply)`
 2. Go to the Geometry Node editor
 3. Press `'New'`
@@ -199,7 +201,7 @@ Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on a single anchor frame, not the
 pixi run -e main python -m pipeline.stages.stage_4_estimate_hands --progress-dir runs/my_clip
 ```
 
-HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand, crops in, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and a validity flag per hand (a hand may be off-screen or too occluded in a given frame). Attaching it to the body happens in stage 5.
+HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand, crops in, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and validity per hand (a hand may be off-screen or too occluded in a given frame). Attaching it to the body happens in stage 5.
 
 This stage requires the MANO body model (see [Setup](#setup)).
 
@@ -213,27 +215,21 @@ pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-
 
 The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage 2](#stage-2-estimate-human-motion)) are both represented in real-world meters, but disagree on scale. This stage reconciles them at the anchor frame by matching the SMPL-X body pose against depth values within the SAM-3 human mask. The result is written to `runs/my_clip/scale/scene_scale.json`
 
-**Optional: Aligned Scene Preview.** Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth) above.
+**Optional: Aligned Scene Preview.** Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
 
 ### Stage 5, 7, 8, 9. Hand retargeting, contacts, optimization, FBX export
 
-Not yet implemented. These will retarget the hands onto the body, detect and score hand-object contact, refine the full motion against those contacts, and finally export an animated FBX. Each will get its own subsection here once it exists, following the same pattern as the stages above.
+Not yet implemented.
 
 ## Testing
 
-`tests/` contains whole-stage regression tests, one file per implemented stage, plus a full end-to-end test, run against a small (20-frame) committed test clip (`tests/assets/tiny_tennis_clip.mp4`). Each test runs the real stage and checks that its outputs look correct.
+`tests/` contains whole-stage regression tests, one file per implemented stage, plus a full end-to-end test. Tests are run against a small (20-frame) committed test clip (`tests/assets/tiny_tennis_clip.mp4`). Each test runs the real stage and checks that its outputs look correct.
 
 ```bash
 pixi run -e main python -m pytest tests/
 ```
 
 Stage tests require the real SAM 3.1/GVHMR checkpoints and a CUDA GPU (see [Setup](#setup)). If either are missing, tests are skipped, not failed.
-
-## Pixi Environment
-
-Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
-- `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
-- `fbx-export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
 
 ## Licensing
 
