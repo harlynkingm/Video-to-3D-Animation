@@ -13,6 +13,13 @@ Uses SAM3, GVHMR, DepthAnything, and 4DHOI to convert any video with a human and
 
 Run any script from this project with `pixi run -e <environment> python ...`
 
+<details>
+<summary>Pixi Environment Details</summary>
+Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
+- `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
+- `fbx-export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
+</details>
+
 ## Setup
 
 ### 1. Download 3D body models
@@ -49,6 +56,8 @@ The ~6GB `hamer_demo_data.tar.gz` download is temporary and can be deleted after
 pixi run -e main python scripts/convert_hamer_checkpoint.py path/to/hamer_demo_data.tar.gz
 ```
 
+There is an additional ~1.3GB Depth-Anything-3 checkpoint which is automatically downloaded when [Stage 3. Estimate Depth]((#stage-3-estimate-depth)) runs for the first time.
+
 **Note:** All of the above manual steps can be automatically handled by `scripts/download_checkpoints.sh`
 
 ## Processing a Video
@@ -83,11 +92,11 @@ pixi run -e main python -m pipeline.create_run \
 | `--object-prompt` | No | none | Text description of the object to track, e.g. `"a basketball"`. Omit if there's no object to track. |
 | `--object-shape-hint` | No | `auto` | Forces the tracked object's proxy shape to `box` or `sphere` instead of letting a later stage auto-fit it (relevant once `align_scene_scale` is implemented). |
 | `--anchor-frame-override` | No | auto-selected | Forces a specific frame index as the "anchor" frame instead of letting stage 1 pick the frame with the clearest view of the object. |
-| `--dump-mask-previews` | No | off | Stage 1 also writes black/white JPEG mask previews for visual spot-checking. See [stage 1](#1-mask-and-track) below. |
-| `--dump-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#2-estimate-human-motion) below. |
-| `--dump-depth-preview` | No | off | Stage 3 also writes a colored `.ply` point cloud importable into Blender for visual spot-checking. See [stage 3](#3-estimate-depth) below. |
-| `--dump-hands-preview` | No | off | Stage 4 also writes a `.bvh` hand-skeleton animation (both hands, bones only) importable into Blender for visual spot-checking. See [stage 4](#4-estimate-hands) below. |
-| `--dump-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#6-align-scene-scale) below. |
+| `--dump-mask-previews` | No | off | Stage 1 also writes black/white JPEG mask previews for visual spot-checking. See [stage 1](#stage-1-mask-and-track) below. |
+| `--dump-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#stage-2-estimate-human-motion) below. |
+| `--dump-depth-preview` | No | off | Stage 3 also writes a colored `.ply` point cloud importable into Blender for visual spot-checking. See [stage 3](#stage-3-estimate-depth) below. |
+| `--dump-hands-preview` | No | off | Stage 4 also writes a `.bvh` hand-skeleton animation (both hands, bones only) importable into Blender for visual spot-checking. See [stage 4](#stage-4-estimate-hands) below. |
+| `--dump-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#stage-6-align-scene-scale) below. |
 </details>
 
 **Run each implemented stage, in order**, pointing every one at the same `--progress-dir`:
@@ -106,7 +115,7 @@ pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-
 The pipeline is a sequence of stages, each a separate script. This section documents each one individually: what it does, how to run just that stage on its own, and any optional outputs it can produce.
 
 <details>
-<summary>Pipeline stage input/output details</summary>
+<summary>All stage input/output details</summary>
 
 | Stage | Script | Input | Output |
 |---|---|---|---|
@@ -139,9 +148,9 @@ Extracts every frame to disk as JPEG (to `runs/my_clip/frames/`), and computes t
 pixi run -e main python -m pipeline.stages.stage_1_mask_and_track --progress-dir runs/my_clip
 ```
 
-SAM 3.1 tracks the human (and object, if `--object-prompt` was given) across every frame, text-prompted. Also resolves which frame later stages use as their object "anchor" (the frame with the clearest view of the object). Uses `--anchor-frame-override` if you specify one when creating the run.
+SAM 3.1 tracks the human (and object, if `--object-prompt` was given). Also resolves which frame later stages use as their object "anchor" (the frame with the clearest object view). Uses `--anchor-frame-override` if you specify one when creating the run.
 
-**Optional: JPEG Mask Output.** Use `--dump-mask-previews` when creating the run to also have this stage write `runs/my_clip/masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white images at the video's native resolution, indicating white where SAM 3.1 thinks the entity is. You can scroll through these images on disk to confirm it tracked the right thing. This roughly doubles this stage's disk writes, so it's off by default.
+**Optional: JPEG Mask Output.** Use `--dump-mask-previews` when creating the run to also have this stage write `runs/my_clip/masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white mask images at the video's native resolution. You can scroll through these images on disk to confirm it tracked the right thing.
 
 ### Stage 2. Estimate human motion
 
@@ -149,11 +158,9 @@ SAM 3.1 tracks the human (and object, if `--object-prompt` was given) across eve
 pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progress-dir runs/my_clip
 ```
 
-GVHMR turns the tracked human mask into a full-clip SMPL-X body pose, producing both a camera-space and a world-grounded version of the motion. Works at any source video resolution. Both SAM 3.1 (stage 1) and GVHMR internally resize to their own small fixed working resolutions regardless of the input, so 1080p and 4K source video cost the same in GPU memory as a lower-resolution clip, though larger frames do mean more disk space and slightly slower per-frame I/O.
+GVHMR turns the human mask into a 3D SMPL-X body pose animation. Works at any source video resolution, however larger frames mean more disk space and slightly slower per-frame I/O.
 
-**Optional: 3D Motion Preview Output.** Use `--dump-motion-preview` when creating the run to also have this stage write `runs/my_clip/motion/blender_preview.npz`
-
-This NPZ is importable via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) in Blender, once the addon is installed per [Setup](#setup). **Important for accurate preview:** When the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
+**Optional: 3D Motion Preview Output.** Use `--dump-motion-preview` when creating the run to also have this stage write `runs/my_clip/motion/blender_preview.npz` This NPZ is importable in Blender via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) if the addon is installed (see [Setup](#setup) for details). **For accurate preview,** when the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
 
 ### Stage 3. Estimate depth
 
@@ -161,11 +168,14 @@ This NPZ is importable via the SMPL-X addon's own **Add Animation** operator (`O
 pixi run -e main python -m pipeline.stages.stage_3_estimate_depth --progress-dir runs/my_clip
 ```
 
-Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on the anchor frame resolved in stage 1, not the whole clip. This produces a metric depth map in real-world meters. The Depth-Anything-3 checkpoint (~1.3GB) auto-downloads into `checkpoints/depth_anything_3/` the first time this stage runs.
+Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on a single anchor frame, not the whole clip. This produces a depth map in real-world meters.
 
-**Optional: PLY Point Cloud Output.** Use `--dump-depth-preview` when creating the run to also have this stage write `runs/my_clip/depth/anchor_pointcloud.ply`, a colored point cloud built by unprojecting the depth map using the anchor frame's own pixel colors. Sky pixels (if any) are excluded. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)**
+**Optional: PLY Point Cloud Output.** Use `--dump-depth-preview` when creating the run to also have this stage write `runs/my_clip/depth/anchor_pointcloud.ply`, a colored point cloud estimating the depth in the image. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)**
 
-**Note:** Blender's default Solid shading mode doesn't display vertex colors in a PLY file. Here is how to get the vertex colors to appear in Blender:
+**Note:** The imported .ply points may appear all-black in Blender by default.
+
+<details>
+<summary>Details on how to get vertex colors to appear</summary>
 1. `File > Import > Stanford PLY (.ply)`
 2. Go to the Geometry Node editor
 3. Press `'New'`
@@ -177,7 +187,10 @@ Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on the anchor frame resolved in s
 9. `Add > Input > Attributes > Col`
 10. Connect 'Color' to 'Base Color' on 'Principled BSDF'
 11. Go back to Geometry Node Editor
-12. Set Material of 'Set Material' Node to the material you just created. Color will appear! (Must be in Material Preview or Rendered viewport mode)
+12. Set Material of 'Set Material' Node to the material you just created. Color will appear!
+
+**Note:** Must be in Material Preview or Rendered viewport mode.
+</details>
 
 ### Stage 4. Estimate hands
 
@@ -185,11 +198,11 @@ Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on the anchor frame resolved in s
 pixi run -e main python -m pipeline.stages.stage_4_estimate_hands --progress-dir runs/my_clip
 ```
 
-HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand from the wrist/elbow, crops each hand, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and a validity flag per hand (a hand may be off-screen or too occluded on a given frame). Attaching it to the GVHMR body happens in stage 5.
+HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand, crops in, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and a validity flag per hand (a hand may be off-screen or too occluded in a given frame). Attaching it to the body happens in stage 5.
 
 This stage requires the MANO body model (see [Setup](#setup)).
 
-**Optional: Hand Skeleton Preview.** Use `--dump-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands importable via **File > Import > Motion Capture (.bvh)** in Blender. Each hand is shown in isolation, side by side, animating over the clip, so you can confirm the finger articulation looks right before it's grafted onto a body in stage 5. This preview requires `SMPLX_NEUTRAL.npz` (already required by [Setup](#setup)) but no MANO mesh.
+**Optional: Hand Skeleton Preview.** Use `--dump-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, animating over the clip, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 
 ### Stage 6. Align scene scale
 
@@ -197,9 +210,9 @@ This stage requires the MANO body model (see [Setup](#setup)).
 pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-dir runs/my_clip
 ```
 
-The depth map ([stage 3](#3-estimate-depth)) and the SMPL-X human body ([stage 2](#2-estimate-human-motion)) are both nominally in real-world meters, but on real footage they disagree by a systematic factor. This stage fits the single scale + translation that reconciles them at the anchor frame by matching the SMPL-X body's visible surface against the depth values under the human mask. The result is written to `runs/my_clip/scale/scene_scale.json` and lets any depth-derived geometry be placed correctly in the human's metric space.
+The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage 2](#stage-2-estimate-human-motion)) are both represented in real-world meters, but disagree on scale. This stage reconciles them at the anchor frame by matching the SMPL-X body pose against depth values within the SAM-3 human mask. The result is written to `runs/my_clip/scale/scene_scale.json`
 
-**Optional: Aligned Scene Preview.** Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit in Blender: the **green** SMPL-X body mesh, the **red** tracked object, and the **RGB** depth scene. Import and enable vertex colors the same way as the [stage 3 preview](#3-estimate-depth) above.
+**Optional: Aligned Scene Preview.** Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth) above.
 
 ### Stage 5, 7, 8, 9. Hand retargeting, contacts, optimization, FBX export
 
@@ -207,7 +220,7 @@ Not yet implemented. These will retarget the hands onto the body, detect and sco
 
 ## Testing
 
-`tests/` contains whole-stage regression tests, one file per implemented stage plus a full end-to-end test, run against a small (20-frame) committed test clip (`tests/assets/tiny_tennis_clip.mp4`). Each test actually runs the real stage and checks that its outputs look correct.
+`tests/` contains whole-stage regression tests, one file per implemented stage, plus a full end-to-end test, run against a small (20-frame) committed test clip (`tests/assets/tiny_tennis_clip.mp4`). Each test runs the real stage and checks that its outputs look correct.
 
 ```bash
 pixi run -e main python -m pytest tests/
@@ -215,7 +228,7 @@ pixi run -e main python -m pytest tests/
 
 Stage tests require the real SAM 3.1/GVHMR checkpoints and a CUDA GPU (see [Setup](#setup)). If either are missing, tests are skipped, not failed.
 
-## Pixi Details
+## Pixi Environment
 
 Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
 - `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
