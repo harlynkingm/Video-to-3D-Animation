@@ -4,28 +4,43 @@ detector and tracker.
 
 Ported from `comfy/ldm/sam3/sam.py`'s `ViTDet`/`SAM3VisionBackbone`, with
 `comfy.ops`/`comfy.model_management` dependencies replaced by plain PyTorch
-(this project has no ComfyUI runtime dependency -- see docs/ARCHITECTURE.md's
-port scope for why). The 2D RoPE math (`rope`, `EmbedND`, `apply_rope`) is
-borrowed from ComfyUI's own Flux implementation (`comfy/ldm/flux/math.py`,
-`comfy/ldm/flux/layers.py`), which SAM3.1 itself reuses -- credited here, not
-vendored, since it's plain rotation math with no SAM3-specific weights.
+(this project has no ComfyUI runtime dependency, to avoid the GPL-3.0/Apache-2.0
+conflict that would come with vendoring ComfyUI's own code). The 2D RoPE math
+(`rope`, `EmbedND`, `apply_rope`) is borrowed from ComfyUI's own Flux
+implementation (`comfy/ldm/flux/math.py`, `comfy/ldm/flux/layers.py`), which
+SAM3.1 itself reuses -- credited here, not vendored, since it's plain rotation
+math with no SAM3-specific weights.
 
 Deliberately NOT ported: the interactive SAM prompt-encoder/mask-decoder
 classes in the same source file (`SAMAttention`, `TwoWayTransformer`,
 `PositionEmbeddingRandom`, the point/box `MLP` head). Those exist only to
 support click/box-prompted conditioning (`initial_masks`), which this project
-never uses -- see the calling-convention decision in docs/ARCHITECTURE.md.
-Not yet 100% confirmed that no code path needs them; flagged for the tracker
-port to double check.
+never uses (all detections come from text prompts, matched to tracked objects
+by `sam31_tracker.py`) -- confirmed while writing the tracker port that nothing
+here needs them; `sam31_tracker.py` has its own, separate copy of similar
+classes for its own interactive mask decoder, not shared with this file.
 """
 
 from __future__ import annotations
 
+import enum
 import math
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class TrackerMode(enum.StrEnum):
+    """Which of `Sam31VisionBackbone`'s two tracker-only FPN conv groups to run.
+    `PROPAGATION` is per-frame mask propagation (this project's only real usage);
+    `INTERACTIVE` seeds tracking state from a freshly detected mask (loaded for a
+    clean `strict=True` checkpoint load, but never actually invoked -- see this
+    module's docstring).
+    """
+
+    PROPAGATION = "propagation"
+    INTERACTIVE = "interactive"
 
 # These are fixed by the checkpoint's own training configuration -- not free parameters,
 # and not something read from the checkpoint file itself (there's no "img_size" tensor).
@@ -34,7 +49,7 @@ import torch.nn.functional as F
 # input: forward() would not error, it would silently crop the RoPE table to fit,
 # producing spatially-wrong positional encoding for every frame. So every frame this
 # pipeline processes must be resized to exactly IMG_SIZE x IMG_SIZE before it reaches
-# this backbone. Verified against the real checkpoint (see docs/ARCHITECTURE.md).
+# this backbone. Verified against the real checkpoint.
 IMG_SIZE = 1008
 PATCH_SIZE = 14
 PRETRAIN_IMG_SIZE = 336  # what the absolute pos_embed was actually trained at (24^2 + 1 cls token = 577)
@@ -320,8 +335,9 @@ class FPNScaleConv(nn.Module):
 class PositionEmbeddingSine(nn.Module):
     """2D sinusoidal position encoding (DETR-style), computed in fp32 for numerical
     stability then cast to match the caller's working dtype -- not just a generic
-    choice, replicating a precision detail from the source (see docs/ARCHITECTURE.md's
-    "fp32 island" note).
+    choice, replicating a precision detail from the source: certain positional-encoding
+    math stays fp32 internally regardless of the surrounding working dtype (e.g. fp16),
+    cast back only at the end, for numerical stability.
     """
 
     def __init__(self, num_pos_feats: int, temperature: float = 10000.0, normalize: bool = True):
@@ -355,8 +371,8 @@ class Sam31VisionBackbone(nn.Module):
     `sam2_convs` single group.
 
     `interactive_convs` is loaded (needed for a clean strict=True checkpoint load) but
-    this project's own code never calls `tracker_mode="interactive"` -- that path only
-    matters for `initial_masks`-based conditioning, which this project doesn't use.
+    this project's own code never calls `tracker_mode=TrackerMode.INTERACTIVE` -- that
+    path only matters for `initial_masks`-based conditioning, which this project doesn't use.
     """
 
     def __init__(self):
@@ -372,7 +388,7 @@ class Sam31VisionBackbone(nn.Module):
     def forward(
         self,
         images: torch.Tensor,
-        tracker_mode: str | None = None,
+        tracker_mode: TrackerMode | None = None,
         tracker_only: bool = False,
         cached_trunk: torch.Tensor | None = None,
     ):
@@ -387,7 +403,7 @@ class Sam31VisionBackbone(nn.Module):
         backbone_out = cached_trunk if cached_trunk is not None else self.trunk(images)
 
         if tracker_only:
-            tracker_convs = self.propagation_convs if tracker_mode == "propagation" else self.interactive_convs
+            tracker_convs = self.propagation_convs if tracker_mode == TrackerMode.PROPAGATION else self.interactive_convs
             tracker_features = [conv(backbone_out) for conv in tracker_convs]
             tracker_positions = [self.position_encoding(f) for f in tracker_features]
             return None, None, tracker_features, tracker_positions
@@ -398,7 +414,7 @@ class Sam31VisionBackbone(nn.Module):
         if tracker_mode is None:
             return features, positions, None, None
 
-        tracker_convs = self.propagation_convs if tracker_mode == "propagation" else self.interactive_convs
+        tracker_convs = self.propagation_convs if tracker_mode == TrackerMode.PROPAGATION else self.interactive_convs
         tracker_features = [conv(backbone_out) for conv in tracker_convs]
         tracker_positions = [self.position_encoding(f) for f in tracker_features]
         return features, positions, tracker_features, tracker_positions

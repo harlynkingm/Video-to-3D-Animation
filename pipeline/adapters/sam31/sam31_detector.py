@@ -4,8 +4,9 @@ cls-token path is used here -- see below), a segmentation head that upsamples de
 queries back through the FPN to per-query masks, and a dot-product query/prompt scorer.
 
 Ported from `comfy/ldm/sam3/detector.py`, replacing `comfy.ops`/`optimized_attention`
-with plain PyTorch (no ComfyUI runtime dependency -- see docs/ARCHITECTURE.md's port
-scope). Only `forward_from_trunk` is ported (given an already-computed ViTDet trunk
+with plain PyTorch (this project has no ComfyUI runtime dependency, to avoid the
+GPL-3.0/Apache-2.0 conflict that would come with vendoring ComfyUI's own code).
+Only `forward_from_trunk` is ported (given an already-computed ViTDet trunk
 output plus one already-encoded text prompt, returns boxes/scores/masks) -- the
 source's other entry points (`forward`, `forward_segment`) exist for single-image and
 interactive point/box-prompted use, which this project's pure text-prompt video

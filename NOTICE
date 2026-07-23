@@ -1,0 +1,26 @@
+This repository's own code is licensed under Apache 2.0 (see LICENSE).
+
+This project reimplements, from published architecture details, several
+third-party models. It does not vendor or import their original code, but
+their weights and architectures carry their own separate license terms.
+
+## SAM 3.1
+
+Checkpoint weights are Meta's, under Meta's own "SAM License"
+(https://github.com/facebookresearch/sam3), not Apache/MIT. Obligations
+independent of this project's own license: attribution in any publication of
+results, and compliance with Trade Controls/export regulations.
+
+## GVHMR
+
+Licensed by Zhejiang University for educational, research, and non-profit
+purposes only (https://github.com/zju3dv/GVHMR): "Any modification based on
+this work must be open-source and prohibited for commercial use." Treat any
+use of this pipeline's motion-capture stage, and anything built on its
+output, as research/personal use only, unless you have separately obtained
+rights from GVHMR's authors.
+
+The ViT feature-extractor backbone GVHMR builds on (HMR2 / 4D-Humans,
+https://github.com/shubham-goel/4D-Humans) is MIT-licensed, and ViTPose
+(https://github.com/ViTAE-Transformer/ViTPose) is Apache 2.0 — neither
+carries a use restriction of its own.

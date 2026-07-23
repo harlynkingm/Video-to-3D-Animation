@@ -3,12 +3,10 @@
 human prompt and an optional object prompt, track each entity across the whole
 clip and return its per-frame masks.
 
-Follows this project's adapter convention informally (`load()`/`infer()`/
-`unload()` -- see docs/ARCHITECTURE.md's repository structure) without a shared
+Follows a `load()`/`infer()`/`unload()` convention informally, without a shared
 `ModelAdapter` base class: with only one adapter written so far, that base
-would be structure before there's a second implementation to generalize from
-(see [[feedback-minimal-codebase]]) -- add it once a GVHMR/depth adapter
-actually exists too.
+would be structure before there's a second implementation to generalize from --
+add it once a GVHMR/depth adapter actually exists too.
 
 **Human and object are tracked via two independent `track_video_with_detection`
 calls, not one joint call with both prompts.** SAM 3.1's multi-entity detection
@@ -35,53 +33,93 @@ from safetensors import safe_open
 
 from .sam31_clip_text import Sam31TextTower, encode_prompt, load_tokenizer
 from .sam31_detector import Sam31Detector
-from .sam31_tracker import Sam31Tracker
-from .sam31_vitdet_backbone import Sam31VisionBackbone
+from .sam31_tracker import KEY_MASKS, KEY_N_FRAMES, KEY_PACKED_MASKS, KEY_SCORES, Sam31Tracker
+from .sam31_vitdet_backbone import Sam31VisionBackbone, TrackerMode
 
 # Repo root is 3 levels up from this file (sam31/ -> adapters/ -> pipeline/ -> root).
 CHECKPOINT_PATH = Path(__file__).resolve().parents[3] / "checkpoints" / "sam3.1_multiplex_fp16.safetensors"
+
+# Checkpoint tensor-key prefixes, used to split the flat checkpoint into each module's
+# own state dict (see _load_checkpoint_state).
+_VISION_BACKBONE_PREFIX = "detector.backbone.vision_backbone."
+_TEXT_TOWER_PREFIX = "detector.backbone.language_backbone.encoder."
+_TEXT_RESIZER_PREFIX = "detector.backbone.language_backbone.resizer"
+_TEXT_RESIZER_KEY_PREFIX = "text_resizer"  # this project's own renamed key prefix for resizer weights
+_DETECTOR_PREFIX = "detector."
+_DETECTOR_BACKBONE_PREFIX = "detector.backbone."
+_TRACKER_PREFIX = "tracker.model."
+
+# _load_checkpoint_state's returned dict keys (module name -> its own state dict).
+KEY_VISION_BACKBONE = "vision_backbone"
+KEY_TEXT_TOWER = "text_tower"
+KEY_DETECTOR = "detector"
+KEY_TRACKER = "tracker"
+
+# This adapter's own per-entity result dict keys.
+KEY_SCORE = "score"  # singular -- first-detection confidence, distinct from the tracker's own per-frame KEY_SCORES list
+
+# infer()'s top-level output dict keys.
+KEY_HUMAN = "human"
+KEY_OBJECT = "object"
 
 
 def _load_checkpoint_state(checkpoint_path: Path) -> dict[str, dict]:
     """Split the checkpoint's flat tensor keys into each module's own state dict,
     stripping its key prefix -- the same slicing verified in each module's own
-    test harness while writing it (see docs/ARCHITECTURE.md's port-scope section).
+    test harness while writing it.
     """
     vision_backbone, text_tower, detector, resizer, tracker = {}, {}, {}, {}, {}
     with safe_open(str(checkpoint_path), framework="pt", device="cpu") as f:
         for key in f.keys():
-            if key.startswith("detector.backbone.vision_backbone."):
-                vision_backbone[key[len("detector.backbone.vision_backbone."):]] = f.get_tensor(key)
-            elif key.startswith("detector.backbone.language_backbone.encoder."):
-                text_tower[key[len("detector.backbone.language_backbone.encoder."):]] = f.get_tensor(key)
-            elif key.startswith("detector.backbone.language_backbone.resizer"):
-                resizer["text_resizer" + key[len("detector.backbone.language_backbone.resizer"):]] = f.get_tensor(key)
-            elif key.startswith("detector.") and not key.startswith("detector.backbone."):
-                detector[key[len("detector."):]] = f.get_tensor(key)
-            elif key.startswith("tracker.model."):
-                tracker[key[len("tracker.model."):]] = f.get_tensor(key)
+            if key.startswith(_VISION_BACKBONE_PREFIX):
+                vision_backbone[key[len(_VISION_BACKBONE_PREFIX):]] = f.get_tensor(key)
+            elif key.startswith(_TEXT_TOWER_PREFIX):
+                text_tower[key[len(_TEXT_TOWER_PREFIX):]] = f.get_tensor(key)
+            elif key.startswith(_TEXT_RESIZER_PREFIX):
+                resizer[_TEXT_RESIZER_KEY_PREFIX + key[len(_TEXT_RESIZER_PREFIX):]] = f.get_tensor(key)
+            elif key.startswith(_DETECTOR_PREFIX) and not key.startswith(_DETECTOR_BACKBONE_PREFIX):
+                detector[key[len(_DETECTOR_PREFIX):]] = f.get_tensor(key)
+            elif key.startswith(_TRACKER_PREFIX):
+                tracker[key[len(_TRACKER_PREFIX):]] = f.get_tensor(key)
     return {
-        "vision_backbone": vision_backbone,
-        "text_tower": text_tower,
-        "detector": {**detector, **resizer},
-        "tracker": tracker,
+        KEY_VISION_BACKBONE: vision_backbone,
+        KEY_TEXT_TOWER: text_tower,
+        KEY_DETECTOR: {**detector, **resizer},
+        KEY_TRACKER: tracker,
     }
 
 
-def _load_frames(frame_paths: list[Path]) -> torch.Tensor:
-    """Read frames back from disk (as extracted by stage 0) into one [N, 3, H, W]
-    CPU float tensor in [0, 1] range -- the `images` shape
-    `Sam31Tracker.track_video_with_detection` expects (it resizes each frame to
-    the backbone's working size itself).
+class _LazyFrameLoader:
+    """Presents disk-backed frames as the `[N, 3, H, W]`-shaped, sliceable object
+    `Sam31Tracker.track_video_with_detection` expects for its `images` argument,
+    without ever materializing the whole clip in memory at once.
+
+    The tracker only ever reads one frame at a time (`images[frame_idx:frame_idx+1]`,
+    via `_prep_frame` in `sam31_tracker.py` -- its only call site), so this decodes
+    just that one frame from disk on each access instead of preloading every frame
+    as a float32 CPU tensor up front. That preload was the real memory bottleneck
+    for long videos (~11MB/frame at 720p, scaling linearly with clip length) --
+    this makes stage 1's memory footprint independent of how long the clip is.
     """
-    frames = []
-    for path in frame_paths:
-        frame_bgr = cv2.imread(str(path))
-        if frame_bgr is None:
-            raise RuntimeError(f"Could not read frame: {path}")
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        frames.append(torch.from_numpy(frame_rgb).permute(2, 0, 1).float() / 255.0)
-    return torch.stack(frames)
+
+    def __init__(self, frame_paths: list[Path]):
+        self._frame_paths = frame_paths
+        self.device = torch.device("cpu")
+        self.dtype = torch.float32
+
+    @property
+    def shape(self) -> tuple[int]:
+        return (len(self._frame_paths),)
+
+    def __getitem__(self, index: slice) -> torch.Tensor:
+        frames = []
+        for path in self._frame_paths[index]:
+            frame_bgr = cv2.imread(str(path))
+            if frame_bgr is None:
+                raise RuntimeError(f"Could not read frame: {path}")
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            frames.append(torch.from_numpy(frame_rgb).permute(2, 0, 1).float() / 255.0)
+        return torch.stack(frames)
 
 
 class Sam31Adapter:
@@ -99,16 +137,16 @@ class Sam31Adapter:
         state = _load_checkpoint_state(checkpoint_path)
 
         self.vision_backbone = Sam31VisionBackbone().to(dtype=self.dtype)
-        self.vision_backbone.load_state_dict(state["vision_backbone"], strict=True)
+        self.vision_backbone.load_state_dict(state[KEY_VISION_BACKBONE], strict=True)
 
         self.text_tower = Sam31TextTower().to(dtype=self.dtype)
-        self.text_tower.load_state_dict(state["text_tower"], strict=True)
+        self.text_tower.load_state_dict(state[KEY_TEXT_TOWER], strict=True)
 
         self.detector = Sam31Detector().to(dtype=self.dtype)
-        self.detector.load_state_dict(state["detector"], strict=True)
+        self.detector.load_state_dict(state[KEY_DETECTOR], strict=True)
 
         self.tracker = Sam31Tracker().to(dtype=self.dtype)
-        self.tracker.load_state_dict(state["tracker"], strict=True)
+        self.tracker.load_state_dict(state[KEY_TRACKER], strict=True)
 
         for module in (self.vision_backbone, self.text_tower, self.detector, self.tracker):
             module.to(self.device).eval()
@@ -124,7 +162,7 @@ class Sam31Adapter:
             torch.cuda.empty_cache()
         self._loaded = False
 
-    def _track_one_prompt(self, images: torch.Tensor, prompt: str) -> dict:
+    def _track_one_prompt(self, images: _LazyFrameLoader, prompt: str) -> dict:
         """Run one full-clip tracking pass for a single prompt. Returns a single-object
         result -- see this module's docstring for why one prompt is tracked at a time.
         """
@@ -134,14 +172,14 @@ class Sam31Adapter:
             def backbone_fn(frame, frame_idx=None):
                 trunk_out = self.vision_backbone.trunk(frame)
                 _, _, tf, tp = self.vision_backbone(
-                    frame, tracker_mode="propagation", cached_trunk=trunk_out, tracker_only=True)
+                    frame, tracker_mode=TrackerMode.PROPAGATION, cached_trunk=trunk_out, tracker_only=True)
                 return tf, tp, trunk_out
 
             def detect_fn(trunk_out):
                 features = [conv(trunk_out) for conv in self.vision_backbone.convs]
                 positions = [self.vision_backbone.position_encoding(f) for f in features]
                 det = self.detector.forward_from_trunk(features, positions, text_emb, text_mask)
-                return {"scores": det["scores"], "masks": det["masks"]}
+                return {KEY_SCORES: det[KEY_SCORES], KEY_MASKS: det[KEY_MASKS]}
 
             result = self.tracker.track_video_with_detection(
                 backbone_fn, images, initial_masks=None, detect_fn=detect_fn,
@@ -149,8 +187,8 @@ class Sam31Adapter:
                 backbone_obj=self.vision_backbone, target_device=self.device, target_dtype=self.dtype,
             )
 
-        if result["packed_masks"] is None or not result["scores"]:
-            return {"packed_masks": None, "n_frames": result["n_frames"], "score": None}
+        if result[KEY_PACKED_MASKS] is None or not result[KEY_SCORES]:
+            return {KEY_PACKED_MASKS: None, KEY_N_FRAMES: result[KEY_N_FRAMES], KEY_SCORE: None}
 
         # A singular prompt ("a tennis player") should track exactly one object; if the
         # detector's NMS pool ever yields more than one candidate for it (e.g. a second
@@ -158,11 +196,11 @@ class Sam31Adapter:
         # one rather than returning an ambiguous multi-object result for what this
         # pipeline treats as a single entity (see the locked "rigid, single-instance
         # object" scope decision).
-        best_idx = max(range(len(result["scores"])), key=lambda i: result["scores"][i])
+        best_idx = max(range(len(result[KEY_SCORES])), key=lambda i: result[KEY_SCORES][i])
         return {
-            "packed_masks": result["packed_masks"][:, best_idx:best_idx + 1],
-            "n_frames": result["n_frames"],
-            "score": result["scores"][best_idx],
+            KEY_PACKED_MASKS: result[KEY_PACKED_MASKS][:, best_idx:best_idx + 1],
+            KEY_N_FRAMES: result[KEY_N_FRAMES],
+            KEY_SCORE: result[KEY_SCORES][best_idx],
         }
 
     def infer(self, frame_paths: list[Path], human_prompt: str, object_prompt: str | None) -> dict:
@@ -175,7 +213,7 @@ class Sam31Adapter:
         confidence (or None)}. See `sam31_tracker.pack_masks`/`unpack_masks` for the
         packed mask format.
         """
-        images = _load_frames(frame_paths)
+        images = _LazyFrameLoader(frame_paths)
         human_result = self._track_one_prompt(images, human_prompt)
         object_result = self._track_one_prompt(images, object_prompt) if object_prompt else None
-        return {"human": human_result, "object": object_result}
+        return {KEY_HUMAN: human_result, KEY_OBJECT: object_result}

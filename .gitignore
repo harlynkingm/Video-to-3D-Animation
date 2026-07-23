@@ -12,8 +12,11 @@ build/
 # Planning docs
 /docs/
 
-# Model checkpoints (download separately, see docs/SETUP_WINDOWS.md)
+# Model checkpoints (download separately, see README)
 /checkpoints/
+
+# SMPL-X body model files (registration required, see README)
+/body_models/
 
 # Shared model files (download separately, see README)
 shared_data/*.npz

@@ -4,9 +4,9 @@ a multiplex (16-object) SAM decoder used for per-frame propagation, and the
 detection/reconditioning/keep-alive bookkeeping that ties them together across a clip.
 
 Ported from `comfy/ldm/sam3/tracker.py`, replacing `comfy.ops`/`optimized_attention`/
-`comfy.model_management` with plain PyTorch (no ComfyUI runtime dependency -- see
-docs/ARCHITECTURE.md's port scope). Mask convention: boolean, True = attend, same as
-the rest of this port.
+`comfy.model_management` with plain PyTorch (this project has no ComfyUI runtime
+dependency -- see the module docstrings in this package's other files for why).
+Mask convention: boolean, True = attend, same as the rest of this port.
 
 **Scope deliberately narrower than the source file.** This project only ever drives
 the tracker through `track_video_with_detection` with `initial_masks=None` (detections
@@ -25,13 +25,12 @@ SAM 3.1 *multiplex* checkpoint specifically. So, dropped entirely:
     N+1's backbone on a second stream while frame N is processed). This is a wall-clock
     optimization with no effect on correctness or memory footprint; dropped for a
     simpler, easier-to-verify sequential loop. Worth adding back only if profiling on
-    real clips shows it's actually needed (see [[feedback-minimal-codebase]]).
+    real clips shows it's actually needed.
 
 Everything else -- the multiplex state bookkeeping, the memory bank encode/attend
 cycle, mask-based NMS, reconditioning of degraded tracks, and the keep-alive hysteresis
 that prevents single-frame flicker -- is ported faithfully, since none of it is
-optional for correct multi-object tracking over a real clip (see docs/ARCHITECTURE.md's
-"Model internals" notes on this exact mechanism).
+optional for correct multi-object tracking over a real clip.
 """
 
 from __future__ import annotations
@@ -41,9 +40,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .sam31_vitdet_backbone import IMG_SIZE, PATCH_SIZE, _rotate_pairs, rope_2d
+from .sam31_vitdet_backbone import IMG_SIZE, PATCH_SIZE, TrackerMode, _rotate_pairs, rope_2d
 
 NO_OBJ_SCORE = -1024.0
+
+# `detect_fn`'s expected return-dict keys -- this project's own contract between
+# `sam31_adapter.py` (which implements `detect_fn`) and `track_video_with_detection`
+# below (which calls it), and `track_video_with_detection`'s own returned-dict keys.
+KEY_SCORES = "scores"
+KEY_MASKS = "masks"
+KEY_PACKED_MASKS = "packed_masks"
+KEY_N_FRAMES = "n_frames"
 
 D_MODEL = 256
 NUM_MASKMEM = 7  # size of the rolling memory window (this frame's 7 most recent conditioning/tracked frames)
@@ -1322,7 +1329,7 @@ class Sam31Tracker(nn.Module):
         mask_input = F.interpolate(masks if masks.dim() == 4 else masks.unsqueeze(1),
                                     size=(IMG_SIZE, IMG_SIZE), mode="bilinear", align_corners=False)
         mask_input = (mask_input > threshold).to(masks.dtype)
-        _, _, tracker_features, _ = backbone_obj(frame, tracker_mode="interactive", cached_trunk=trunk_out, tracker_only=True)
+        _, _, tracker_features, _ = backbone_obj(frame, tracker_mode=TrackerMode.INTERACTIVE, cached_trunk=trunk_out, tracker_only=True)
         hi_res, lo_feat = tracker_features[:-1], tracker_features[-1]
         current_out = self.track_step(
             frame_idx=frame_idx, is_init_cond_frame=True, current_vision_feats=vision_feats,
@@ -1436,9 +1443,9 @@ class Sam31Tracker(nn.Module):
                        and not (mux_state is not None and mux_state.total_valid_entries >= max_objects))
             if run_det:
                 det_out = detect_fn(trunk_out)
-                scores = det_out["scores"][0].sigmoid()
+                scores = det_out[KEY_SCORES][0].sigmoid()
                 keep = scores > new_det_thresh
-                det_masks, det_scores = det_out["masks"][0][keep], scores[keep]
+                det_masks, det_scores = det_out[KEY_MASKS][0][keep], scores[keep]
                 if det_masks.shape[0] > 1:
                     det_masks, det_scores = _nms_masks(det_masks, det_scores)
 
@@ -1501,7 +1508,7 @@ class Sam31Tracker(nn.Module):
             all_masks.append(pack_masks(masks_out).to("cpu") if mux_state is not None and mux_state.total_valid_entries > 0 else None)
 
         if not all_masks or all(m is None for m in all_masks):
-            return {"packed_masks": None, "n_frames": N, "scores": []}
+            return {KEY_PACKED_MASKS: None, KEY_N_FRAMES: N, KEY_SCORES: []}
 
         max_obj = max(m.shape[0] for m in all_masks if m is not None)
         sample = next(m for m in all_masks if m is not None)
@@ -1512,4 +1519,4 @@ class Sam31Tracker(nn.Module):
             elif m.shape[0] < max_obj:
                 pad = torch.zeros(max_obj - m.shape[0], *m.shape[1:], dtype=torch.uint8, device=m.device)
                 all_masks[i] = torch.cat([m, pad], dim=0)
-        return {"packed_masks": torch.stack(all_masks, dim=0), "n_frames": N, "scores": obj_scores}
+        return {KEY_PACKED_MASKS: torch.stack(all_masks, dim=0), KEY_N_FRAMES: N, KEY_SCORES: obj_scores}

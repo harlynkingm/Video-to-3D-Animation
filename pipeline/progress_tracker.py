@@ -61,6 +61,8 @@ class RunInput:
     focal_length_mm: float = 0.0
     sensor_width_mm: float = 0.0
     anchor_frame_override: int | None = None
+    dump_mask_previews: bool = False
+    dump_motion_preview: bool = False
 
 
 @dataclass
