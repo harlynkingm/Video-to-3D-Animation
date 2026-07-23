@@ -16,6 +16,7 @@ Run any script from this project with `pixi run -e <environment> python ...`
 <details>
 <summary>Pixi Environment Details</summary>
 Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
+
 - `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
 - `fbx-export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
 </details>
