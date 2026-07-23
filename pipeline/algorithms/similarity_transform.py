@@ -8,8 +8,7 @@ rotation to solve -- only a scale `s` and translation `b`. This is the
 static-camera, metric-depth specialization of `open4dhoi`'s
 `preprocessing/scripts/hoi_utils.py::align` (which had to first normalize a
 *relative*-depth map and use an orthographic back-projection; DA3METRIC-LARGE
-gives real metric depth, so we back-project with the real intrinsics `K`
-instead -- see docs/ARCHITECTURE.md).
+gives real metric depth, so we back-project with the real intrinsics `K` instead).
 
 Why a spread-ratio scale rather than a per-point least-squares fit: the
 correspondence between a SMPL-X surface vertex and the depth value at its

@@ -30,8 +30,7 @@ no-default-feature = true
 # hydra-zen/hydra-colorlog (never actually imported in its code), no
 # torch_scatter/dpvo_cuda (DPVO-only, and DPVO is skipped for this project's
 # static-camera-only scope), no pycolmap (moving-camera VO only), no pytorch3d
-# (replaced by a portable pure-PyTorch shim). See docs/ARCHITECTURE.md's GVHMR
-# implementation notes for the reasoning.
+# (replaced by a portable pure-PyTorch shim).
 [feature.main.dependencies]
 python = "3.13.*"
 

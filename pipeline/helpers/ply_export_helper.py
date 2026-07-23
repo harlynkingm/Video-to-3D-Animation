@@ -1,9 +1,8 @@
 """Write colored point clouds to PLY for Blender visual verification.
 
-Centralizes the camera-space -> Blender Z-up rotation (learned the hard way --
-see docs/ARCHITECTURE.md's stage 3 notes) so every preview this pipeline emits
-imports upright with no manual rotation, and so that knowledge lives in exactly
-one place.
+Centralizes the camera-space -> Blender Z-up rotation (learned the hard way) so
+every preview this pipeline emits imports upright with no manual rotation, and
+so that knowledge lives in exactly one place.
 """
 
 from __future__ import annotations

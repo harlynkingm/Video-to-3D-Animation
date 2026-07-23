@@ -3,17 +3,16 @@ and the GVHMR SMPL-X human, at the anchor frame.
 
 DA3METRIC-LARGE's depth and GVHMR's SMPL-X are both nominally metric but
 disagree by a systematic factor on real data (measured ~1.26x on the test
-clip -- see docs/ARCHITECTURE.md), so this stage fits the scale + translation
-that reconciles them (`similarity_transform.fit_scene_scale`). The result lets
-any depth-derived geometry (later: the object point cloud) be placed in the
-SMPL-X human's metric space.
+clip), so this stage fits the scale + translation that reconciles them
+(`similarity_transform.fit_scene_scale`). The result lets any depth-derived
+geometry (later: the object point cloud) be placed in the SMPL-X human's metric space.
 
 **Scope, as of when this was written**: this stage currently only fits the
 scene scale. Fitting the object's proxy shape (box/sphere) from its mask +
 depth -- the other half of the reference's `make_hoi.py` -- is deferred until
-object placement is actually built (see docs/ARCHITECTURE.md). It uses the
-body-only SMPL-X from `estimate_human_motion` (hands don't affect the body's
-overall scale), so it does not wait on `retarget_hands`.
+object placement is actually built. It uses the body-only SMPL-X from
+`estimate_human_motion` (hands don't affect the body's overall scale), so it
+does not wait on `retarget_hands`.
 """
 
 from __future__ import annotations

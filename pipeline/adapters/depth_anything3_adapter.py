@@ -3,7 +3,7 @@ package's own high-level API, producing metric depth (meters) and confidence
 for a single frame. Unlike SAM 3.1/GVHMR, this isn't a clean-room port --
 Depth-Anything-3's official repo is a standalone, Apache 2.0-licensed Python
 package with no ComfyUI/GPL dependency, so it's used directly as a normal pip
-dependency (see ARCHITECTURE.md's Depth-Anything-3 notes).
+dependency.
 """
 
 from __future__ import annotations
@@ -15,8 +15,8 @@ import torch
 from depth_anything_3.api import DepthAnything3
 
 # Apache 2.0 checkpoint, single-image *metric* depth (real meters, not just
-# relative-scale) -- see ARCHITECTURE.md for why this checkpoint specifically,
-# out of DA3's several licensing tiers.
+# relative-scale) -- the monocular metric checkpoint is Apache 2.0 even at
+# LARGE size, unlike DA3's CC-BY-NC multi-view checkpoints.
 MODEL_NAME = "depth-anything/DA3METRIC-LARGE"
 
 # Repo root is 2 levels up from this file (adapters/ -> pipeline/ -> root).

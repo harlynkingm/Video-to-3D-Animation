@@ -189,7 +189,7 @@ Use `--dump-depth-preview` when creating the run to also have this stage write `
 **Note:** The imported .ply may appear all-black in Blender by default.
 
 <details>
-<summary>Details on how to get colors to appear</summary>
+<summary>Details on how to get .ply colors to appear</summary>
 
 1. `File > Import > Stanford PLY (.ply)`
 2. Go to the Geometry Node editor
@@ -220,7 +220,7 @@ This stage requires the MANO body model (see [Setup](#setup)).
 <details>
 <summary><strong>Optional: Hand Skeleton Preview</strong></summary>
 
-Use `--dump-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, animating over the clip, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
+Use `--dump-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 </details>
 
 ### Stage 6. Align scene scale
