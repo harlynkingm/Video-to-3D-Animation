@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .gvhmr_shared_vit import GVHMRViTBackbone
+from ...helpers.vit_huge_backbone import VitHugeBackbone
 
 D_MODEL = 1024
 DEPTH = 6
@@ -153,7 +153,7 @@ class SMPLTransformerDecoderHead(nn.Module):
         self.register_buffer("init_cam", torch.zeros(1, 3))
 
     def forward(self, vit_feats: torch.Tensor) -> torch.Tensor:
-        """vit_feats: (B, C, H, W) from `GVHMRViTBackbone`. Returns (B, D_MODEL) token_out."""
+        """vit_feats: (B, C, H, W) from `VitHugeBackbone`. Returns (B, D_MODEL) token_out."""
         B, C, H, W = vit_feats.shape
         context = vit_feats.permute(0, 2, 3, 1).reshape(B, H * W, C)
         token = torch.zeros(B, 1, 1, device=vit_feats.device, dtype=vit_feats.dtype)
@@ -165,7 +165,7 @@ class GVHMRHMR2(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.backbone = GVHMRViTBackbone()
+        self.backbone = VitHugeBackbone()
         self.smpl_head = SMPLTransformerDecoderHead()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

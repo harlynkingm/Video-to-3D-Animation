@@ -22,7 +22,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .gvhmr_preprocess import bbox_xywh_to_xys, crop_and_normalize
-from .gvhmr_shared_vit import GVHMRViTBackbone
+from ...helpers.vit_huge_backbone import VitHugeBackbone
 
 NUM_KEYPOINTS = 17  # COCO
 DECONV_FILTERS = 256
@@ -53,7 +53,7 @@ class GVHMRViTPoseModel(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.backbone = GVHMRViTBackbone()
+        self.backbone = VitHugeBackbone()
         self.keypoint_head = KeypointHead()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

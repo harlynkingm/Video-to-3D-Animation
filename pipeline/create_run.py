@@ -20,6 +20,9 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     StageName.STAGE_1_MASK_AND_TRACK: [StageName.STAGE_0_INGEST_VIDEO],
     StageName.STAGE_2_ESTIMATE_HUMAN_MOTION: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
     StageName.STAGE_3_ESTIMATE_DEPTH: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
+    # estimate_hands needs the person mask (stage 1) to locate the person, then
+    # its own ViTPose pass to locate the hands -- independent of body motion.
+    StageName.STAGE_4_ESTIMATE_HANDS: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
     # align_scene_scale's eventual DAG position routes its SMPL-X input through
     # retarget_hands, but scene *scale* only needs the body's overall size,
     # which the body-only estimate_human_motion already gives -- so it depends
@@ -71,6 +74,8 @@ def main() -> None:
                          help="Stage 3 also writes a colored .ply point cloud importable into Blender for visual spot-checking")
     parser.add_argument("--dump-scene-preview", action="store_true",
                          help="Stage 6 also writes a .ply combining human, object, and scene in one aligned space for visual spot-checking")
+    parser.add_argument("--dump-hands-preview", action="store_true",
+                         help="Stage 4 also writes a .bvh hand skeleton animation importable into Blender for visual spot-checking")
     args = parser.parse_args()
 
     run_input = RunInput(
@@ -85,6 +90,7 @@ def main() -> None:
         dump_motion_preview=args.dump_motion_preview,
         dump_depth_preview=args.dump_depth_preview,
         dump_scene_preview=args.dump_scene_preview,
+        dump_hands_preview=args.dump_hands_preview,
     )
     progress = create_run(Path(args.progress_dir), run_input, run_id=args.run_id)
     print(f"Created run {progress.run_id!r} at {args.progress_dir}")

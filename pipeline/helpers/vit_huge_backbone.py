@@ -1,9 +1,12 @@
-"""The ViT-Huge backbone shared by ViTPose and HMR2 (two separate checkpoints,
-identical architecture, different learned weights, different heads on top).
+"""The ViT-Huge backbone shared by ViTPose, HMR2, and HaMeR -- three separate
+checkpoints, identical architecture, different learned weights and different
+heads on top. Lives here (not inside any one adapter) because all three of
+those model adapters load their own weights into an instance of this same
+class; confirmed by strict-loading each checkpoint's `backbone.*` tensors into
+it with zero missing/unexpected keys.
 
-Ported from `comfyui-motioncapture/nodes/shared_vit.py`, restricted to the
-single configuration this project actually uses (confirmed identical for both
-checkpoints in the source: `img_size=(256,192)`, `patch_size=16`,
+Restricted to the single configuration all three checkpoints actually use
+(confirmed identical in every source: `img_size=(256,192)`, `patch_size=16`,
 `embed_dim=1280`, `depth=32`, `num_heads=16`, `mlp_ratio=4`, `qkv_bias=True`) --
 not a generic, arbitrarily-configurable ViT class. Also dropped, since this
 project only ever runs inference: dropout/drop-path (no-ops in eval mode
@@ -18,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-IMG_SIZE = (256, 192)  # (H, W) -- a single person-crop, not the full frame
+IMG_SIZE = (256, 192)  # (H, W) -- a single person/hand crop, not the full frame
 PATCH_SIZE = 16
 IN_CHANS = 3
 EMBED_DIM = 1280
@@ -27,7 +30,7 @@ NUM_HEADS = 16
 MLP_RATIO = 4.0
 # padding=2 is what actually makes the patch grid come out to exactly 16x12
 # (192 patches, matching the checkpoint's [1, 193, 1280] pos_embed) -- confirmed
-# against the real checkpoint, not a default left over from a generic formula.
+# against the real checkpoints, not a default left over from a generic formula.
 PATCH_CONV_PADDING = 2
 GRID_H, GRID_W = IMG_SIZE[0] // PATCH_SIZE, IMG_SIZE[1] // PATCH_SIZE  # 16, 12
 NUM_PATCHES = GRID_H * GRID_W  # 192
@@ -89,11 +92,11 @@ class PatchEmbed(nn.Module):
         return x.flatten(2).transpose(1, 2)  # (B, GRID_H*GRID_W, embed_dim)
 
 
-class GVHMRViTBackbone(nn.Module):
+class VitHugeBackbone(nn.Module):
     """Expects input already cropped/resized to exactly IMG_SIZE (H, W). Matches
-    `backbone.*` in both `vitpose.safetensors` and `hmr2.safetensors` exactly --
-    same architecture, loaded from two different checkpoints by the two
-    modules that each own an instance of this class.
+    `backbone.*` in `vitpose.safetensors`, `hmr2.safetensors`, and
+    `hamer.safetensors` exactly -- same architecture, loaded from different
+    checkpoints by the modules that each own an instance of this class.
     """
 
     def __init__(self):
@@ -110,7 +113,7 @@ class GVHMRViTBackbone(nn.Module):
         # The checkpoint's pos_embed has one extra learned row beyond the 192
         # patch positions; the source adds it to every patch as a shared bias
         # rather than treating it as a separate CLS token -- ported as-is,
-        # since this is the exact behavior the checkpoint was trained under.
+        # since this is the exact behavior the checkpoints were trained under.
         x = x + self.pos_embed[:, 1:] + self.pos_embed[:, :1]
 
         for block in self.blocks:

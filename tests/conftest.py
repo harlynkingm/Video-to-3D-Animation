@@ -30,6 +30,7 @@ from pipeline.stages import (
     stage_1_mask_and_track,
     stage_2_estimate_human_motion,
     stage_3_estimate_depth,
+    stage_4_estimate_hands,
     stage_6_align_scene_scale,
 )
 
@@ -51,11 +52,13 @@ SENSOR_WIDTH_MM = 36.0
 
 CHECKPOINTS_DIR = TESTS_DIR.parent / "checkpoints"
 SAM31_CHECKPOINT = CHECKPOINTS_DIR / "sam3.1_multiplex_fp16.safetensors"
+VITPOSE_CHECKPOINT = CHECKPOINTS_DIR / "vitpose.safetensors"
 GVHMR_CHECKPOINTS = (
-    CHECKPOINTS_DIR / "vitpose.safetensors",
+    VITPOSE_CHECKPOINT,
     CHECKPOINTS_DIR / "hmr2.safetensors",
     CHECKPOINTS_DIR / "gvhmr.safetensors",
 )
+HAMER_CHECKPOINT = CHECKPOINTS_DIR / "hamer.safetensors"
 
 
 @pytest.fixture(scope="session")
@@ -114,6 +117,19 @@ def stage_3_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 
     outputs = stage_3_estimate_depth.run(progress)
     progress.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
+    return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_4_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA GPU")
+    missing = [p.name for p in (HAMER_CHECKPOINT, VITPOSE_CHECKPOINT) if not p.exists()]
+    if missing:
+        pytest.skip(f"needs the HaMeR + ViTPose checkpoints (missing: {missing}; see README's Setup section)")
+
+    outputs = stage_4_estimate_hands.run(progress)
+    progress.mark_progress(StageName.STAGE_4_ESTIMATE_HANDS, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
