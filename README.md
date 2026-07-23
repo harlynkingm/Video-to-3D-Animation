@@ -41,13 +41,15 @@ This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts t
 | `vitpose.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~2.5GB |
 | `hmr2.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~2.7GB |
 | `gvhmr.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~163MB |
-| `hamer.safetensors` (+ `mano_mean_params.npz`) | converted from the HaMeR tarball, see below | ~2.6GB |
+| `hamer_demo_data.tar.gz` | [cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz](https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz) | ~6GB |
 
-HaMeR ships a PyTorch-Lightning `.ckpt` inside a ~6GB tarball. Download [hamer_demo_data.tar.gz](https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz) then convert it using the following script:
+The ~6GB `hamer_demo_data.tar.gz` download is temporary and can be deleted after checkpoint conversion. Convert it to the smaller ~2.6GB checkpoint using the following script:
 
 ```bash
 pixi run -e main python scripts/convert_hamer_checkpoint.py path/to/hamer_demo_data.tar.gz
 ```
+
+**Note:** All of the above manual steps can be automatically handled by `scripts/download_checkpoints.sh`
 
 ## Processing a Video
 
