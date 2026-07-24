@@ -14,12 +14,18 @@ CLIP variant reuses) -- only the transformer weights are SAM3-specific.
 from __future__ import annotations
 
 from collections import OrderedDict
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 from transformers import CLIPTokenizer
 
-TOKENIZER_NAME = "openai/clip-vit-large-patch14"
+# The CLIP BPE tokenizer is vendored into the repo (next to this file) rather
+# than fetched from the HF Hub, so the pipeline runs fully offline and
+# reproducibly with no runtime network dependency. This is the standard public
+# CLIP vocabulary (saved from openai/clip-vit-large-patch14); only the text
+# transformer's weights are SAM3-specific, and those load from the checkpoint.
+CLIP_TOKENIZER_DIR = Path(__file__).resolve().parent / "clip_tokenizer"
 MAX_PROMPT_TOKENS = 32  # hard limit -- baked into the checkpoint's positional_embedding size
 HIDDEN_SIZE = 1024
 NUM_LAYERS = 24
@@ -102,7 +108,9 @@ class Sam31TextTower(nn.Module):
 
 
 def load_tokenizer() -> CLIPTokenizer:
-    return CLIPTokenizer.from_pretrained(TOKENIZER_NAME)
+    # local_files_only=True guarantees no HF Hub call (and no "unauthenticated
+    # request" warning) even when HF_HUB_OFFLINE isn't set in the environment.
+    return CLIPTokenizer.from_pretrained(str(CLIP_TOKENIZER_DIR), local_files_only=True)
 
 
 def encode_prompt(
