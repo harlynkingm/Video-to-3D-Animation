@@ -14,6 +14,21 @@ rather than failing when either is missing, so this suite still runs
 (partially) on a machine that hasn't set those up yet. Stage 3's checkpoint
 auto-downloads on first use (see depth_anything3_adapter.py), so its fixture
 only gates on a CUDA GPU, not on the checkpoint already being present.
+
+Each stage module is imported *inside* its own fixture, not at the top of this
+file, deliberately: every stage module imports its adapter at that module's own
+top level (e.g. `stage_3_estimate_depth` imports `depth_anything3_adapter`,
+which pulls in `depth_anything_3` and transitively `xformers`), and a plain
+CPU-only machine (no NVIDIA driver at all -- not just "no GPU", a genuinely
+different situation from a dev machine that always has a real driver present)
+turned out unable to even *import* one of those packages without crashing
+natively -- no Python exception, no traceback, just an instant, silent process
+death. Importing all six stage modules unconditionally at collection time (as
+this file used to) forced that crash on every CI run, before any test's own
+skip-gate on `torch.cuda.is_available()` ever got a chance to run. Deferring
+each import into its own fixture means a driver-less machine only ever imports
+`stage_0_ingest_video` (needs no heavy ML libraries) for real; every other
+stage's risky import happens only after that fixture's own GPU check passes.
 """
 
 from __future__ import annotations
@@ -25,15 +40,6 @@ import torch
 
 from pipeline.create_run import create_run
 from pipeline.progress_tracker import ProgressRecord, RunInput, StageName, StageStatus
-from pipeline.stages import (
-    stage_0_ingest_video,
-    stage_1_mask_and_track,
-    stage_2_estimate_human_motion,
-    stage_3_estimate_depth,
-    stage_4_estimate_hands,
-    stage_5_retarget_hands,
-    stage_6_align_scene_scale,
-)
 
 TESTS_DIR = Path(__file__).parent
 TEST_VIDEO_PATH = TESTS_DIR / "assets" / "tiny_tennis_clip.mp4"
@@ -61,6 +67,13 @@ GVHMR_CHECKPOINTS = (
 )
 HAMER_CHECKPOINT = CHECKPOINTS_DIR / "hamer.safetensors"
 
+# Same path stage_6_align_scene_scale.py computes on its own -- defined here
+# too (not imported from there) so any test file can check for the SMPL-X
+# model file's presence without importing that module and its heavy transitive
+# chain (see this file's own docstring above for why that chain is unsafe to
+# import unconditionally).
+SMPLX_MODEL_PATH = TESTS_DIR.parent / "body_models" / "smplx" / "SMPLX_NEUTRAL.npz"
+
 
 @pytest.fixture(scope="session")
 def progress(tmp_path_factory) -> ProgressRecord:
@@ -82,6 +95,8 @@ def progress(tmp_path_factory) -> ProgressRecord:
 
 @pytest.fixture(scope="session")
 def stage_0_result(progress: ProgressRecord) -> dict[str, str]:
+    from pipeline.stages import stage_0_ingest_video
+
     outputs = stage_0_ingest_video.run(progress)
     progress.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs=outputs)
     return outputs
@@ -93,6 +108,8 @@ def stage_1_result(progress: ProgressRecord, stage_0_result: dict[str, str]) -> 
         pytest.skip("needs a CUDA GPU")
     if not SAM31_CHECKPOINT.exists():
         pytest.skip("needs the SAM 3.1 checkpoint (see README's Setup section)")
+
+    from pipeline.stages import stage_1_mask_and_track
 
     outputs = stage_1_mask_and_track.run(progress)
     progress.mark_progress(StageName.STAGE_1_MASK_AND_TRACK, StageStatus.COMPLETE, outputs=outputs)
@@ -107,6 +124,8 @@ def stage_2_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
     if missing:
         pytest.skip(f"needs the GVHMR checkpoints (missing: {missing}; see README's Setup section)")
 
+    from pipeline.stages import stage_2_estimate_human_motion
+
     outputs = stage_2_estimate_human_motion.run(progress)
     progress.mark_progress(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.COMPLETE, outputs=outputs)
     return outputs
@@ -116,6 +135,8 @@ def stage_2_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 def stage_3_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
     if not torch.cuda.is_available():
         pytest.skip("needs a CUDA GPU")
+
+    from pipeline.stages import stage_3_estimate_depth
 
     outputs = stage_3_estimate_depth.run(progress)
     progress.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
@@ -130,6 +151,8 @@ def stage_4_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
     if missing:
         pytest.skip(f"needs the HaMeR + ViTPose checkpoints (missing: {missing}; see README's Setup section)")
 
+    from pipeline.stages import stage_4_estimate_hands
+
     outputs = stage_4_estimate_hands.run(progress)
     progress.mark_progress(StageName.STAGE_4_ESTIMATE_HANDS, StageStatus.COMPLETE, outputs=outputs)
     return outputs
@@ -140,9 +163,13 @@ def stage_5_result(
     progress: ProgressRecord, stage_2_result: dict[str, str], stage_4_result: dict[str, str]
 ) -> dict[str, str]:
     # No GPU/checkpoints of its own, but SmplxSkeleton (for the kinematic tree)
-    # and the optional preview both need the registration-gated SMPL-X model file.
-    if not stage_6_align_scene_scale.SMPLX_MODEL_PATH.exists():
+    # and the optional preview both need the registration-gated SMPL-X model
+    # file -- checked via this file's own SMPLX_MODEL_PATH, not by importing
+    # stage_6's module, to avoid its heavy transitive chain.
+    if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    from pipeline.stages import stage_5_retarget_hands
 
     outputs = stage_5_retarget_hands.run(progress)
     progress.mark_progress(StageName.STAGE_5_RETARGET_HANDS, StageStatus.COMPLETE, outputs=outputs)
@@ -153,8 +180,10 @@ def stage_5_result(
 def stage_6_result(
     progress: ProgressRecord, stage_2_result: dict[str, str], stage_3_result: dict[str, str]
 ) -> dict[str, str]:
-    if not stage_6_align_scene_scale.SMPLX_MODEL_PATH.exists():
+    if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    from pipeline.stages import stage_6_align_scene_scale
 
     outputs = stage_6_align_scene_scale.run(progress)
     progress.mark_progress(StageName.STAGE_6_ALIGN_SCENE_SCALE, StageStatus.COMPLETE, outputs=outputs)

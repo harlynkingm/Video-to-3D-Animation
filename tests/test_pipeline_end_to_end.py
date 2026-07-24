@@ -19,8 +19,6 @@ from pathlib import Path
 import pytest
 import torch
 
-from pipeline.stages.stage_6_align_scene_scale import SMPLX_MODEL_PATH
-
 from conftest import (
     FOCAL_LENGTH_MM,
     GVHMR_CHECKPOINTS,
@@ -29,6 +27,7 @@ from conftest import (
     OBJECT_PROMPT,
     SAM31_CHECKPOINT,
     SENSOR_WIDTH_MM,
+    SMPLX_MODEL_PATH,
     TEST_VIDEO_PATH,
 )
 
