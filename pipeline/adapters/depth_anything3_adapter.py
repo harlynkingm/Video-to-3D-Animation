@@ -8,11 +8,30 @@ dependency.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+# Both must be set before `depth_anything_3` (imported below) pulls in its own
+# transitive dependencies, or they have no effect. `setdefault` so a caller
+# that's deliberately set either of these keeps their own value.
+#
+# DA3_LOG_LEVEL: at ERROR-only, silences a harmless import-time WARN ("gsplat
+# is required for rendering 3DGS") from depth_anything_3's own gs_renderer.py
+# -- gsplat (3D Gaussian Splatting) is that package's novel-view-synthesis
+# rendering feature, unrelated to and never invoked by this adapter's plain
+# metric-depth inference.
+os.environ.setdefault("DA3_LOG_LEVEL", "ERROR")
+# XFORMERS_FORCE_DISABLE_TRITON: skips xformers' own triton-availability probe
+# (transitively imported here) that otherwise logs a full traceback for the
+# expected, harmless `ModuleNotFoundError: No module named 'triton'` on this
+# machine (triton has no supported native-Windows build). We never rely on
+# xformers' triton-fused kernels, so there's no behavior to lose.
+os.environ.setdefault("XFORMERS_FORCE_DISABLE_TRITON", "1")
 
 import numpy as np
 import torch
 from depth_anything_3.api import DepthAnything3
+from huggingface_hub.errors import LocalEntryNotFoundError
 
 # Apache 2.0 checkpoint, single-image *metric* depth (real meters, not just
 # relative-scale) -- the monocular metric checkpoint is Apache 2.0 even at
@@ -39,7 +58,16 @@ class DepthAnything3Adapter:
         self._model: DepthAnything3 | None = None
 
     def load(self) -> None:
-        self._model = DepthAnything3.from_pretrained(MODEL_NAME, cache_dir=CHECKPOINT_CACHE_DIR)
+        # Try the local cache first (silent, no network call at all once this
+        # checkpoint has been downloaded once -- matches this project's
+        # offline-first rule). Only reaches the Hub, and only prints the
+        # "unauthenticated requests" notice, on a genuine first-time download.
+        try:
+            self._model = DepthAnything3.from_pretrained(
+                MODEL_NAME, cache_dir=CHECKPOINT_CACHE_DIR, local_files_only=True
+            )
+        except LocalEntryNotFoundError:
+            self._model = DepthAnything3.from_pretrained(MODEL_NAME, cache_dir=CHECKPOINT_CACHE_DIR)
         self._model = self._model.to(device="cuda").eval()
 
     def infer(self, frame_path: str, focal_length_px: float) -> dict[str, np.ndarray]:
