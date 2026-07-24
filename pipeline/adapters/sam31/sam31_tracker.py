@@ -40,7 +40,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from pipeline.progress_tracker import StageName
+
 from .sam31_vitdet_backbone import IMG_SIZE, PATCH_SIZE, TrackerMode, _rotate_pairs, rope_2d
+
+from ...helpers.progress_reporter import frame_progress
 
 NO_OBJ_SCORE = -1024.0
 
@@ -1407,6 +1411,7 @@ class Sam31Tracker(nn.Module):
         self, backbone_fn, images: torch.Tensor, initial_masks: torch.Tensor | None, detect_fn=None,
         new_det_thresh: float = 0.5, max_objects: int = 0, detect_interval: int = 1,
         backbone_obj=None, target_device: torch.device | None = None, target_dtype: torch.dtype | None = None,
+        progress_label: str = StageName.STAGE_1_MASK_AND_TRACK.title,
     ) -> dict:
         """Track a clip with per-frame text-prompted detection (this project never passes
         `initial_masks`; new objects are found purely by `detect_fn`, built in
@@ -1431,7 +1436,7 @@ class Sam31Tracker(nn.Module):
         keep_alive: dict[int, int] | None = {} if detect_fn is not None else None
         last_occluded = torch.empty(0, device=device, dtype=torch.long)
 
-        for frame_idx in range(N):
+        for frame_idx in frame_progress(range(N), total=N, label=progress_label):
             frame = _prep_frame(images, slice(frame_idx, frame_idx + 1), device, dt, size)
             vision_feats, vision_pos, feat_sizes, high_res_prop, trunk_out = self._compute_backbone_frame(
                 backbone_fn, frame, frame_idx=frame_idx)

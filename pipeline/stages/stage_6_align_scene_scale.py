@@ -36,6 +36,7 @@ from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unpr
 from ..algorithms.similarity_transform import fit_scene_scale
 from ..pipeline_stage_base import cli_entrypoint
 from ..helpers.ply_export_helper import write_colored_ply
+from ..helpers.progress_reporter import report_single_shot
 from ..progress_tracker import ProgressRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS, OUTPUT_OBJECT_MASKS
 from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
@@ -165,7 +166,8 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     human_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_HUMAN_MASKS], anchor, depth_hw)
 
-    scale, translation, n_correspondences = fit_scene_scale(smplx_verts, depth, K, human_mask)
+    with report_single_shot(StageName.STAGE_6_ALIGN_SCENE_SCALE.title):
+        scale, translation, n_correspondences = fit_scene_scale(smplx_verts, depth, K, human_mask)
 
     scale_dir = Path(progress.progress_dir) / SCALE_DIRNAME
     scale_dir.mkdir(parents=True, exist_ok=True)

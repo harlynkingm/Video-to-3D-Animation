@@ -43,6 +43,8 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
+from pipeline.progress_tracker import StageName
+
 from .gvhmr_camera_math import compute_bbox_info_bedlam, compute_transl_full_cam, normalize_kp2d
 from .gvhmr_endecoder import EnDecoder
 from .gvhmr_hmr2 import GVHMRHMR2
@@ -52,6 +54,8 @@ from .gvhmr_rotation_math import axis_angle_to_matrix, matrix_to_axis_angle
 from .gvhmr_transformer import GVHMRTemporalTransformer
 from .gvhmr_translation_math import get_tgtcoord_rootparam, rollout_local_transl_vel
 from .gvhmr_vitpose import GVHMRViTPoseModel, estimate_keypoints
+
+from ...helpers.progress_reporter import frame_progress
 
 # Repo root is 3 levels up from this file (gvhmr/ -> adapters/ -> pipeline/ -> root).
 CHECKPOINT_DIR = Path(__file__).resolve().parents[3] / "checkpoints"
@@ -226,7 +230,7 @@ class GVHMRAdapter:
         bbx_xys_list, kp2d_list, f_imgseq_list = [], [], []
         last_bbox_xywh = None
         with torch.inference_mode():
-            for i, frame_path in enumerate(frame_paths):
+            for i, frame_path in frame_progress(enumerate(frame_paths), total=N, label=StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.title):
                 frame_bgr = cv2.imread(str(frame_path))
                 if frame_bgr is None:
                     raise RuntimeError(f"Could not read frame: {frame_path}")

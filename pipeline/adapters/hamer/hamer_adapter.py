@@ -28,6 +28,9 @@ import numpy as np
 import torch
 from safetensors import safe_open
 
+from pipeline.progress_tracker import StageName
+
+from ...helpers.progress_reporter import frame_progress
 from ...helpers.vit_huge_backbone import VitHugeBackbone
 from ..gvhmr.gvhmr_adapter import (
     VITPOSE_CHECKPOINT,
@@ -126,7 +129,7 @@ class HamerAdapter:
             KEY_RIGHT_VALID: np.zeros(n, bool),
         }
 
-        for i, frame_path in enumerate(frame_paths):
+        for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=StageName.STAGE_4_ESTIMATE_HANDS.title):
             frame_bgr = cv2.imread(str(frame_path))
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 

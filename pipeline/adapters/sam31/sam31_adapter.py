@@ -31,6 +31,8 @@ import cv2
 import torch
 from safetensors import safe_open
 
+from pipeline.progress_tracker import StageName
+
 from .sam31_clip_text import Sam31TextTower, encode_prompt, load_tokenizer
 from .sam31_detector import Sam31Detector
 from .sam31_tracker import KEY_MASKS, KEY_N_FRAMES, KEY_PACKED_MASKS, KEY_SCORES, Sam31Tracker
@@ -162,7 +164,7 @@ class Sam31Adapter:
             torch.cuda.empty_cache()
         self._loaded = False
 
-    def _track_one_prompt(self, images: _LazyFrameLoader, prompt: str) -> dict:
+    def _track_one_prompt(self, images: _LazyFrameLoader, prompt: str, progress_label: str) -> dict:
         """Run one full-clip tracking pass for a single prompt. Returns a single-object
         result -- see this module's docstring for why one prompt is tracked at a time.
         """
@@ -185,6 +187,7 @@ class Sam31Adapter:
                 backbone_fn, images, initial_masks=None, detect_fn=detect_fn,
                 new_det_thresh=0.5, max_objects=0, detect_interval=1,
                 backbone_obj=self.vision_backbone, target_device=self.device, target_dtype=self.dtype,
+                progress_label=progress_label,
             )
 
         if result[KEY_PACKED_MASKS] is None or not result[KEY_SCORES]:
@@ -214,6 +217,9 @@ class Sam31Adapter:
         packed mask format.
         """
         images = _LazyFrameLoader(frame_paths)
-        human_result = self._track_one_prompt(images, human_prompt)
-        object_result = self._track_one_prompt(images, object_prompt) if object_prompt else None
+        human_result = self._track_one_prompt(images, human_prompt, progress_label=StageName.STAGE_1A_HUMAN_MASK.title)
+        object_result = (
+            self._track_one_prompt(images, object_prompt, progress_label=StageName.STAGE_1B_OBJECT_MASK.title)
+            if object_prompt else None
+        )
         return {KEY_HUMAN: human_result, KEY_OBJECT: object_result}

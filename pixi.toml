@@ -60,6 +60,10 @@ safetensors = "*"
 huggingface-hub = ">=0.16.0"
 transformers = ">=4.40.0"
 pytest = ">=7.0"
+# Was already pulled in transitively by transformers; declared explicitly since
+# stage 1/2/4's own per-frame progress bars (pipeline/helpers/progress_reporter.py)
+# now import it directly, not just as an incidental dependency of another package.
+tqdm = ">=4.60.0"
 depth-anything-3 = ">=0.1.1"
 # depth-anything-3's own model code imports addict directly (depth_anything_3/model/da3.py)
 # but its pyproject.toml never declares it -- a real gap in the upstream package's

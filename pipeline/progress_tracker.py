@@ -26,16 +26,24 @@ PROGRESS_JSON_NAME = "progress.json"
 
 
 class StageName(enum.StrEnum):
-    STAGE_0_INGEST_VIDEO = "ingest_video"
-    STAGE_1_MASK_AND_TRACK = "mask_and_track"
-    STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion"
-    STAGE_3_ESTIMATE_DEPTH = "estimate_depth"
-    STAGE_4_ESTIMATE_HANDS = "estimate_hands"
-    STAGE_5_RETARGET_HANDS = "retarget_hands"
-    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale"
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts"
-    STAGE_8_OPTIMIZE_HOI = "optimize_hoi"
-    STAGE_9_EXPORT_FBX = "export_fbx"
+    def __new__(cls, value, title) -> StageName:
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.title = title
+        return obj
+
+    STAGE_0_INGEST_VIDEO = "ingest_video", "initial stage: processing video"
+    STAGE_1_MASK_AND_TRACK = "mask_and_track", "stage 1: generate masks"
+    STAGE_1A_HUMAN_MASK = "generate_human_mask", "stage 1: generate human mask"
+    STAGE_1B_OBJECT_MASK = "generate_object_mask", "stage 1: generate object mask"
+    STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion", "stage 2: estimate human motion"
+    STAGE_3_ESTIMATE_DEPTH = "estimate_depth", "stage 3: estimate scene depth"
+    STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion"
+    STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: fix hand tracking"
+    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: fix scene scale"
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: align human-object contact points"
+    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize animation"
+    STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: exporting animation"
 
 
 class StageStatus(enum.StrEnum):
@@ -66,6 +74,17 @@ class RunInput:
     dump_depth_preview: bool = False
     dump_scene_preview: bool = False
     dump_hands_preview: bool = False
+    dump_retarget_preview: bool = False
+
+    # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
+    # the defaults are tuned to need no adjustment; a power user can override them
+    # by hand-editing these fields in a run's progress.json before running stage
+    # 2/4. Body needs only light polish (GVHMR already runs a temporal model);
+    # hands need a heavier window (HaMeR infers each frame independently). See
+    # pipeline/algorithms/motion_smoothing.py.
+    body_smoothing_window: int = 9
+    body_translation_cutoff: float = 0.15
+    hand_smoothing_window: int = 15
 
 
 @dataclass

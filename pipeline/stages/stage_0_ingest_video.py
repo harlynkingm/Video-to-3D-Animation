@@ -11,6 +11,7 @@ from pathlib import Path
 import cv2
 
 from ..helpers.camera_info_helpers import compute_intrinsics_matrix
+from ..helpers.progress_reporter import frame_progress
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import StageName, ProgressRecord
 
@@ -29,18 +30,24 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     fps = capture.get(cv2.CAP_PROP_FPS)
     width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
 
     frames_dir = Path(progress.progress_dir) / "frames"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     frame_count = 0
-    while True:
-        success, frame = capture.read()
-        if not success:
-            break
-        frame_path = frames_dir / f"{frame_count:06d}.jpg"
-        cv2.imwrite(str(frame_path), frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-        frame_count += 1
+    with frame_progress(None, total=total_frames, label=StageName.STAGE_0_INGEST_VIDEO.title) as progress_update:
+        while True:
+            success, frame = capture.read()
+            if not success:
+                break
+            if frame_count >= progress_update.total:
+                progress_update.total = frame_count + 1
+                progress_update.refresh()
+            frame_path = frames_dir / f"{frame_count:06d}.jpg"
+            cv2.imwrite(str(frame_path), frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            frame_count += 1
+            progress_update.update(1)
     capture.release()
 
     if frame_count == 0:

@@ -20,6 +20,7 @@ from ..adapters.depth_anything3_adapter import DepthAnything3Adapter, KEY_DEPTH,
 from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unproject_depth_to_points
 from ..pipeline_stage_base import cli_entrypoint
 from ..helpers.ply_export_helper import write_colored_ply
+from ..helpers.progress_reporter import report_single_shot
 from ..progress_tracker import ProgressRecord, StageName
 
 # stage_0_ingest_video.py's own output key, consumed here.
@@ -76,7 +77,8 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     adapter = DepthAnything3Adapter()
     adapter.load()
     try:
-        result = adapter.infer(str(anchor_frame_path), focal_length_px)
+        with report_single_shot(StageName.STAGE_3_ESTIMATE_DEPTH.title):
+            result = adapter.infer(str(anchor_frame_path), focal_length_px)
     finally:
         adapter.unload()
 
