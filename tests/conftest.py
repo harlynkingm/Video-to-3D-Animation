@@ -31,6 +31,7 @@ from pipeline.stages import (
     stage_2_estimate_human_motion,
     stage_3_estimate_depth,
     stage_4_estimate_hands,
+    stage_5_retarget_hands,
     stage_6_align_scene_scale,
 )
 
@@ -74,6 +75,7 @@ def progress(tmp_path_factory) -> ProgressRecord:
         dump_motion_preview=True,
         dump_depth_preview=True,
         dump_scene_preview=True,
+        dump_retarget_preview=True,
     )
     return create_run(run_dir, run_input, run_id="test")
 
@@ -130,6 +132,20 @@ def stage_4_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 
     outputs = stage_4_estimate_hands.run(progress)
     progress.mark_progress(StageName.STAGE_4_ESTIMATE_HANDS, StageStatus.COMPLETE, outputs=outputs)
+    return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_5_result(
+    progress: ProgressRecord, stage_2_result: dict[str, str], stage_4_result: dict[str, str]
+) -> dict[str, str]:
+    # No GPU/checkpoints of its own, but SmplxSkeleton (for the kinematic tree)
+    # and the optional preview both need the registration-gated SMPL-X model file.
+    if not stage_6_align_scene_scale.SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    outputs = stage_5_retarget_hands.run(progress)
+    progress.mark_progress(StageName.STAGE_5_RETARGET_HANDS, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 

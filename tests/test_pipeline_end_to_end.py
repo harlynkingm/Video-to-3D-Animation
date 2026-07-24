@@ -19,9 +19,12 @@ from pathlib import Path
 import pytest
 import torch
 
+from pipeline.stages.stage_6_align_scene_scale import SMPLX_MODEL_PATH
+
 from conftest import (
     FOCAL_LENGTH_MM,
     GVHMR_CHECKPOINTS,
+    HAMER_CHECKPOINT,
     HUMAN_PROMPT,
     OBJECT_PROMPT,
     SAM31_CHECKPOINT,
@@ -30,8 +33,12 @@ from conftest import (
 )
 
 pytestmark = pytest.mark.skipif(
-    not torch.cuda.is_available() or not SAM31_CHECKPOINT.exists() or any(not p.exists() for p in GVHMR_CHECKPOINTS),
-    reason="needs a CUDA GPU and all four model checkpoints (see README's Setup section)",
+    not torch.cuda.is_available()
+    or not SAM31_CHECKPOINT.exists()
+    or not HAMER_CHECKPOINT.exists()
+    or not SMPLX_MODEL_PATH.exists()
+    or any(not p.exists() for p in GVHMR_CHECKPOINTS),
+    reason="needs a CUDA GPU, all model checkpoints, and the SMPL-X model file (see README's Setup section)",
 )
 
 
@@ -67,13 +74,14 @@ def test_full_pipeline_runs_end_to_end(tmp_path):
         "pipeline.stages.stage_2_estimate_human_motion",
         "pipeline.stages.stage_3_estimate_depth",
         "pipeline.stages.stage_4_estimate_hands",
+        "pipeline.stages.stage_5_retarget_hands",
         "pipeline.stages.stage_6_align_scene_scale",
     ):
         result = _run_stage(module, run_dir)
         assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    for stage_name in ("ingest_video", "mask_and_track", "estimate_human_motion", "estimate_depth", "estimate_hands", "align_scene_scale"):
+    for stage_name in ("ingest_video", "mask_and_track", "estimate_human_motion", "estimate_depth", "estimate_hands", "retarget_hands", "align_scene_scale"):
         assert progress_json["stages"][stage_name]["status"] == "complete"
 
     motion_path = Path(progress_json["stages"]["estimate_human_motion"]["outputs"]["human_motion"])
