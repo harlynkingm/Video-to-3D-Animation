@@ -8,8 +8,11 @@ fingers directly.
 Each hand is re-parented under a synthetic root and offset sideways so the two
 hands sit apart. Wrist orientation is the predicted `global_orient` (in the
 hand crop's camera frame -- this previews the raw stage 4 output, before any
-body reconciliation, which is stage 5's job). Frames where a hand wasn't
-detected fall back to the rest pose (identity).
+body reconciliation, which is stage 5's job). Stage 4 already fills in frames
+it couldn't detect (interpolating a recovered occlusion, freezing one that runs
+to either end of the clip), so this preview uses every frame's pose as-is; a
+hand never detected anywhere in the clip stays at the rest pose (identity),
+since there's nothing else to show.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from ...helpers.bvh_export import write_bvh
+from ...helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION, write_bvh
 from .hamer_adapter import (
     KEY_LEFT_GLOBAL_ORIENT,
     KEY_LEFT_HAND_POSE,
@@ -75,8 +78,13 @@ def _build_skeleton():
             offsets.append(rest[smplx_j] - rest[smplx_parents[smplx_j]])
             rot_sources.append((f"{side.lower()}_finger", k))
 
-    add_hand("Left", LEFT_WRIST, LEFT_FINGERS, np.array([-HAND_SEPARATION, 0.0, 0.0]))
-    add_hand("Right", RIGHT_WRIST, RIGHT_FINGERS, np.array([HAND_SEPARATION, 0.0, 0.0]))
+    # Offsets are in raw camera-space X before CAMERA_TO_BVH_ROOT_ROTATION is
+    # applied to the root below, which maps camera-space +X to world +Z -- and
+    # the real SMPL-X rest template has anatomical-left at positive camera-space
+    # X (confirmed against SMPLX_NEUTRAL.npz: LeftWrist x=+0.670, RightWrist
+    # x=-0.672), so "Left" gets the positive offset here, not negative.
+    add_hand("Left", LEFT_WRIST, LEFT_FINGERS, np.array([HAND_SEPARATION, 0.0, 0.0]))
+    add_hand("Right", RIGHT_WRIST, RIGHT_FINGERS, np.array([-HAND_SEPARATION, 0.0, 0.0]))
     return names, parents, np.stack(offsets), rot_sources
 
 
@@ -99,9 +107,14 @@ def dump_hands_bvh(hand_data: dict, fps: float, out_path: Path) -> None:
             if src == "root":
                 continue
             side = src[0].split("_")[0] if isinstance(src, tuple) else src.split("_")[0]
-            if not valid[side][f]:
-                continue
+            if not valid[side].any():
+                continue  # never detected anywhere in the clip -- nothing to show but rest pose
             aa = pose[src][f] if isinstance(src, str) else pose[f"{side}_finger"][f, src[1]]
             rotations[f, j] = Rotation.from_rotvec(aa).as_matrix()
+    # The synthetic root never gets a predicted rotation (it's just an anchor),
+    # so its identity default needs setting to the camera-space -> BVH fix
+    # directly -- unlike smplx_bvh_preview.py, there's no real root rotation to
+    # left-multiply it onto.
+    rotations[:, 0] = CAMERA_TO_BVH_ROOT_ROTATION
 
     write_bvh(out_path, names, parents, offsets, rotations, fps)

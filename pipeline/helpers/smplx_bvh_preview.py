@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
-from .bvh_export import write_bvh
+from .bvh_export import CAMERA_TO_BVH_ROOT_ROTATION, write_bvh
 
 # Repo root is 2 levels up (helpers/ -> pipeline/ -> root).
 SMPLX_MODEL_PATH = Path(__file__).resolve().parents[2] / "body_models" / "smplx" / "SMPLX_NEUTRAL.npz"
@@ -102,5 +102,8 @@ def dump_body_hands_bvh(
     for frame in range(n_frames):
         for out_i, smplx_idx in enumerate(INCLUDED_JOINTS):
             rotations[frame, out_i] = Rotation.from_rotvec(axis_angle_for(smplx_idx, frame)).as_matrix()
+    # Reorient the whole skeleton from camera space into BVH's Y-up convention
+    # by left-multiplying only the root (Pelvis, out_i 0)'s own rotation.
+    rotations[:, 0] = CAMERA_TO_BVH_ROOT_ROTATION @ rotations[:, 0]
 
     write_bvh(out_path, names, parents, offsets, rotations, fps)
