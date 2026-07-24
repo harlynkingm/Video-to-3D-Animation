@@ -28,10 +28,12 @@ from ..adapters.gvhmr.gvhmr_adapter import (
     KEY_BODY_POSE,
     KEY_GLOBAL_ORIENT,
     KEY_PRED_SMPL_PARAMS_GLOBAL,
+    KEY_PRED_SMPL_PARAMS_INCAM,
     KEY_TRANSL,
     GVHMRAdapter,
 )
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
+from ..algorithms.motion_smoothing import smooth_rotation_sequence, smooth_translation_sequence
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import ProgressRecord, StageName
 from .stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
@@ -86,6 +88,20 @@ def _dump_amass_npz(pred_smpl_params_global: dict, fps: float, out_path: Path) -
     )
 
 
+def _smooth_body_params(params: dict, window: int, cutoff: float) -> None:
+    """In place: temporally smooth one GVHMR param sub-dict's rotation
+    (global_orient + body_pose) and translation. betas is a shape parameter, not
+    motion, so it is left untouched. Always on -- GVHMR's raw output still has
+    residual jitter its temporal transformer doesn't fully remove."""
+    for rotation_key in (KEY_GLOBAL_ORIENT, KEY_BODY_POSE):
+        original = params[rotation_key]
+        smoothed = smooth_rotation_sequence(original.detach().cpu().numpy(), window)
+        params[rotation_key] = torch.from_numpy(smoothed).to(original.dtype)
+    original = params[KEY_TRANSL]
+    smoothed = smooth_translation_sequence(original.detach().cpu().numpy(), cutoff)
+    params[KEY_TRANSL] = torch.from_numpy(smoothed).to(original.dtype)
+
+
 def run(progress: ProgressRecord) -> dict[str, str]:
     frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
     frame_paths = sorted(frames_dir.glob("*.jpg"))
@@ -104,6 +120,13 @@ def run(progress: ProgressRecord) -> dict[str, str]:
         result = adapter.infer(frame_paths, masks, K_fullimg)
     finally:
         adapter.unload()
+
+    # Smooth both coordinate frames (incam feeds stage 5/6, global feeds the
+    # eventual export + this stage's Blender preview) before anything reads them.
+    window = progress.input.body_smoothing_window
+    cutoff = progress.input.body_translation_cutoff
+    _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
+    _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_GLOBAL], window, cutoff)
 
     motion_dir = Path(progress.progress_dir) / MOTION_DIRNAME
     motion_dir.mkdir(parents=True, exist_ok=True)

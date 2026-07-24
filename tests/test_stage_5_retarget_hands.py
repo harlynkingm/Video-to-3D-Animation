@@ -2,10 +2,13 @@
 
 The load-bearing math (the wrist change-of-basis) is checked with a GPU-free
 synthetic round-trip: after retargeting, forward-kinematics'ing the merged body
-must reproduce HaMeR's wrist global orientation on valid frames, and leave
-GVHMR's own wrist untouched on invalid ones. The remaining tests run the real
-stage output forward (needs the SMPL-X model file + the upstream stages' GPU
-work, skipped automatically otherwise -- see conftest.py).
+must reproduce HaMeR's wrist global orientation. Also covers the two
+occlusion-handling edge cases: a hand never detected anywhere in the clip keeps
+GVHMR's own wrist and flat fingers, while a hand detected at least once gets
+every frame reconciled (stage 4 has already gap-filled the undetected frames by
+this point). The remaining tests run the real stage output forward (needs the
+SMPL-X model file + the upstream stages' GPU work, skipped automatically
+otherwise -- see conftest.py).
 """
 
 from __future__ import annotations
@@ -65,27 +68,46 @@ def test_wrist_reconciliation_round_trip():
         assert torch.allclose(reproduced, target, atol=1e-4)
 
 
-def test_invalid_hand_keeps_body_wrist_and_flattens_fingers():
+def test_never_detected_hand_keeps_body_wrist_and_flat_fingers():
+    """A hand with zero real detections anywhere in the clip has nothing usable
+    to reconcile -- it keeps GVHMR's own wrist and flat (zero) fingers for its
+    entire duration."""
+    torch.manual_seed(1)
+    n = 3
+    body_pose = torch.randn(n, 63) * 0.3
+    right_valid = torch.zeros(n, dtype=torch.bool)
+
+    merged_body_pose, _, right_hand_out = retarget_hands(
+        torch.randn(n, 3) * 0.3, body_pose, SMPLX_BODY_PARENTS,
+        torch.randn(n, 3) * 0.5, torch.randn(n, 3) * 0.5,
+        torch.randn(n, 45) * 0.2, torch.randn(n, 45) * 0.2, torch.ones(n, dtype=torch.bool), right_valid,
+    )
+
+    assert torch.equal(merged_body_pose[:, _wrist_slot(RIGHT_WRIST)], body_pose[:, _wrist_slot(RIGHT_WRIST)])
+    assert torch.equal(right_hand_out, torch.zeros(n, 45))
+
+
+def test_hand_detected_at_least_once_reconciles_every_frame():
+    """A hand detected on only some frames still gets every frame reconciled and
+    copied, including the ones flagged invalid -- stage 4 has already gap-filled
+    (interpolated/frozen) those frames by the time this runs, so `left_valid`
+    here only decides whether the hand has any real data at all, not which
+    individual frames to trust."""
     torch.manual_seed(1)
     n = 3
     body_pose = torch.randn(n, 63) * 0.3
     left_hand_pose = torch.randn(n, 45) * 0.2
-    left_valid = torch.tensor([True, False, True])
-    right_valid = torch.zeros(n, dtype=torch.bool)
+    left_valid = torch.tensor([True, False, True])  # some frames flagged invalid
 
-    merged_body_pose, left_hand_out, right_hand_out = retarget_hands(
+    merged_body_pose, left_hand_out, _ = retarget_hands(
         torch.randn(n, 3) * 0.3, body_pose, SMPLX_BODY_PARENTS,
         torch.randn(n, 3) * 0.5, torch.randn(n, 3) * 0.5,
-        left_hand_pose, torch.randn(n, 45) * 0.2, left_valid, right_valid,
+        left_hand_pose, torch.randn(n, 45) * 0.2, left_valid, torch.zeros(n, dtype=torch.bool),
     )
 
-    # Left hand: frame 1 invalid -> body wrist untouched, fingers zeroed.
-    assert torch.equal(merged_body_pose[1, _wrist_slot(LEFT_WRIST)], body_pose[1, _wrist_slot(LEFT_WRIST)])
-    assert torch.equal(left_hand_out[1], torch.zeros(45))
-    assert torch.equal(left_hand_out[0], left_hand_pose[0])  # frame 0 valid -> copied
-    # Right hand never valid -> right wrist slots all unchanged, all fingers zero.
-    assert torch.equal(merged_body_pose[:, _wrist_slot(RIGHT_WRIST)], body_pose[:, _wrist_slot(RIGHT_WRIST)])
-    assert torch.equal(right_hand_out, torch.zeros(n, 45))
+    # Every frame reconciled/copied, not just the ones flagged valid.
+    assert torch.equal(left_hand_out, left_hand_pose)
+    assert not torch.equal(merged_body_pose[:, _wrist_slot(LEFT_WRIST)], body_pose[:, _wrist_slot(LEFT_WRIST)])
 
 
 def test_retarget_preview_is_structurally_valid(tmp_path):
@@ -138,8 +160,8 @@ def test_retarget_changes_wrists_and_copies_fingers(stage_5_result, stage_2_resu
     )
     assert left_wrist_changed
 
-    # Fingers on valid frames are copied verbatim from HaMeR.
-    left_valid = hands["left_valid"]
-    if left_valid.any():
-        got = merged[KEY_LEFT_HAND_POSE].numpy()[left_valid]
-        assert np.allclose(got, hands[KEY_LEFT_HAND_POSE][left_valid], atol=1e-5)
+    # Fingers are copied verbatim from stage 4's (already gap-filled) output --
+    # every frame now, not just the ones flagged valid, since a hand detected at
+    # least once anywhere in the clip has every frame reconciled.
+    if hands["left_valid"].any():
+        assert np.allclose(merged[KEY_LEFT_HAND_POSE].numpy(), hands[KEY_LEFT_HAND_POSE], atol=1e-5)

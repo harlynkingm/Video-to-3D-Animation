@@ -41,6 +41,8 @@ bash scripts/download_checkpoints.sh
 
 This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts the HaMeR checkpoint to a safetensors file, placing everything in `checkpoints/`. It skips files you already have and reminds you about the registration-gated body models that it can't fetch, if you don't have them downloaded.
 
+Once setup is complete, the pipeline runs fully offline.
+
 <details>
 <summary>Manual installation instructions</summary>
 If you want, you can download each file into `checkpoints/` yourself.
@@ -98,6 +100,7 @@ pixi run -e main python -m pipeline.create_run \
 | `--dump-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#stage-2-estimate-human-motion) below. |
 | `--dump-depth-preview` | No | off | Stage 3 also writes a colored `.ply` point cloud importable into Blender for visual spot-checking. See [stage 3](#stage-3-estimate-depth) below. |
 | `--dump-hands-preview` | No | off | Stage 4 also writes a `.bvh` hand-skeleton animation (both hands, bones only) importable into Blender for visual spot-checking. See [stage 4](#stage-4-estimate-hands) below. |
+| `--dump-retarget-preview` | No | off | Stage 5 also writes a `.bvh` full-body-plus-hands skeleton animation importable into Blender for confirming the hands sit correctly on the body. See [stage 5](#stage-5-retarget-hands) below. |
 | `--dump-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#stage-6-align-scene-scale) below. |
 </details>
 
@@ -109,6 +112,7 @@ pixi run -e main python -m pipeline.stages.stage_1_mask_and_track --progress-dir
 pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_3_estimate_depth --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_4_estimate_hands --progress-dir runs/my_clip
+pixi run -e main python -m pipeline.stages.stage_5_retarget_hands --progress-dir runs/my_clip
 pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale --progress-dir runs/my_clip
 ```
 
@@ -126,7 +130,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 2. Estimate human motion | `stage_2_estimate_human_motion` | `frames/*.jpg` <br> `masks/human.pt` | `motion/human_motion.pt` <br> `motion/blender_preview.npz` (optional) |
 | 3. Estimate depth | `stage_3_estimate_depth` | `frames/*.jpg` <br> anchor frame index in `progress.json` | `depth/anchor_depth.npy` <br> `depth/anchor_pointcloud.ply` (optional) |
 | 4. Estimate hands | `stage_4_estimate_hands` | `frames/*.jpg` <br> `masks/human.pt` | `hands/hand_pose.npz` <br> `hands/hands_preview.bvh` (optional) |
-| 5. Retarget hands *(not yet implemented)* | `stage_5_retarget_hands` | `motion/human_motion.pt` <br> hand pose params | unified per-frame SMPL-X body+hands sequence |
+| 5. Retarget hands | `stage_5_retarget_hands` | `motion/human_motion.pt` <br> `hands/hand_pose.npz` | `retarget/retargeted_motion.pt` <br> `retarget/retarget_preview.bvh` (optional) |
 | 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy` <br> `motion/human_motion.pt` <br> `masks/human.pt` | `scale/scene_scale.json` <br> `scale/scale_preview.ply` (optional). Object proxy shape (box/sphere) is planned here too but not yet implemented. |
 | 7. Annotate contacts *(not yet implemented)* | `stage_7_annotate_contacts` | SMPL-X sequence <br> object proxy shape | per-frame hand↔object contact points |
 | 8. Optimize HOI *(not yet implemented)* | `stage_8_optimize_hoi` | contact points <br> object proxy shape | refined SMPL-X sequence <br> per-frame object 6DoF pose |
@@ -136,7 +140,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 
 **Every stage skips itself if `progress.json` already shows it as complete.** Re-running the same command after a successful run just prints `already complete, skipping` rather than redoing the work. Pass `--force` to re-run a stage anyway.
 
-### Initial Stage: Ingest video
+### Initial Stage: Process video
 
 ```bash
 pixi run -e main python -m pipeline.stages.stage_0_ingest_video --progress-dir runs/my_clip
@@ -165,6 +169,10 @@ pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion --progr
 ```
 
 GVHMR turns the human mask into a 3D SMPL-X body pose animation. Works at any source video resolution, however larger frames mean more disk space and slightly slower per-frame I/O.
+
+The body motion is temporally smoothed before saving to remove residual per-frame jitter.
+
+If you want to tune the smoothing method yourself, edit `body_smoothing_window` (affecting rotation) or `body_translation_cutoff` (affecting root position) in the run's `progress.json` before running this stage. See [Motion smoothing](#motion-smoothing) below.
 
 <details>
 <summary><strong>Optional: 3D Motion Preview Output</strong></summary>
@@ -215,12 +223,32 @@ pixi run -e main python -m pipeline.stages.stage_4_estimate_hands --progress-dir
 
 HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand, crops in, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and validity per hand (a hand may be off-screen or too occluded in a given frame). Attaching it to the body happens in stage 5.
 
+Raw output is very jittery. This stage temporally smooths each hand before saving. To tune, edit `hand_smoothing_window` in the run's `progress.json`. See [Motion smoothing](#motion-smoothing) below.
+
 This stage requires the MANO body model (see [Setup](#setup)).
 
 <details>
 <summary><strong>Optional: Hand Skeleton Preview</strong></summary>
 
 Use `--dump-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
+</details>
+
+### Stage 5. Retarget hands
+
+```bash
+pixi run -e main python -m pipeline.stages.stage_5_retarget_hands --progress-dir runs/my_clip
+```
+
+Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/retarget/retargeted_motion.pt`. Frames where a hand wasn't detected keep GVHMR's own wrist and flat fingers.
+
+This stage requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
+
+<details>
+<summary><strong>Optional: Full Body and Hands Preview</strong></summary>
+
+Use `--dump-retarget-preview` when creating the run to also have this stage write `runs/my_clip/retarget/retarget_preview.bvh`, a bone-only animation of the whole body with the stage 4 hands attached. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**
+
+This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 </details>
 
 ### Stage 6. Align scene scale
@@ -237,9 +265,25 @@ The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage
 Use `--dump-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
 </details>
 
-### Stage 5, 7, 8, 9. Hand retargeting, contacts, optimization, FBX export
+### Stage 7, 8, 9. Contacts, optimization, FBX export
 
 Not yet implemented.
+
+## Motion smoothing
+
+Stage 2 (body) and stage 4 (hands) temporally smooth their output before saving. This is always on. The hands need much stronger smoothing than the body because HaMeR runs independently per frame, while GVHMR already runs a temporal model over the entire video.
+
+<details>
+<summary>Smoothness tuning</summary>
+
+If you want to tune the amount of smoothing, edit these fields in the run's `progress.json` before running stage 2 or 4:
+
+| Field | Default | Effect |
+|---|---|---|
+| `body_smoothing_window` | `9` | Savitzky-Golay window (odd, in frames) for body rotation. Larger is smoother but can smear fast motion. |
+| `body_translation_cutoff` | `0.15` | Butterworth low-pass cutoff (fraction of Nyquist) for the body root position. Lower is smoother but adds lag. |
+| `hand_smoothing_window` | `15` | Savitzky-Golay window (odd, in frames) for both hands. Larger is smoother; 15 removes about 90% of finger jitter while preserving genuine motion. |
+</details>
 
 ## Testing
 

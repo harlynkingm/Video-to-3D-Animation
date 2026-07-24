@@ -23,8 +23,15 @@ bring the hand estimator's coordinate frame into GVHMR's before the change of
 basis; whether HaMeR's crop-frame `global_orient` needs one is left to real-data
 verification rather than assumed here -- the seam is the wrist-global term below.
 
-Frames where a hand wasn't detected keep GVHMR's own wrist and get flat fingers,
-so a dropped detection degrades gracefully instead of snapping.
+Stage 4 already fills in the frames it couldn't detect (interpolating an
+occlusion that recovers, freezing one that runs to either end of the clip --
+see `motion_smoothing._fill_invalid`), so every frame of `left/right_wrist_global`
+and `left/right_hand_pose` is a usable pose whenever the hand was detected at
+least once anywhere in the clip. Only a hand that was *never once* detected in
+the whole clip has nothing usable to reconcile -- that one keeps GVHMR's own
+wrist and flat fingers for its entire duration, so a hand that's off-screen or
+too occluded the entire time degrades gracefully instead of reconciling against
+noise.
 """
 
 from __future__ import annotations
@@ -74,14 +81,18 @@ def retarget_hands(
         global_orient: (F, 3) GVHMR body root orientation (camera space).
         body_pose: (F, 63) GVHMR body pose (21 joints).
         parents: length-22 SMPL-X body kinematic tree (`parents[i]` before `i`).
-        left/right_wrist_global: (F, 3) HaMeR wrist global orientation.
-        left/right_hand_pose: (F, 45) HaMeR finger articulation (15 joints).
-        left/right_valid: (F,) bool, whether the hand was detected that frame.
+        left/right_wrist_global: (F, 3) HaMeR wrist global orientation, already
+            gap-filled by stage 4 for any frame the hand wasn't itself detected.
+        left/right_hand_pose: (F, 45) HaMeR finger articulation (15 joints), same.
+        left/right_valid: (F,) bool, the *raw* per-frame HaMeR detection record
+            (not gap-filled) -- used only to decide whether this hand has any
+            real data at all anywhere in the clip, not to gate individual frames.
 
     Returns:
         (merged_body_pose (F, 63), left_hand_pose (F, 45), right_hand_pose (F, 45)).
         `merged_body_pose` is `body_pose` with the two wrist slots replaced by the
-        HaMeR-reconciled rotations on valid frames, GVHMR's own wrist elsewhere.
+        HaMeR-reconciled rotations, for every frame of any hand detected at least
+        once; a hand never detected anywhere keeps GVHMR's own wrist throughout.
     """
     n_frames = global_orient.shape[0]
     local_aa = torch.cat([global_orient, body_pose], dim=1).reshape(n_frames, NUM_BODY_JOINTS, POSE_AXIS_DIM)
@@ -95,14 +106,18 @@ def retarget_hands(
         (LEFT_WRIST, LEFT_ELBOW, left_wrist_global, left_hand_pose, left_hand_out, left_valid),
         (RIGHT_WRIST, RIGHT_ELBOW, right_wrist_global, right_hand_pose, right_hand_out, right_valid),
     ):
+        if not bool(valid.any()):
+            continue  # never detected anywhere in the clip -- nothing usable to reconcile
+
         # Express HaMeR's global wrist orientation relative to GVHMR's forearm.
+        # Every frame is used, not just the originally-detected ones: stage 4
+        # already interpolated/froze the undetected frames into a usable pose.
         elbow_global = global_rot[:, elbow]  # (F, 3, 3)
         wrist_local = elbow_global.transpose(-1, -2) @ axis_angle_to_matrix(wrist_global)
         wrist_local_aa = matrix_to_axis_angle(wrist_local)  # (F, 3)
 
-        idx = valid.nonzero(as_tuple=True)[0]
         start = (wrist - 1) * POSE_AXIS_DIM  # wrist joint j -> body_pose slot (j-1)
-        merged_body_pose[idx, start : start + POSE_AXIS_DIM] = wrist_local_aa[idx]
-        hand_out[idx] = hand_pose[idx]
+        merged_body_pose[:, start : start + POSE_AXIS_DIM] = wrist_local_aa
+        hand_out[:] = hand_pose
 
     return merged_body_pose, left_hand_out, right_hand_out

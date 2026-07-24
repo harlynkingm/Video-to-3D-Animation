@@ -25,6 +25,7 @@ from ..adapters.hamer.hamer_adapter import (
     KEY_RIGHT_HAND_POSE,
     KEY_RIGHT_VALID,
 )
+from ..algorithms.motion_smoothing import smooth_rotation_sequence
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import ProgressRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
@@ -39,6 +40,30 @@ HANDS_PREVIEW_FILENAME = "hands_preview.bvh"
 # This stage's own progress.json output keys.
 OUTPUT_HAND_POSE = "hand_pose"
 OUTPUT_HANDS_PREVIEW = "hands_preview"
+
+
+def _smooth_hand_result(result: dict, window: int) -> None:
+    """In place: temporally smooth each hand's finger articulation + wrist
+    orientation. This is the stage that most needs it -- HaMeR runs per-frame
+    with no temporal model, so its raw hands are far jitterier than GVHMR's body.
+
+    Occlusion handling: `smooth_rotation_sequence`'s validity-aware gap fill
+    already gives the right behavior for free, via `np.interp`'s own boundary
+    semantics -- an *interior* occlusion (the hand is later detected again) is
+    linearly interpolated between the last-seen and next-seen pose; a *trailing*
+    (or leading) occlusion that never recovers has no second endpoint to
+    interpolate toward, so it freezes at the nearest real detection instead. The
+    saved `*_valid` flags are left untouched -- still the literal, honest
+    per-frame HaMeR-detection record for any downstream consumer -- only the
+    pose arrays themselves are filled in for invalid frames rather than left at
+    a raw zero placeholder."""
+    for pose_key, global_orient_key, valid_key in (
+        (KEY_LEFT_HAND_POSE, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID),
+        (KEY_RIGHT_HAND_POSE, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID),
+    ):
+        valid = result[valid_key]
+        for rotation_key in (pose_key, global_orient_key):
+            result[rotation_key] = smooth_rotation_sequence(result[rotation_key], window, valid=valid)
 
 
 def run(progress: ProgressRecord) -> dict[str, str]:
@@ -58,6 +83,8 @@ def run(progress: ProgressRecord) -> dict[str, str]:
         result = adapter.infer(frame_paths, human_masks)
     finally:
         adapter.unload()
+
+    _smooth_hand_result(result, progress.input.hand_smoothing_window)
 
     hands_dir = Path(progress.progress_dir) / HANDS_DIRNAME
     hands_dir.mkdir(parents=True, exist_ok=True)
