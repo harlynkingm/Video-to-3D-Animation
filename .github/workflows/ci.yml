@@ -34,7 +34,7 @@ jobs:
         run: |
           Write-Host "=== Running pytest ==="
           # Run pytest and capture its exit code so logs include failures
-          pixi run -e main pytest tests/
+          pixi run -e main pytest tests/ -vv --tb=short
           if ($LASTEXITCODE -ne 0) {
             Write-Host "pytest failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
