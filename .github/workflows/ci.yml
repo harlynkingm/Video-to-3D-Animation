@@ -17,8 +17,8 @@ jobs:
         run: |
           Write-Host "=== pixi version ==="
           & $env:USERPROFILE\.pixi\bin\pixi.exe --version || pixi --version
-          Write-Host "Running: pixi install --yes (uses pixi.toml / pixi.lock)"
-          pixi install --yes
+          Write-Host "Running: pixi install (uses pixi.toml / pixi.lock)"
+          pixi install
 
       - name: Pixi environment diagnostics
         shell: pwsh
