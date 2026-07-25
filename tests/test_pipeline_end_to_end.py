@@ -44,8 +44,8 @@ pytestmark = pytest.mark.skipif(
 def _create_run(progress_dir: Path, *, object_prompt: str | None = OBJECT_PROMPT) -> subprocess.CompletedProcess:
     args = [
         sys.executable, "-m", "pipeline.create_run",
-        "--progress-dir", str(progress_dir),
-        "--video-path", str(TEST_VIDEO_PATH),
+        "--output-dir", str(progress_dir),
+        "--input-video", str(TEST_VIDEO_PATH),
         "--human-prompt", HUMAN_PROMPT,
         "--focal-length-mm", str(FOCAL_LENGTH_MM),
         "--sensor-width-mm", str(SENSOR_WIDTH_MM),
@@ -57,7 +57,7 @@ def _create_run(progress_dir: Path, *, object_prompt: str | None = OBJECT_PROMPT
 
 def _run_stage(module: str, progress_dir: Path, *extra_args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", module, "--progress-dir", str(progress_dir), *extra_args],
+        [sys.executable, "-m", module, "--output-dir", str(progress_dir), *extra_args],
         capture_output=True, text=True,
     )
 

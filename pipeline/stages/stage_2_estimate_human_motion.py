@@ -6,7 +6,7 @@ Depends on stage 1's human mask (for the per-frame bbox GVHMR needs), not
 just stage 0's frames -- see `gvhmr_adapter.py`'s module docstring for why no
 mask-to-video conversion is needed anywhere in this step.
 
-If `RunInput.dump_motion_preview` is set, also writes an AMASS-format `.npz` of
+If `RunInput.render_motion_preview` is set, also writes an AMASS-format `.npz` of
 the world-grounded ("global") motion -- importable into Blender via the
 already-installed `jtesch/smplx_blender_addon`'s own "Add Animation" operator
 (`anim_format="AMASS"`) for visual verification against a real, correctly-shaped
@@ -56,7 +56,7 @@ AMASS_POSE_DIM = 55 * 3
 _GVHMR_POSE_DIM = 3 + 63  # global_orient + body_pose -- everything GVHMR itself predicts
 
 
-def _dump_amass_npz(pred_smpl_params_global: dict, fps: float, out_path: Path) -> None:
+def _render_amass_npz(pred_smpl_params_global: dict, fps: float, out_path: Path) -> None:
     """Writes GVHMR's world-grounded pose as an AMASS `.npz`. Hand and face
     joints are left at zero (flat/neutral) -- GVHMR only ever predicts body
     pose; real hand pose is a later, not-yet-built stage (`retarget_hands`).
@@ -134,9 +134,9 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     torch.save(result, motion_path)
     outputs = {OUTPUT_HUMAN_MOTION: str(motion_path)}
 
-    if progress.input.dump_motion_preview:
+    if progress.input.render_motion_preview:
         preview_path = motion_dir / MOTION_PREVIEW_FILENAME
-        _dump_amass_npz(result[KEY_PRED_SMPL_PARAMS_GLOBAL], progress.scene.fps, preview_path)
+        _render_amass_npz(result[KEY_PRED_SMPL_PARAMS_GLOBAL], progress.scene.fps, preview_path)
         outputs[OUTPUT_MOTION_PREVIEW] = str(preview_path)
 
     return outputs

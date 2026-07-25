@@ -84,11 +84,11 @@ def progress(tmp_path_factory) -> ProgressRecord:
         object_prompt=OBJECT_PROMPT,
         focal_length_mm=FOCAL_LENGTH_MM,
         sensor_width_mm=SENSOR_WIDTH_MM,
-        dump_mask_previews=True,
-        dump_motion_preview=True,
-        dump_depth_preview=True,
-        dump_scene_preview=True,
-        dump_retarget_preview=True,
+        render_mask_previews=True,
+        render_motion_preview=True,
+        render_depth_preview=True,
+        render_scene_preview=True,
+        render_retarget_preview=True,
     )
     return create_run(run_dir, run_input, run_id="test")
 

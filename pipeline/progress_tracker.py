@@ -69,12 +69,12 @@ class RunInput:
     focal_length_mm: float = 0.0
     sensor_width_mm: float = 0.0
     anchor_frame_override: int | None = None
-    dump_mask_previews: bool = False
-    dump_motion_preview: bool = False
-    dump_depth_preview: bool = False
-    dump_scene_preview: bool = False
-    dump_hands_preview: bool = False
-    dump_retarget_preview: bool = False
+    render_mask_previews: bool = False
+    render_motion_preview: bool = False
+    render_depth_preview: bool = False
+    render_scene_preview: bool = False
+    render_hands_preview: bool = False
+    render_retarget_preview: bool = False
 
     # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
     # the defaults are tuned to need no adjustment; a power user can override them

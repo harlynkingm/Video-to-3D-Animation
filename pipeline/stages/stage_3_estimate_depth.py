@@ -35,7 +35,7 @@ OUTPUT_DEPTH = "anchor_depth"
 OUTPUT_DEPTH_PREVIEW = "anchor_pointcloud_preview"
 
 
-def _dump_pointcloud_preview(
+def _render_pointcloud_preview(
     depth: np.ndarray,
     sky: np.ndarray | None,
     anchor_frame_path: Path,
@@ -90,10 +90,10 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     outputs = {OUTPUT_DEPTH: str(depth_path)}
 
-    if progress.input.dump_depth_preview:
+    if progress.input.render_depth_preview:
         pointcloud_path = depth_dir / POINTCLOUD_FILENAME
         native_hw = (progress.scene.height, progress.scene.width)
-        _dump_pointcloud_preview(
+        _render_pointcloud_preview(
             result[KEY_DEPTH], result.get(KEY_SKY), anchor_frame_path, K, native_hw, pointcloud_path
         )
         outputs[OUTPUT_DEPTH_PREVIEW] = str(pointcloud_path)

@@ -291,14 +291,14 @@ def test_reject_biomechanically_implausible_wrist_isolated_spike_does_not_engulf
 def test_retarget_preview_is_structurally_valid(tmp_path):
     """The optional full-body-plus-hands BVH builds a valid animated skeleton.
     Needs only the SMPL-X model file (for joint offsets), no GPU/checkpoints."""
-    from pipeline.helpers.smplx_bvh_preview import SMPLX_MODEL_PATH, dump_body_hands_bvh
+    from pipeline.helpers.smplx_bvh_preview import SMPLX_MODEL_PATH, render_body_hands_bvh
 
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (see README's Setup section)")
 
     n = 6
     out = tmp_path / "retarget.bvh"
-    dump_body_hands_bvh(
+    render_body_hands_bvh(
         np.zeros((n, 3), np.float32), np.zeros((n, 63), np.float32),
         np.zeros((n, 45), np.float32), np.zeros((n, 45), np.float32),
         np.zeros((n, 3), np.float32), fps=30.0, out_path=out,
@@ -320,7 +320,7 @@ def test_retarget_preview_writes_real_root_translation(tmp_path):
     position channel must carry GVHMR's own translation, reoriented into BVH
     space the same way the root's rotation is, not a static zero."""
     from pipeline.helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
-    from pipeline.helpers.smplx_bvh_preview import SMPLX_MODEL_PATH, dump_body_hands_bvh
+    from pipeline.helpers.smplx_bvh_preview import SMPLX_MODEL_PATH, render_body_hands_bvh
 
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (see README's Setup section)")
@@ -329,7 +329,7 @@ def test_retarget_preview_writes_real_root_translation(tmp_path):
     transl = np.zeros((n, 3), np.float32)
     transl[0] = [1.0, 2.0, 3.0]
     out = tmp_path / "retarget_root_motion.bvh"
-    dump_body_hands_bvh(
+    render_body_hands_bvh(
         np.zeros((n, 3), np.float32), np.zeros((n, 63), np.float32),
         np.zeros((n, 45), np.float32), np.zeros((n, 45), np.float32),
         transl, fps=30.0, out_path=out,

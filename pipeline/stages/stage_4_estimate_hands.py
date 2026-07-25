@@ -227,11 +227,11 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     outputs = {OUTPUT_HAND_POSE: str(hand_pose_path)}
 
-    if progress.input.dump_hands_preview:
-        from ..adapters.hamer.hamer_bvh_preview import dump_hands_bvh
+    if progress.input.render_hands_preview:
+        from ..adapters.hamer.hamer_bvh_preview import render_hands_bvh
 
         preview_path = hands_dir / HANDS_PREVIEW_FILENAME
-        dump_hands_bvh(result, progress.scene.fps, preview_path)
+        render_hands_bvh(result, progress.scene.fps, preview_path)
         outputs[OUTPUT_HANDS_PREVIEW] = str(preview_path)
 
     return outputs

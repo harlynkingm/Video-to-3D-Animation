@@ -104,7 +104,7 @@ def _build_smplx_anchor_mesh(incam_params: dict, anchor_frame_index: int) -> np.
     return output.vertices.detach().numpy()[0]
 
 
-def _dump_scene_preview(
+def _render_scene_preview(
     smplx_verts: np.ndarray,
     depth: np.ndarray,
     K: np.ndarray,
@@ -185,14 +185,14 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     outputs = {OUTPUT_SCENE_SCALE: str(scene_scale_path)}
 
-    if progress.input.dump_scene_preview:
+    if progress.input.render_scene_preview:
         object_mask = None
         if OUTPUT_OBJECT_MASKS in stage_1_outputs:
             object_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_OBJECT_MASKS], anchor, depth_hw)
         frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
         anchor_frame_path = sorted(frames_dir.glob("*.jpg"))[anchor]
         scene_preview_path = scale_dir / SCENE_PREVIEW_FILENAME
-        _dump_scene_preview(
+        _render_scene_preview(
             smplx_verts, depth, K, scale, translation, human_mask, object_mask, anchor_frame_path, scene_preview_path
         )
         outputs[OUTPUT_SCENE_PREVIEW] = str(scene_preview_path)

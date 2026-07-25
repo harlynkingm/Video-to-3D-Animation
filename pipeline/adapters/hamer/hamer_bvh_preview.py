@@ -88,7 +88,7 @@ def _build_skeleton():
     return names, parents, np.stack(offsets), rot_sources
 
 
-def dump_hands_bvh(hand_data: dict, fps: float, out_path: Path) -> None:
+def render_hands_bvh(hand_data: dict, fps: float, out_path: Path) -> None:
     names, parents, offsets, rot_sources = _build_skeleton()
     n_frames = len(hand_data[KEY_LEFT_VALID])
     n_joints = len(names)

@@ -23,21 +23,29 @@ from typing import Callable
 from .progress_tracker import ProgressRecord, StageName, StageStatus
 
 
-def cli_entrypoint(run: Callable[[ProgressRecord], dict[str, str]], stage_name: StageName) -> None:
-    parser = argparse.ArgumentParser(description=f"Run the {stage_name} stage")
-    parser.add_argument("--progress-dir", required=True, help="Path to the run directory containing progress.json")
-    parser.add_argument("--force", action="store_true", help="Re-run even if this stage is already marked complete")
-    args = parser.parse_args()
+class StageDependenciesNotMetError(RuntimeError):
+    pass
 
-    progress = ProgressRecord.load(args.progress_dir)
 
+def run_stage(
+    progress: ProgressRecord,
+    run: Callable[[ProgressRecord], dict[str, str]],
+    stage_name: StageName,
+    force: bool = False,
+) -> bool:
+    """The dependency-check/skip/mark-progress logic shared by `cli_entrypoint`
+    (one stage per process, via each stage's own `--output-dir`/`--force` CLI)
+    and `pipeline.run` (the one-shot command, calling every stage's `run` in one
+    process). Returns whether the stage actually ran (False means it was already
+    complete and got skipped); raises `StageDependenciesNotMetError` if this
+    stage's dependencies aren't complete yet.
+    """
     if not progress.dependencies_met(stage_name):
-        print(f"{stage_name}: dependencies not met, aborting", file=sys.stderr)
-        sys.exit(1)
+        raise StageDependenciesNotMetError(f"{stage_name}: dependencies not met")
 
-    if progress.is_complete(stage_name) and not args.force:
+    if progress.is_complete(stage_name) and not force:
         print(f"{stage_name}: already complete, skipping (use --force to re-run)")
-        return
+        return False
 
     progress.mark_progress(stage_name, StageStatus.RUNNING)
     try:
@@ -47,3 +55,20 @@ def cli_entrypoint(run: Callable[[ProgressRecord], dict[str, str]], stage_name: 
         raise
 
     progress.mark_progress(stage_name, StageStatus.COMPLETE, outputs=outputs)
+    return True
+
+
+def cli_entrypoint(run: Callable[[ProgressRecord], dict[str, str]], stage_name: StageName) -> None:
+    parser = argparse.ArgumentParser(description=f"Run the {stage_name} stage")
+    parser.add_argument("-o", "--output-dir", dest="progress_dir", metavar="OUTPUT_DIR", required=True,
+                         help="Path to the run directory containing progress.json")
+    parser.add_argument("--force", action="store_true", help="Re-run even if this stage is already marked complete")
+    args = parser.parse_args()
+
+    progress = ProgressRecord.load(args.progress_dir)
+
+    try:
+        run_stage(progress, run, stage_name, force=args.force)
+    except StageDependenciesNotMetError as e:
+        print(f"{e}, aborting", file=sys.stderr)
+        sys.exit(1)

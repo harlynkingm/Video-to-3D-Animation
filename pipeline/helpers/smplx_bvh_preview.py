@@ -69,7 +69,7 @@ def _np(x: np.ndarray | torch.Tensor) -> np.ndarray:
     return x.detach().cpu().numpy() if isinstance(x, torch.Tensor) else np.asarray(x)
 
 
-def dump_body_hands_bvh(
+def render_body_hands_bvh(
     global_orient: np.ndarray | torch.Tensor,
     body_pose: np.ndarray | torch.Tensor,
     left_hand_pose: np.ndarray | torch.Tensor,

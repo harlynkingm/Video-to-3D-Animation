@@ -1,7 +1,7 @@
 """Stage 2 regression test: runs real GVHMR on stage 1's tracked human mask
 and checks the resulting SMPL-X body pose looks correct -- right shapes, no
 NaN/Inf, physically plausible joint rotations and translation, and (since
-`--dump-motion-preview` is on for these tests) a structurally valid AMASS
+`--render-motion-preview` is on for these tests) a structurally valid AMASS
 preview file. Needs the real GVHMR checkpoints and a CUDA GPU -- skipped
 automatically otherwise (see conftest.py).
 """

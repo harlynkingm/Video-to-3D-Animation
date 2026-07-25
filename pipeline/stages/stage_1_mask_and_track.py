@@ -7,7 +7,7 @@ otherwise the frame where the tracked object's mask has the largest area (a
 simple, real heuristic -- a refined version that also penalizes occlusion/
 fragmentation would be a reasonable future improvement, but isn't needed yet).
 
-If `RunInput.dump_mask_previews` is set, also writes one black/white JPEG per
+If `RunInput.render_mask_previews` is set, also writes one black/white JPEG per
 frame per tracked entity (white = masked region) -- a quick way to eyeball
 whether SAM 3.1 actually tracked the right thing, without writing a separate
 viewer. Off by default: it roughly doubles this stage's disk writes and isn't
@@ -53,7 +53,7 @@ def _resolve_anchor_frame(object_result: dict | None) -> int:
     return int(areas.argmax().item())
 
 
-def _dump_mask_previews(packed_masks: torch.Tensor, out_dir: Path, native_hw: tuple[int, int]) -> None:
+def _render_mask_previews(packed_masks: torch.Tensor, out_dir: Path, native_hw: tuple[int, int]) -> None:
     """One black/white JPEG per frame (white = the first tracked object's masked
     region -- this project only ever tracks one instance per prompt, see
     `sam31_adapter.py`'s module docstring), resized from SAM 3.1's own fixed
@@ -100,16 +100,16 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     human_path = masks_dir / HUMAN_MASKS_FILENAME
     torch.save(result[KEY_HUMAN], human_path)
     outputs[OUTPUT_HUMAN_MASKS] = str(human_path)
-    if progress.input.dump_mask_previews:
-        _dump_mask_previews(result[KEY_HUMAN][KEY_PACKED_MASKS], masks_dir / HUMAN_PREVIEW_DIRNAME, native_hw)
+    if progress.input.render_mask_previews:
+        _render_mask_previews(result[KEY_HUMAN][KEY_PACKED_MASKS], masks_dir / HUMAN_PREVIEW_DIRNAME, native_hw)
         outputs[OUTPUT_HUMAN_MASKS_PREVIEW] = str(masks_dir / HUMAN_PREVIEW_DIRNAME)
 
     if result[KEY_OBJECT] is not None and result[KEY_OBJECT][KEY_PACKED_MASKS] is not None:
         object_path = masks_dir / OBJECT_MASKS_FILENAME
         torch.save(result[KEY_OBJECT], object_path)
         outputs[OUTPUT_OBJECT_MASKS] = str(object_path)
-        if progress.input.dump_mask_previews:
-            _dump_mask_previews(result[KEY_OBJECT][KEY_PACKED_MASKS], masks_dir / OBJECT_PREVIEW_DIRNAME, native_hw)
+        if progress.input.render_mask_previews:
+            _render_mask_previews(result[KEY_OBJECT][KEY_PACKED_MASKS], masks_dir / OBJECT_PREVIEW_DIRNAME, native_hw)
             outputs[OUTPUT_OBJECT_MASKS_PREVIEW] = str(masks_dir / OBJECT_PREVIEW_DIRNAME)
 
     if progress.input.anchor_frame_override is not None:
