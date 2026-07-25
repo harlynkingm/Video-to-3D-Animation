@@ -16,7 +16,7 @@ jobs:
         shell: pwsh
         run: |
           Write-Host "=== pixi version ==="
-          & $env:USERPROFILE\.pixi\bin\pixi.exe --version || pixi --version
+          & "$env:USERPROFILE\.pixi\bin\pixi.exe" --version || pixi --version
           Write-Host "Running: pixi install (uses pixi.toml / pixi.lock)"
           pixi install -e main --locked
 
@@ -34,7 +34,7 @@ jobs:
         run: |
           Write-Host "=== Running pytest ==="
           # Run pytest and capture its exit code so logs include failures
-          pixi run -e main pytest tests/ || $LASTEXITCODE = $LASTEXITCODE
+          pixi run -e main pytest tests/
           if ($LASTEXITCODE -ne 0) {
             Write-Host "pytest failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
