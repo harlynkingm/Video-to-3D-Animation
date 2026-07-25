@@ -29,12 +29,30 @@ jobs:
           Write-Host "=== pip list inside pixi environment ==="
           pixi run -e main pip list
 
+      - name: Torch import sanity check (isolated)
+        shell: pwsh
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          Write-Host "=== Importing torch in isolation, before any test collection ==="
+          pixi run -e main python -u -c "print('importing torch...'); import torch; print('torch imported OK:', torch.__version__); print('cuda available:', torch.cuda.is_available())"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Bare torch import/cuda-check failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
+
       - name: Run tests
         shell: pwsh
+        env:
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
         run: |
           Write-Host "=== Running pytest ==="
-          # Run pytest and capture its exit code so logs include failures
-          pixi run -e main pytest tests/ -vv --tb=short
+          # Unbuffered + faulthandler so that if this crashes natively again,
+          # whatever ran before the crash is actually visible in the log
+          # instead of lost in an unflushed stdout buffer.
+          pixi run -e main python -u -m pytest tests/ -vv --tb=short
           if ($LASTEXITCODE -ne 0) {
             Write-Host "pytest failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE
