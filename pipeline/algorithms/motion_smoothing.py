@@ -17,21 +17,32 @@ Translation is smoothed with a zero-phase (filtfilt) Butterworth low-pass, which
 adds no lag. Ported from this project's own ComfyUI `SmoothSMPLMotion` node
 (savgol-in-quaternion + butterworth-filtfilt), extended here with validity-aware
 gap handling for the hands.
+
+Finger joints go through `one_euro_filter_rotation_sequence` instead: an
+adaptive filter that stays heavy (kills small residual wobble) while a joint is
+nearly still and loosens automatically (tracks with low lag) once it starts
+moving, all as one continuous blend -- no separate smoothing-then-hysteresis
+passes, and no discrete hold/release states to produce a stop-motion look. It
+replaced an earlier two-stage design (savgol, then a hard hold-until-threshold
+deadzone) that fixed a circular-precession artifact on still joints but visibly
+snapped on release, which read as more stop-motion than the jitter it fixed.
 """
 
 from __future__ import annotations
 
 import numpy as np
 from scipy.signal import butter, filtfilt, savgol_filter
-from scipy.spatial.transform import Rotation
+from scipy.spatial.transform import Rotation, Slerp
 
 POSE_AXIS_DIM = 3
 
-# Internal defaults -- the exposed knobs are the savgol *window* (per stage) and
-# the butterworth *cutoff* (body only); polynomial/filter order are left fixed at
-# the values the ComfyUI node proved out, since they're rarely worth touching.
+# Internal defaults -- the exposed knobs are the savgol *window* (per stage),
+# the butterworth *cutoff* (body only), and the one-euro filter's *min_cutoff*/
+# *beta* (fingers only); polynomial/filter order and the one-euro filter's own
+# derivative cutoff are left fixed at values that rarely need touching.
 DEFAULT_POLYORDER = 3
 DEFAULT_BUTTER_ORDER = 2
+DEFAULT_ONE_EURO_DCUTOFF_HZ = 1.0  # the "1€" in One Euro Filter -- the paper's own standard default
 
 
 def _odd_window(window: int, n_frames: int) -> int | None:
@@ -64,6 +75,27 @@ def _fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     for channel in range(values.shape[1]):
         filled[:, channel] = np.interp(frame_idx, valid_idx, values[valid, channel])
     return filled
+
+
+def _hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | None) -> np.ndarray:
+    """One joint's (T, 3) axis-angle sequence -> (T, 4) xyzw quaternions, sign
+    -continuity enforced across *detected* frames (a unit quaternion and its
+    negation are the same rotation, so each is flipped to share a hemisphere
+    with the previous real one -- otherwise interpolation/filtering treats a
+    sign flip as a huge jump), then gap-filled per `_fill_invalid` if `valid` is
+    given. Shared by both rotation-smoothing functions below so the fiddly
+    continuity/gap-fill logic exists in exactly one place."""
+    quats = Rotation.from_rotvec(joint_axis_angle).as_quat()  # (T, 4) xyzw
+    n_frames = quats.shape[0]
+    last = None
+    for t in range(n_frames):
+        if valid is None or valid[t]:
+            if last is not None and float(np.dot(quats[t], last)) < 0:
+                quats[t] = -quats[t]
+            last = quats[t]
+    if valid is not None:
+        quats = _fill_invalid(quats, valid)
+    return quats
 
 
 def smooth_rotation_sequence(
@@ -106,22 +138,7 @@ def smooth_rotation_sequence(
 
     out = np.zeros_like(joints)
     for j in range(n_joints):
-        quats = Rotation.from_rotvec(joints[:, j, :]).as_quat()  # (T, 4) xyzw
-
-        # Sign-continuity across *detected* frames: a unit quaternion and its
-        # negation are the same rotation, so flip each so it shares a hemisphere
-        # with the previous real one -- otherwise interpolation/filtering treats a
-        # sign flip as a huge jump.
-        last = None
-        for t in range(n_frames):
-            if valid is None or valid[t]:
-                if last is not None and float(np.dot(quats[t], last)) < 0:
-                    quats[t] = -quats[t]
-                last = quats[t]
-
-        if valid is not None:
-            quats = _fill_invalid(quats, valid)
-
+        quats = _hemisphere_aligned_quats(joints[:, j, :], valid)
         smoothed = savgol_filter(quats, w, poly, axis=0)
         norms = np.linalg.norm(smoothed, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
@@ -129,6 +146,288 @@ def smooth_rotation_sequence(
         out[:, j, :] = Rotation.from_quat(smoothed).as_rotvec()
 
     return out.reshape(original_shape).astype(axis_angle.dtype, copy=False)
+
+
+def _one_euro_alpha(cutoff_hz: float, dt: float) -> float:
+    """Exponential-smoothing weight for a first-order low-pass at `cutoff_hz`,
+    sampled every `dt` seconds (the One Euro Filter's own formula: higher
+    cutoff -> alpha closer to 1 -> more weight on the new sample, less lag)."""
+    tau = 1.0 / (2.0 * np.pi * cutoff_hz)
+    return 1.0 / (1.0 + tau / dt)
+
+
+def _slerp(q0: np.ndarray, q1: np.ndarray, frac: float) -> np.ndarray:
+    """Spherical interpolation from unit quaternion q0 toward q1 by `frac`
+    (0 -> q0, 1 -> q1), taking the shorter path across the double-cover."""
+    dot = float(np.dot(q0, q1))
+    if dot < 0.0:
+        q1, dot = -q1, -dot
+    dot = min(dot, 1.0)
+    if dot > 0.9995:  # nearly identical -- linear blend avoids dividing by sin(angle)~0
+        result = q0 + frac * (q1 - q0)
+        return result / np.linalg.norm(result)
+    angle = np.arccos(dot)
+    sin_angle = np.sin(angle)
+    return (np.sin((1.0 - frac) * angle) / sin_angle) * q0 + (np.sin(frac * angle) / sin_angle) * q1
+
+
+def one_euro_filter_rotation_sequence(
+    axis_angle: np.ndarray,
+    fps: float,
+    min_cutoff_hz: float,
+    beta: float,
+    dcutoff_hz: float = DEFAULT_ONE_EURO_DCUTOFF_HZ,
+    valid: np.ndarray | None = None,
+) -> np.ndarray:
+    """Adaptively smooth a per-frame rotation sequence: heavy smoothing while a
+    joint is nearly still, loosening automatically (low lag) once it starts
+    moving -- the One Euro Filter (Casiez, Roussel & Vogel 2012), adapted for
+    rotations.
+
+    The paper's own filter operates on independent scalars (e.g. a cursor's x
+    and y separately). Doing that naively per quaternion component here would
+    let each of the 4 components pick its own adaptive cutoff per frame based
+    on its own local behaviour -- reintroducing a subtler version of the exact
+    artifact this replaced (per-component quaternion filtering + renormalizing
+    can distort the true rotation axis). Instead, one shared speed estimate
+    drives the whole joint, computed the way the paper's own derivative is:
+    a *signed* angular-velocity vector between consecutive raw samples
+    (the relative rotation's axis-angle, scaled by 1/dt) -- not its magnitude.
+    That vector is smoothed component-wise by its own fixed-cutoff low-pass
+    (`dcutoff_hz`) *before* taking its norm to get a scalar speed. Filtering the
+    signed vector first matters: opposite-direction noise cancels on averaging,
+    the way the paper's own signed scalar derivative does. Filtering the
+    magnitude instead (as an earlier version of this function did) cannot --
+    a magnitude is never negative, so rectified per-frame noise has a nonzero
+    mean no matter how heavily it's smoothed, confirmed on real data: even a
+    very heavy low-pass left a persistent, non-shrinking "speed" floor at rest,
+    which kept nudging the cutoff up and let noise leak through as a persistent
+    low-amplitude wobble rather than the intended calm hold. The resulting
+    scalar speed sets one adaptive cutoff per frame, which blends the previous
+    filtered orientation toward the new raw one via proper quaternion slerp --
+    a single rotation-aware decision per frame, not four independent scalar ones.
+
+    Args:
+        axis_angle: (T, ...) where the trailing dims flatten to a multiple of 3,
+            same convention as `smooth_rotation_sequence`.
+        fps: sample rate (frames/sec) -- the filter's notion of real time.
+        min_cutoff_hz: cutoff at zero speed. Lower = smoother/more lag at rest.
+        beta: how fast the cutoff rises with speed. Higher = faster response to
+            real motion, at the cost of passing more raw jitter through while moving.
+        dcutoff_hz: fixed cutoff for smoothing the speed estimate itself.
+        valid: optional (T,) bool, gap-filled the same way as
+            `smooth_rotation_sequence` -- see `_fill_invalid`.
+
+    Returns the same shape/dtype. Returned unchanged when there are fewer than
+    2 frames, or fewer than 2 valid frames to filter from.
+    """
+    axis_angle = np.asarray(axis_angle)
+    original_shape = axis_angle.shape
+    n_frames = original_shape[0]
+    if n_frames < 2:
+        return axis_angle
+    flat = axis_angle.reshape(n_frames, -1)
+    if flat.shape[1] % POSE_AXIS_DIM != 0:
+        raise ValueError(f"rotation sequence trailing dims not divisible by 3: {original_shape}")
+    n_joints = flat.shape[1] // POSE_AXIS_DIM
+    joints = flat.reshape(n_frames, n_joints, POSE_AXIS_DIM)
+
+    if valid is not None:
+        valid = np.asarray(valid, dtype=bool)
+        if int(valid.sum()) < 2:
+            return axis_angle  # too few real frames to estimate speed from
+
+    dt = 1.0 / fps
+    speed_alpha = _one_euro_alpha(dcutoff_hz, dt)  # fixed given dcutoff/dt -- same every frame
+    out = np.zeros_like(joints)
+    for j in range(n_joints):
+        quats = _hemisphere_aligned_quats(joints[:, j, :], valid)
+
+        # Signed angular-velocity vector between every consecutive pair of raw
+        # samples, computed once for the whole sequence (not recursive, so no
+        # need for a per-frame loop here) -- the relative rotation's own
+        # axis-angle, scaled by 1/dt.
+        r = Rotation.from_quat(quats)
+        omega_seq = (r[1:] * r[:-1].inv()).as_rotvec() / dt  # (T-1, 3)
+
+        filtered = np.empty_like(quats)
+        filtered[0] = quats[0]
+        smoothed_omega = np.zeros(3)
+        for t in range(1, n_frames):
+            smoothed_omega = speed_alpha * omega_seq[t - 1] + (1.0 - speed_alpha) * smoothed_omega
+            speed = float(np.linalg.norm(smoothed_omega))
+
+            value_alpha = _one_euro_alpha(min_cutoff_hz + beta * speed, dt)
+            filtered[t] = _slerp(filtered[t - 1], quats[t], value_alpha)
+
+        out[:, j, :] = Rotation.from_quat(filtered).as_rotvec()
+
+    return out.reshape(original_shape).astype(axis_angle.dtype, copy=False)
+
+
+def _rdp_knot_indices(n_frames: int, tol: float, fit, error) -> np.ndarray:
+    """Ramer-Douglas-Peucker knot selection, generalized over what "straight-line
+    fit" and "deviation" mean -- the same recursive tree shared by both rotation
+    (quaternion slerp, geodesic error) and translation (linear interpolation,
+    Euclidean error) decimation below; only `fit`/`error` differ per domain.
+
+    Returns the sorted frame indices (always including both endpoints) of a
+    sparse keyframe set such that `fit`'s interpolation between consecutive kept
+    knots stays within `tol` of every original in-between frame, per `error`.
+    This is the general form of what Blender's Decimate (Allowed Change) does
+    per F-curve: recursively keep the single worst-fit frame as a new knot until
+    the fit is everywhere within tolerance.
+
+    Args:
+        n_frames: length of the sequence being decimated.
+        tol: max allowed deviation, in `error`'s own units.
+        fit(a, b, idx): interpolates anchors at frames a, b, evaluated at the
+            frame indices in `idx` (an array of interior frames between a, b).
+        error(fitted, idx): per-frame scalar deviation of `fitted` from the
+            true samples at `idx`.
+    """
+    keep = np.zeros(n_frames, dtype=bool)
+    keep[0] = keep[-1] = True
+    stack = [(0, n_frames - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b - a < 2:
+            continue  # no interior frames between these two knots
+        idx = np.arange(a + 1, b)
+        err = error(fit(a, b, idx), idx)
+        worst = int(err.argmax())
+        if err[worst] > tol:
+            mid = a + 1 + worst
+            keep[mid] = True
+            stack.append((a, mid))
+            stack.append((mid, b))
+    return np.flatnonzero(keep)
+
+
+def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, valid: np.ndarray | None = None) -> np.ndarray:
+    """Replace a per-frame rotation sequence with a mathematically smooth curve
+    fitted through a sparse set of keyframes -- keyframe reduction, the way an
+    animator would clean up mocap by hand (Blender's Decimate), but done in
+    quaternion space instead of per Euler channel.
+
+    Unlike a filter, which is a moving average that always leaves *some* residual
+    of the input jitter in its passband, this removes jitter outright: the output
+    between keyframes is a fitted curve with no degrees of freedom to wiggle, so
+    high-frequency content is gone by construction. `tolerance_deg` is the one
+    knob -- the maximum angular deviation (degrees) the fitted curve is allowed
+    from the original: larger means fewer keyframes and a smoother, flatter curve
+    that departs further from the raw motion; smaller hugs the input more tightly
+    (and, past a point, starts preserving its jitter again).
+
+    Knots are chosen by geodesic-error RDP (`_rdp_knot_indices`); the full
+    per-frame sequence is then rebuilt by slerping between consecutive knots. A
+    smooth C2 spline was tried for the reconstruction (to soften the velocity
+    "snap" at a hard direction-change knot) but rejected: it overshoots between
+    sparse knots, swinging the fit several times `tolerance_deg` past the real
+    pose -- both a new artifact of its own and a broken tolerance guarantee.
+    Slerp instead keeps the output provably within `tolerance_deg` of the input,
+    and at the knot densities this runs at (the flat regions decimate hard, the
+    fast regions keep most frames as knots) the segments are short enough that
+    the residual snap is not visible.
+
+    Args:
+        axis_angle: (T, ...) trailing dims flatten to a multiple of 3, same
+            convention as the smoothing functions above.
+        tolerance_deg: max allowed angular deviation of the fit, in degrees.
+        valid: optional (T,) bool, gap-filled the same way as
+            `smooth_rotation_sequence` before fitting -- see `_fill_invalid`. The
+            occlusion contract survives decimation: a frozen (constant) trailing
+            gap keeps needing no interior knots, and a linearly-interpolated
+            interior gap is already representable by its two bounding knots.
+
+    Returns the same shape/dtype. Returned unchanged when the clip is too short
+    (< 3 frames), or when `valid` marks too few real frames to fit through
+    (mirrors `smooth_rotation_sequence`/`one_euro_filter_rotation_sequence`'s
+    own guard -- with zero real frames there's nothing for `_fill_invalid` to
+    interpolate from).
+    """
+    axis_angle = np.asarray(axis_angle)
+    original_shape = axis_angle.shape
+    n_frames = original_shape[0]
+    if n_frames < 3:
+        return axis_angle
+    flat = axis_angle.reshape(n_frames, -1)
+    if flat.shape[1] % POSE_AXIS_DIM != 0:
+        raise ValueError(f"rotation sequence trailing dims not divisible by 3: {original_shape}")
+    n_joints = flat.shape[1] // POSE_AXIS_DIM
+    joints = flat.reshape(n_frames, n_joints, POSE_AXIS_DIM)
+
+    if valid is not None:
+        valid = np.asarray(valid, dtype=bool)
+        if int(valid.sum()) < 2:
+            return axis_angle  # too few real frames to fit through
+
+    tol_rad = np.radians(tolerance_deg)
+    all_frames = np.arange(n_frames, dtype=float)
+    out = np.zeros_like(joints)
+    for j in range(n_joints):
+        quats = _hemisphere_aligned_quats(joints[:, j, :], valid)
+
+        def fit(a, b, idx, quats=quats):
+            return Slerp([a, b], Rotation.from_quat(quats[[a, b]]))(idx)
+
+        def error(fitted, idx, quats=quats):
+            return (fitted * Rotation.from_quat(quats[idx]).inv()).magnitude()
+
+        knots = _rdp_knot_indices(n_frames, tol_rad, fit, error)
+        if knots.shape[0] >= n_frames:  # every frame kept -- nothing to fit
+            out[:, j, :] = joints[:, j, :]
+            continue
+        arc = Slerp(knots.astype(float), Rotation.from_quat(quats[knots]))
+        out[:, j, :] = arc(all_frames).as_rotvec()
+
+    return out.reshape(original_shape).astype(axis_angle.dtype, copy=False)
+
+
+def decimate_translation_sequence(transl: np.ndarray, tolerance_m: float) -> np.ndarray:
+    """Translation counterpart to `decimate_rotation_sequence`, sharing its RDP
+    core (`_rdp_knot_indices`) with a Euclidean fit/error instead of a
+    geodesic/slerp one -- straight-line RDP is in fact the classic Douglas-
+    Peucker algorithm's original domain (cartographic point simplification);
+    quaternion decimation above is the generalization, not the other way round.
+
+    `tolerance_m` is the max allowed straight-line deviation, in meters, exactly
+    analogous to `tolerance_deg` for rotations: larger means fewer keyframes and
+    a flatter curve: enough to hold a near-still root motionless instead of
+    letting it float, without needing a separate lock/release/hysteresis
+    mechanism to get there.
+
+    Reconstruction reuses `_fill_invalid` rather than a bespoke linear
+    interpolant: from that function's point of view, the frames that AREN'T
+    kept as knots are exactly the "invalid" gap it already knows how to
+    linearly interpolate across, with the knots standing in as the "valid" frames.
+
+    Args:
+        transl: (T, 3) root translation.
+        tolerance_m: max allowed deviation of the fit, in meters.
+
+    Returns the same shape/dtype. Returned unchanged when the clip is too short
+    (< 3 frames) to have any interior frame to drop.
+    """
+    transl = np.asarray(transl)
+    n_frames = transl.shape[0]
+    if n_frames < 3:
+        return transl
+
+    def fit(a, b, idx):
+        t = (idx - a) / (b - a)
+        return transl[a] + t[:, None] * (transl[b] - transl[a])
+
+    def error(fitted, idx):
+        return np.linalg.norm(fitted - transl[idx], axis=1)
+
+    knots = _rdp_knot_indices(n_frames, tolerance_m, fit, error)
+    if knots.shape[0] >= n_frames:  # every frame kept -- nothing to fit
+        return transl
+
+    knot_mask = np.zeros(n_frames, dtype=bool)
+    knot_mask[knots] = True
+    return _fill_invalid(transl, knot_mask).astype(transl.dtype, copy=False)
 
 
 def smooth_translation_sequence(transl: np.ndarray, cutoff: float, order: int = DEFAULT_BUTTER_ORDER) -> np.ndarray:

@@ -20,9 +20,19 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     StageName.STAGE_1_MASK_AND_TRACK: [StageName.STAGE_0_INGEST_VIDEO],
     StageName.STAGE_2_ESTIMATE_HUMAN_MOTION: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
     StageName.STAGE_3_ESTIMATE_DEPTH: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
-    # estimate_hands needs the person mask (stage 1) to locate the person, then
-    # its own ViTPose pass to locate the hands -- independent of body motion.
-    StageName.STAGE_4_ESTIMATE_HANDS: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
+    # estimate_hands needs the person mask (stage 1) to locate the person, its
+    # own ViTPose pass to locate the hands, AND the body motion (stage 2): a
+    # hand is an extension of the arm, not an independent tracked object, and
+    # stage 4 checks every raw wrist estimate against GVHMR's own elbow
+    # orientation for biomechanical plausibility before its own smoothing runs
+    # (see stage_4_estimate_hands.py's module docstring). This is a real
+    # kinematic dependency, not just an implementation convenience, so hands and
+    # body motion no longer run in parallel.
+    StageName.STAGE_4_ESTIMATE_HANDS: [
+        StageName.STAGE_0_INGEST_VIDEO,
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+    ],
     # retarget_hands attaches the stage-4 hands onto the stage-2 body -- it needs
     # both, and nothing else.
     StageName.STAGE_5_RETARGET_HANDS: [

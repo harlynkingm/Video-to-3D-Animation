@@ -144,12 +144,21 @@ def stage_3_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 
 
 @pytest.fixture(scope="session")
-def stage_4_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
+def stage_4_result(
+    progress: ProgressRecord, stage_1_result: dict[str, str], stage_2_result: dict[str, str]
+) -> dict[str, str]:
+    # Depends on stage_2_result (not just stage_1_result) now: stage 4 checks
+    # every raw wrist estimate against GVHMR's own elbow orientation for
+    # biomechanical plausibility before its own smoothing runs, so it needs the
+    # body motion, and (via SmplxSkeleton) the SMPL-X model file for the
+    # kinematic tree.
     if not torch.cuda.is_available():
         pytest.skip("needs a CUDA GPU")
     missing = [p.name for p in (HAMER_CHECKPOINT, VITPOSE_CHECKPOINT) if not p.exists()]
     if missing:
         pytest.skip(f"needs the HaMeR + ViTPose checkpoints (missing: {missing}; see README's Setup section)")
+    if not SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
 
     from pipeline.stages import stage_4_estimate_hands
 

@@ -18,6 +18,8 @@ from pipeline.adapters.hamer.hamer_adapter import (
     KEY_RIGHT_GLOBAL_ORIENT,
     KEY_RIGHT_HAND_POSE,
     KEY_RIGHT_VALID,
+    MIN_ROLLING_WRIST_CONFIDENCE,
+    _reject_low_confidence_stretches,
 )
 from conftest import TEST_VIDEO_FRAME_COUNT
 
@@ -57,6 +59,61 @@ def test_hand_motion_is_temporally_smooth(stage_4_result):
     pose = data[KEY_RIGHT_HAND_POSE]
     frame_deltas = np.linalg.norm(np.diff(pose, axis=0), axis=1)
     assert frame_deltas.max() < MAX_PLAUSIBLE_FRAME_DELTA
+
+
+def test_confidence_gate_rejects_a_low_confidence_stretch():
+    """A body-occluded wrist (real HaMeR still returns *a* pose, confidently
+    wrong) is caught by dips in wrist keypoint confidence, not by the pose
+    itself -- see hamer_adapter's module docstring for why a kinematic check
+    was tried and rejected in favor of this."""
+    n = 30
+    valid = np.ones(n, bool)
+    conf = np.full(n, 0.9)
+    conf[12:20] = 0.4  # a stretch of low confidence, as if occluded
+
+    gated = _reject_low_confidence_stretches(valid, conf)
+
+    assert not gated[12:20].any()
+    # Well outside the rolling window's reach from the low stretch (half-window
+    # of 3 frames either side of it).
+    assert gated[:9].all()
+    assert gated[23:].all()
+
+
+def test_confidence_gate_catches_a_blip_inside_an_occluded_stretch():
+    """A single frame's confidence can bounce back above threshold in the
+    middle of an otherwise-occluded stretch (ViTPose momentarily picking up a
+    partial cue) -- the rolling MIN, not the frame's own raw confidence, is
+    what still rejects it, since its neighbors are still low."""
+    n = 30
+    valid = np.ones(n, bool)
+    conf = np.full(n, 0.9)
+    conf[12:20] = 0.4
+    conf[16] = 0.9  # one-frame blip back up to "confident", still mid-occlusion
+
+    gated = _reject_low_confidence_stretches(valid, conf)
+
+    assert not gated[16]  # still rejected -- neighbors are still low
+    assert not gated[12:20].any()
+
+
+def test_confidence_gate_never_resurrects_an_already_invalid_frame():
+    """A frame already marked invalid upstream (no box at all) must stay
+    invalid regardless of confidence -- the gate can only narrow validity, not
+    widen it."""
+    n = 10
+    valid = np.zeros(n, bool)
+    conf = np.full(n, 0.9)  # high confidence everywhere, doesn't matter
+    gated = _reject_low_confidence_stretches(valid, conf)
+    assert not gated.any()
+
+
+def test_confidence_gate_passes_through_uniformly_confident_sequence():
+    n = 20
+    valid = np.ones(n, bool)
+    conf = np.full(n, MIN_ROLLING_WRIST_CONFIDENCE + 0.1)
+    gated = _reject_low_confidence_stretches(valid, conf)
+    assert gated.all()
 
 
 def test_hands_bvh_preview_is_structurally_valid(tmp_path):

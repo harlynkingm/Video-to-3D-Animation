@@ -29,9 +29,11 @@ from ..adapters.hamer.hamer_adapter import (
     KEY_LEFT_GLOBAL_ORIENT,
     KEY_LEFT_HAND_POSE,
     KEY_LEFT_VALID,
+    KEY_LEFT_WRIST_VALID,
     KEY_RIGHT_GLOBAL_ORIENT,
     KEY_RIGHT_HAND_POSE,
     KEY_RIGHT_VALID,
+    KEY_RIGHT_WRIST_VALID,
 )
 from ..algorithms.hand_retarget import retarget_hands
 from ..pipeline_stage_base import cli_entrypoint
@@ -87,8 +89,10 @@ def run(progress: ProgressRecord) -> dict[str, str]:
             right_wrist_global=_as_f32_tensor(hands[KEY_RIGHT_GLOBAL_ORIENT]),
             left_hand_pose=_as_f32_tensor(hands[KEY_LEFT_HAND_POSE]),
             right_hand_pose=_as_f32_tensor(hands[KEY_RIGHT_HAND_POSE]),
-            left_valid=torch.from_numpy(hands[KEY_LEFT_VALID]),
-            right_valid=torch.from_numpy(hands[KEY_RIGHT_VALID]),
+            left_wrist_valid=torch.from_numpy(hands[KEY_LEFT_WRIST_VALID]),
+            right_wrist_valid=torch.from_numpy(hands[KEY_RIGHT_WRIST_VALID]),
+            left_finger_valid=torch.from_numpy(hands[KEY_LEFT_VALID]),
+            right_finger_valid=torch.from_numpy(hands[KEY_RIGHT_VALID]),
         )
 
     merged = {

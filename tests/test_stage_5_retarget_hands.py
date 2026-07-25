@@ -13,6 +13,8 @@ otherwise -- see conftest.py).
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -29,7 +31,10 @@ from pipeline.algorithms.hand_retarget import (
     POSE_AXIS_DIM,
     RIGHT_WRIST,
     _global_joint_rotations,
+    body_joint_global_rotations,
+    reject_biomechanically_implausible_wrist,
     retarget_hands,
+    wrist_relative_to_elbow,
 )
 from conftest import TEST_VIDEO_FRAME_COUNT
 
@@ -56,7 +61,8 @@ def test_wrist_reconciliation_round_trip():
     merged_body_pose, _, _ = retarget_hands(
         global_orient, body_pose, SMPLX_BODY_PARENTS,
         left_wrist_global, right_wrist_global,
-        torch.randn(n, 45) * 0.2, torch.randn(n, 45) * 0.2, valid, valid,
+        torch.randn(n, 45) * 0.2, torch.randn(n, 45) * 0.2,
+        valid, valid, valid, valid,  # left/right wrist_valid, left/right finger_valid
     )
 
     local_aa = torch.cat([global_orient, merged_body_pose], dim=1).reshape(n, NUM_BODY_JOINTS, 3)
@@ -75,12 +81,14 @@ def test_never_detected_hand_keeps_body_wrist_and_flat_fingers():
     torch.manual_seed(1)
     n = 3
     body_pose = torch.randn(n, 63) * 0.3
-    right_valid = torch.zeros(n, dtype=torch.bool)
+    left_valid = torch.ones(n, dtype=torch.bool)
+    right_invalid = torch.zeros(n, dtype=torch.bool)
 
     merged_body_pose, _, right_hand_out = retarget_hands(
         torch.randn(n, 3) * 0.3, body_pose, SMPLX_BODY_PARENTS,
         torch.randn(n, 3) * 0.5, torch.randn(n, 3) * 0.5,
-        torch.randn(n, 45) * 0.2, torch.randn(n, 45) * 0.2, torch.ones(n, dtype=torch.bool), right_valid,
+        torch.randn(n, 45) * 0.2, torch.randn(n, 45) * 0.2,
+        left_valid, right_invalid, left_valid, right_invalid,
     )
 
     assert torch.equal(merged_body_pose[:, _wrist_slot(RIGHT_WRIST)], body_pose[:, _wrist_slot(RIGHT_WRIST)])
@@ -98,16 +106,186 @@ def test_hand_detected_at_least_once_reconciles_every_frame():
     body_pose = torch.randn(n, 63) * 0.3
     left_hand_pose = torch.randn(n, 45) * 0.2
     left_valid = torch.tensor([True, False, True])  # some frames flagged invalid
+    right_invalid = torch.zeros(n, dtype=torch.bool)
 
     merged_body_pose, left_hand_out, _ = retarget_hands(
         torch.randn(n, 3) * 0.3, body_pose, SMPLX_BODY_PARENTS,
         torch.randn(n, 3) * 0.5, torch.randn(n, 3) * 0.5,
-        left_hand_pose, torch.randn(n, 45) * 0.2, left_valid, torch.zeros(n, dtype=torch.bool),
+        left_hand_pose, torch.randn(n, 45) * 0.2,
+        left_valid, right_invalid, left_valid, right_invalid,
     )
 
     # Every frame reconciled/copied, not just the ones flagged valid.
     assert torch.equal(left_hand_out, left_hand_pose)
     assert not torch.equal(merged_body_pose[:, _wrist_slot(LEFT_WRIST)], body_pose[:, _wrist_slot(LEFT_WRIST)])
+
+
+def test_wrist_invalid_does_not_block_finger_copy():
+    """The whole point of splitting wrist/finger validity: a hand whose wrist is
+    never usable but whose fingers are should still get its fingers copied --
+    only the wrist falls back to GVHMR's own."""
+    torch.manual_seed(4)
+    n = 3
+    body_pose = torch.randn(n, 63) * 0.3
+    left_hand_pose = torch.randn(n, 45) * 0.2
+    wrist_invalid = torch.zeros(n, dtype=torch.bool)
+    finger_valid = torch.ones(n, dtype=torch.bool)
+    right_invalid = torch.zeros(n, dtype=torch.bool)
+
+    merged_body_pose, left_hand_out, _ = retarget_hands(
+        torch.randn(n, 3) * 0.3, body_pose, SMPLX_BODY_PARENTS,
+        torch.randn(n, 3) * 0.5, torch.randn(n, 3) * 0.5,
+        left_hand_pose, torch.randn(n, 45) * 0.2,
+        wrist_invalid, right_invalid, finger_valid, right_invalid,
+    )
+
+    # Wrist never reconciled -- stays GVHMR's own.
+    assert torch.equal(merged_body_pose[:, _wrist_slot(LEFT_WRIST)], body_pose[:, _wrist_slot(LEFT_WRIST)])
+    # Fingers copied anyway.
+    assert torch.equal(left_hand_out, left_hand_pose)
+
+
+def test_body_joint_global_rotations_matches_manual_fk():
+    """The root joint (parent -1) has no ancestor to compose with, so its
+    global rotation must equal `global_orient` verbatim -- a direct sanity
+    check independent of the recursive composition the rest of the tree uses."""
+    torch.manual_seed(2)
+    n = 4
+    global_orient = torch.randn(n, 3) * 0.4
+    body_pose = torch.randn(n, 63) * 0.3
+
+    global_rot = body_joint_global_rotations(global_orient, body_pose, SMPLX_BODY_PARENTS)
+
+    assert torch.allclose(global_rot[:, 0], axis_angle_to_matrix(global_orient), atol=1e-5)
+
+
+def test_wrist_relative_to_elbow_round_trips_through_elbow():
+    """R_wrist_local = R_elbow^T @ R_wrist_global -- applying the elbow back
+    (R_elbow @ R_wrist_local) must reproduce the original wrist_global."""
+    torch.manual_seed(3)
+    n = 6
+    elbow_aa = torch.randn(n, 3) * 0.5
+    wrist_global_aa = torch.randn(n, 3) * 0.5
+    elbow_global = axis_angle_to_matrix(elbow_aa)
+
+    wrist_local_aa = wrist_relative_to_elbow(elbow_global, wrist_global_aa)
+    reproduced = elbow_global @ axis_angle_to_matrix(wrist_local_aa)
+    assert torch.allclose(reproduced, axis_angle_to_matrix(wrist_global_aa), atol=1e-4)
+
+
+GATE_MAX_DEG = 110.0
+GATE_RELEASE_DEG = 55.0
+
+
+def _wrist_aa_deg_x(degs: list[float]) -> torch.Tensor:
+    """(len(degs), 3) axis-angle rotations about X, one per listed degree value."""
+    return torch.stack([torch.tensor([math.radians(d), 0.0, 0.0]) for d in degs])
+
+
+def test_reject_biomechanically_implausible_wrist_flags_impossible_bend():
+    """A wrist rotated ~170 degrees relative to an identity elbow -- no real
+    human wrist bends this far -- must be rejected."""
+    n = 3
+    elbow_global = torch.eye(3).expand(n, 3, 3)
+    wrist_global_aa = _wrist_aa_deg_x([170.0] * n)
+    valid = torch.ones(n, dtype=torch.bool)
+
+    gated = reject_biomechanically_implausible_wrist(
+        valid, wrist_global_aa, elbow_global, GATE_MAX_DEG, GATE_RELEASE_DEG, window=3
+    )
+    assert not gated.any()
+
+
+def test_reject_biomechanically_implausible_wrist_keeps_plausible_bend():
+    """A modest ~20 degree wrist bend relative to an identity elbow is well
+    within real range and must stay valid."""
+    n = 3
+    elbow_global = torch.eye(3).expand(n, 3, 3)
+    wrist_global_aa = _wrist_aa_deg_x([20.0] * n)
+    valid = torch.ones(n, dtype=torch.bool)
+
+    gated = reject_biomechanically_implausible_wrist(
+        valid, wrist_global_aa, elbow_global, GATE_MAX_DEG, GATE_RELEASE_DEG, window=3
+    )
+    assert gated.all()
+
+
+def test_reject_biomechanically_implausible_wrist_never_resurrects_invalid():
+    """A frame already invalid (e.g. never detected) must stay invalid
+    regardless of how plausible its (placeholder) rotation happens to be."""
+    n = 3
+    elbow_global = torch.eye(3).expand(n, 3, 3)
+    wrist_global_aa = torch.zeros(n, 3)  # trivially "plausible" -- identity rotation
+    valid = torch.zeros(n, dtype=torch.bool)
+
+    gated = reject_biomechanically_implausible_wrist(
+        valid, wrist_global_aa, elbow_global, GATE_MAX_DEG, GATE_RELEASE_DEG, window=3
+    )
+    assert not gated.any()
+
+
+def test_reject_biomechanically_implausible_wrist_hysteresis_expands_around_seed():
+    """A moderate, individually-plausible-looking bend immediately adjacent to
+    a confirmed-implausible spike gets swept into the same rejected region --
+    the whole point of hysteresis: catching the 'shoulder' frames of a bad
+    excursion that a single instantaneous threshold alone would let through."""
+    n = 7
+    elbow_global = torch.eye(3).expand(n, 3, 3)
+    # degrees:  20    20    90(elevated) 170(SEED) 90(elevated)  20    20
+    wrist_global_aa = _wrist_aa_deg_x([20.0, 20.0, 90.0, 170.0, 90.0, 20.0, 20.0])
+    valid = torch.ones(n, dtype=torch.bool)
+
+    gated = reject_biomechanically_implausible_wrist(
+        valid, wrist_global_aa, elbow_global, GATE_MAX_DEG, GATE_RELEASE_DEG, window=1
+    )
+    assert gated.tolist() == [True, True, False, False, False, True, True]
+
+
+def test_reject_biomechanically_implausible_wrist_rolling_max_bridges_a_dip():
+    """A single-frame dip back to a calm value, sandwiched between two
+    seed-exceeding spikes, must not be treated as a genuine return to baseline
+    -- matches the real chaotic-stretch pattern this was built for (a raw
+    HaMeR estimate bouncing between clearly-implausible and momentarily-calm
+    values from frame to frame, not a smooth excursion)."""
+    n = 9
+    elbow_global = torch.eye(3).expand(n, 3, 3)
+    #                    0     1  2(SEED) 3(dip) 4(SEED)  5     6     7     8
+    wrist_global_aa = _wrist_aa_deg_x([20.0, 20.0, 170.0, 20.0, 170.0, 20.0, 20.0, 20.0, 20.0])
+    valid = torch.ones(n, dtype=torch.bool)
+
+    gated = reject_biomechanically_implausible_wrist(
+        valid, wrist_global_aa, elbow_global, GATE_MAX_DEG, GATE_RELEASE_DEG, window=3
+    )
+    # Frames well outside the window's reach from the spike/dip/spike stretch
+    # stay valid; the dip at frame 3 (between the two seeds, well within the
+    # window's reach of both) is bridged into the same rejected region, not
+    # treated as a recovery.
+    assert gated.tolist() == [True, False, False, False, False, False, True, True, True]
+
+
+def test_reject_biomechanically_implausible_wrist_isolated_spike_does_not_engulf_busy_clip():
+    """Regression guard for a real bug: a window wide enough that every frame's
+    rolling max touches SOME nearby elevated value (true of any consistently
+    busy/energetic clip -- confirmed on a real short sports clip whose typical
+    wrist motion routinely reached 55-80 degrees) rejected the ENTIRE clip from
+    a single isolated spike, even though every other frame was individually
+    unremarkable and nowhere near the frame that actually seeded detection."""
+    n = 20
+    elbow_global = torch.eye(3).expand(n, 3, 3)
+    degs = [36.4, 136.7, 30.0, 27.2, 42.4, 41.2, 34.1, 71.5, 71.8, 34.7,
+            25.4, 24.4, 42.6, 46.0, 45.4, 63.1, 50.3, 73.7, 79.0, 54.4]
+    wrist_global_aa = _wrist_aa_deg_x(degs)
+    valid = torch.ones(n, dtype=torch.bool)
+
+    gated = reject_biomechanically_implausible_wrist(
+        valid, wrist_global_aa, elbow_global, GATE_MAX_DEG, GATE_RELEASE_DEG, window=5
+    )
+    # Only the frames immediately around the one real spike (index 1) are
+    # rejected; frames 7-8 and 17-18 (individually elevated but far from the
+    # spike, comparable to the clip's own natural busy range) must survive.
+    assert not gated.all()
+    assert gated[10:14].all()  # a clearly-calm stretch, far from the spike
+    assert gated[16:19].all()  # elevated but legitimate, far from the spike
 
 
 def test_retarget_preview_is_structurally_valid(tmp_path):

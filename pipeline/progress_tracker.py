@@ -39,9 +39,9 @@ class StageName(enum.StrEnum):
     STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion", "stage 2: estimate human motion"
     STAGE_3_ESTIMATE_DEPTH = "estimate_depth", "stage 3: estimate scene depth"
     STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion"
-    STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: fix hand tracking"
-    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: fix scene scale"
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: align human-object contact points"
+    STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body"
+    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale"
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: align human-object interaction"
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize animation"
     STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: exporting animation"
 
@@ -79,12 +79,72 @@ class RunInput:
     # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
     # the defaults are tuned to need no adjustment; a power user can override them
     # by hand-editing these fields in a run's progress.json before running stage
-    # 2/4. Body needs only light polish (GVHMR already runs a temporal model);
-    # hands need a heavier window (HaMeR infers each frame independently). See
-    # pipeline/algorithms/motion_smoothing.py.
+    # 2/4. Body needs only light polish (GVHMR already runs a temporal model over
+    # the whole clip); the hands are far jitterier because HaMeR infers each frame
+    # independently. See pipeline/algorithms/motion_smoothing.py.
     body_smoothing_window: int = 9
     body_translation_cutoff: float = 0.15
-    hand_smoothing_window: int = 15
+
+    # Both hand parts (finger articulation and wrist orientation) go through the
+    # same three-pass chain, differing only in the per-part knobs below:
+    #   1. savgol pre-pass (`hand_smoothing_window`) -- zero-phase, no lag; knocks
+    #      down HaMeR's broadband per-frame jitter, the temporal pre-conditioning
+    #      GVHMR gives the body for free but HaMeR never does.
+    #   2. one-euro adaptive filter (`*_min_cutoff_hz`, shared `hand_beta`) -- holds
+    #      a nearly-still joint tight (killing the rest-state wobble/precession the
+    #      savgol pass leaves) and loosens automatically once it moves. It replaced
+    #      an earlier hard hold/snap deadzone that snapped visibly on release.
+    #   3. decimation (`*_decimate_deg`) -- keyframe reduction in quaternion space:
+    #      refit the curve through a sparse set of keyframes so the result is
+    #      mathematically smooth between them, removing residual jitter outright
+    #      rather than just averaging it down. Without pass 2 first, decimation
+    #      would place keyframes on the noise and lock it in.
+    # The wrist gets a lower min_cutoff (heavier hold) and a looser decimate
+    # tolerance than the fingers: it starts from noisier global-orientation data
+    # and is a load-bearing joint, so it needs more smoothing. Tuned on a real
+    # clip -- fingers land below the body's own jitter, the wrist a few times above
+    # it (its noisier input floors higher without risking arm-detachment lag).
+    hand_smoothing_window: int = 15  # savgol pre-pass window, both wrist and fingers
+    hand_beta: float = 0.3  # one-euro speed responsiveness, both wrist and fingers
+    hand_finger_min_cutoff_hz: float = 0.15
+    hand_wrist_min_cutoff_hz: float = 0.10
+    hand_finger_decimate_deg: float = 1.5
+    hand_wrist_decimate_deg: float = 3.0
+
+    # A real human wrist cannot rotate further than roughly `hand_wrist_max_deviation_deg`
+    # relative to the forearm in any direction -- calibrated against two clean,
+    # previously-verified real clips (max ever observed combined: ~95 degrees
+    # across 1200+ frames of legitimate motion, on two different people/
+    # activities). HaMeR sometimes regresses a wrist orientation well past this
+    # on an ambiguous frame (e.g. a foreshortened forearm mid-reach, or a
+    # genuine rotation-from-monocular-view ambiguity) -- sometimes a slow,
+    # smooth drift, sometimes a CHAOTIC stretch bouncing between clearly-
+    # implausible values and moderate ones that look individually plausible in
+    # isolation (a clean clip's own legitimate motion also reaches ~95-103
+    # degrees at its peak). The moderate "shoulder" frames of a chaotic bad
+    # stretch would otherwise still anchor the smoothing chain, so an
+    # instantaneous-only threshold isn't enough on its own: this uses hysteresis
+    # (the same lock/release pattern as a noise gate) -- `_max_deviation_deg` is
+    # the strict threshold that seeds detection, then the invalid region expands
+    # outward while a `_deviation_window`-frame rolling max stays above the
+    # lower `_release_deviation_deg`, so it can only ever expand from a
+    # confirmed-bad seed frame; a clip that never crosses the strict threshold
+    # is unaffected regardless of the release value. `_deviation_window` needs
+    # care too: a window that's too wide relative to a clip's own natural
+    # busyness merges the rolling max across genuinely separate local peaks --
+    # confirmed on a short, energetic reference clip, where window=7 let one
+    # isolated real spike's rolling max touch nearly the whole clip (every
+    # frame had SOME elevated neighbor within reach) and reject all of it;
+    # window=5 isolates just the frames actually near that spike while still
+    # capturing the full multi-frame chaotic stretch on the clip this was
+    # designed for. Checked in stage 4 against GVHMR's own elbow orientation
+    # (stage 4 depends on stage 2's output for this), before any smoothing
+    # runs -- a filter that's already blended a bad value into its neighbors
+    # can't be un-blended by a later stage. See
+    # hand_retarget.reject_biomechanically_implausible_wrist.
+    hand_wrist_max_deviation_deg: float = 110.0
+    hand_wrist_release_deviation_deg: float = 55.0
+    hand_wrist_deviation_window: int = 5
 
 
 @dataclass

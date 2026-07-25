@@ -15,6 +15,7 @@ Run any script from this project with `pixi run -e <environment> python ...`
 
 <details>
 <summary>Pixi Environment Details</summary>
+
 Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
 
 - `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
@@ -221,11 +222,13 @@ Use `--dump-depth-preview` when creating the run to also have this stage write `
 pixi run -e main python -m pipeline.stages.stage_4_estimate_hands --progress-dir runs/my_clip
 ```
 
-HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand, crops in, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and validity per hand (a hand may be off-screen or too occluded in a given frame). Attaching it to the body happens in stage 5.
+HaMeR estimates per-frame MANO hand pose for both hands. It finds the person from the stage 1 mask, runs ViTPose to locate each hand, crops in, and predicts finger articulation plus wrist orientation. The output `hands/hand_pose.npz` holds per-frame left/right hand pose, wrist orientation, and validity per hand. Attaching it to the body happens in stage 5.
 
-Raw output is very jittery. This stage temporally smooths each hand before saving. To tune, edit `hand_smoothing_window` in the run's `progress.json`. See [Motion smoothing](#motion-smoothing) below.
+If a hand is off-screen, too occluded, or if the ViTPose based confidence score is too low, or if the estimated wrist pose is anatomically impossible, the wrist is held in place instead of assuming incorrect motion.
 
-This stage requires the MANO body model (see [Setup](#setup)).
+This stage also temporally smooths both hand movements after making corrections based on the above. The smoothing happens in 3 passes: first a zero-phase smoothing to reduce jitter, then an adaptive filter, then a keyframe-based reduction. Smoothness tuning can be adjusted in the `hand_*` fields of the run's `progress.json`. See [Motion smoothing](#motion-smoothing) below.
+
+This stage requires the MANO body model and the SMPL-X model file (see [Setup](#setup)).
 
 <details>
 <summary><strong>Optional: Hand Skeleton Preview</strong></summary>
@@ -239,7 +242,7 @@ Use `--dump-hands-preview` when creating the run to also have this stage write `
 pixi run -e main python -m pipeline.stages.stage_5_retarget_hands --progress-dir runs/my_clip
 ```
 
-Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/retarget/retargeted_motion.pt`. Frames where a hand wasn't detected keep GVHMR's own wrist and flat fingers.
+Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/retarget/retargeted_motion.pt`. A hand never detected anywhere in the clip keeps GVHMR's own wrist and flat fingers throughout. Any hand detected at least once gets every frame filled with that detected pose.
 
 This stage requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 
@@ -282,7 +285,13 @@ If you want to tune the amount of smoothing, edit these fields in the run's `pro
 |---|---|---|
 | `body_smoothing_window` | `9` | Savitzky-Golay window (odd, in frames) for body rotation. Larger is smoother but can smear fast motion. |
 | `body_translation_cutoff` | `0.15` | Butterworth low-pass cutoff (fraction of Nyquist) for the body root position. Lower is smoother but adds lag. |
-| `hand_smoothing_window` | `15` | Savitzky-Golay window (odd, in frames) for both hands. Larger is smoother; 15 removes about 90% of finger jitter while preserving genuine motion. |
+| `hand_smoothing_window` | `15` | Savitzky-Golay pre-pass window (odd, in frames), applied to both fingers and wrist. Larger strips more raw jitter without adding lag; too large smears fast motion. |
+| `hand_beta` | `0.3` | How quickly the adaptive filter loosens as motion speeds up (both fingers and wrist). Higher tracks fast motion more closely, at the cost of passing more jitter through while moving. |
+| `hand_finger_min_cutoff_hz` | `0.15` | Adaptive-filter smoothing strength at rest for the **fingers**. Lower is steadier when still but slower to respond. |
+| `hand_wrist_min_cutoff_hz` | `0.10` | Same, for the **wrist** — lower than the fingers, since the wrist starts from noisier data and needs more smoothing. |
+| `hand_finger_decimate_deg` | `1.5` | Keyframe-reduction tolerance for the **fingers**, in degrees: the most the refitted curve may deviate from the filtered motion. Larger means fewer keyframes and a smoother, flatter curve. |
+| `hand_wrist_decimate_deg` | `3.0` | Same, for the **wrist** (looser than the fingers). |
+| `hand_max_wrist_deviation_deg` | `110.0` | Max plausible wrist rotation degrees relative to the forearm, checked against stage 2's body motion before smoothing. A raw estimate past this is treated as 'undetected'. Lower this value to be stricter, raise if a fast real wrist motion is ever incorrectly flagged. |
 </details>
 
 ## Testing
