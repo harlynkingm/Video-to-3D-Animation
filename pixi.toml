@@ -78,6 +78,15 @@ index = "https://download.pytorch.org/whl/cu128"
 version = "==0.23.*"
 index = "https://download.pytorch.org/whl/cu128"
 
+# depth-anything-3 hard-pins numpy<2, which forces numpy 1.26.4 (the newest
+# 1.x release) -- and no numpy 1.x release ever shipped a cp313 win-64 wheel
+# (confirmed via PyPI's JSON API), so it has to be compiled from source on
+# this platform. That source build has proven fragile in CI.
+# Overriding it here sidesteps this whole bug class rather than chasing each
+# new compiler-specific crash it produces.
+[feature.main.pypi-options.dependency-overrides]
+numpy = ">=2.1"
+
 [environments.main]
 features = ["main"]
 no-default-feature = true
