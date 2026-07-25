@@ -115,7 +115,9 @@ def run(progress: ProgressRecord) -> dict[str, str]:
         from ..helpers.smplx_bvh_preview import dump_body_hands_bvh
 
         preview_path = retarget_dir / RETARGET_PREVIEW_FILENAME
-        dump_body_hands_bvh(global_orient, merged_body_pose, left_hand_pose, right_hand_pose, progress.scene.fps, preview_path)
+        dump_body_hands_bvh(
+            global_orient, merged_body_pose, left_hand_pose, right_hand_pose, transl, progress.scene.fps, preview_path
+        )
         outputs[OUTPUT_RETARGET_PREVIEW] = str(preview_path)
 
     return outputs

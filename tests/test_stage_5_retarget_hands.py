@@ -300,16 +300,49 @@ def test_retarget_preview_is_structurally_valid(tmp_path):
     out = tmp_path / "retarget.bvh"
     dump_body_hands_bvh(
         np.zeros((n, 3), np.float32), np.zeros((n, 63), np.float32),
-        np.zeros((n, 45), np.float32), np.zeros((n, 45), np.float32), fps=30.0, out_path=out,
+        np.zeros((n, 45), np.float32), np.zeros((n, 45), np.float32),
+        np.zeros((n, 3), np.float32), fps=30.0, out_path=out,
     )
 
     text = out.read_text()
     assert text.startswith("HIERARCHY")
     assert f"Frames: {n}" in text
+    assert "CHANNELS 6 Xposition Yposition Zposition" in text  # root has a real position channel
     # 22 body + 30 finger joints = 52 => 1 ROOT + 51 JOINT lines.
     assert text.count("JOINT ") == 51
     # Leaves: head, both feet, and 5 fingertips x 2 hands = 13 End Sites.
     assert text.count("End Site") == 13
+
+
+def test_retarget_preview_writes_real_root_translation(tmp_path):
+    """This is the only BVH preview in the pipeline with real root motion (the
+    stage 4 hands-only preview stays root-locked on purpose) -- the root's
+    position channel must carry GVHMR's own translation, reoriented into BVH
+    space the same way the root's rotation is, not a static zero."""
+    from pipeline.helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
+    from pipeline.helpers.smplx_bvh_preview import SMPLX_MODEL_PATH, dump_body_hands_bvh
+
+    if not SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (see README's Setup section)")
+
+    n = 3
+    transl = np.zeros((n, 3), np.float32)
+    transl[0] = [1.0, 2.0, 3.0]
+    out = tmp_path / "retarget_root_motion.bvh"
+    dump_body_hands_bvh(
+        np.zeros((n, 3), np.float32), np.zeros((n, 63), np.float32),
+        np.zeros((n, 45), np.float32), np.zeros((n, 45), np.float32),
+        transl, fps=30.0, out_path=out,
+    )
+
+    motion_lines = out.read_text().split("MOTION\n")[1].splitlines()
+    frame0_values = [float(v) for v in motion_lines[2].split()[:3]]  # [0]=Frames, [1]=Frame Time
+    expected = CAMERA_TO_BVH_ROOT_ROTATION @ np.array([1.0, 2.0, 3.0])
+    assert np.allclose(frame0_values, expected, atol=1e-5)
+    # Frame 1's translation was zero going in -- must stay at the origin, not
+    # pick up frame 0's value.
+    frame1_values = [float(v) for v in motion_lines[3].split()[:3]]
+    assert np.allclose(frame1_values, [0.0, 0.0, 0.0], atol=1e-5)
 
 
 def test_retargeted_motion_shapes_and_no_nan(stage_5_result):

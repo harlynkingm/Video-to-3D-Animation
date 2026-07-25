@@ -7,8 +7,13 @@ correction before it matches GVHMR's.
 
 Reuses `write_bvh` and SMPL-X's own rest skeleton (which loads with plain numpy,
 no chumpy). Body joints are driven by the merged `global_orient`/`body_pose`,
-fingers by `left_hand_pose`/`right_hand_pose`. The root stays at the origin --
-orientation is what this previews, so the body's global translation is omitted.
+fingers by `left_hand_pose`/`right_hand_pose`, and the root's own position by
+`transl` -- GVHMR's own root translation, given the same camera-space -> BVH
+change of basis as the root's rotation (`CAMERA_TO_BVH_ROOT_ROTATION`), since a
+position vector needs the same reorientation a direction does. This is the only
+BVH preview in the pipeline with real root motion; stage 4's hands-only preview
+(`hamer_bvh_preview.py`) stays root-locked on purpose -- it shows both hands in
+isolation, side by side, where a moving root would only get in the way.
 """
 
 from __future__ import annotations
@@ -69,13 +74,17 @@ def dump_body_hands_bvh(
     body_pose: np.ndarray | torch.Tensor,
     left_hand_pose: np.ndarray | torch.Tensor,
     right_hand_pose: np.ndarray | torch.Tensor,
+    transl: np.ndarray | torch.Tensor,
     fps: float,
     out_path: Path,
 ) -> None:
     """Write a full-body-plus-hands BVH. All pose args are per-frame axis-angle:
-    global_orient (F, 3), body_pose (F, 63), left/right_hand_pose (F, 45)."""
+    global_orient (F, 3), body_pose (F, 63), left/right_hand_pose (F, 45).
+    transl (F, 3): GVHMR's own root translation, camera space (meters) --
+    reoriented into BVH space the same way the root's rotation is."""
     global_orient, body_pose = _np(global_orient), _np(body_pose)
     left_hand_pose, right_hand_pose = _np(left_hand_pose), _np(right_hand_pose)
+    transl = _np(transl)
     n_frames = global_orient.shape[0]
 
     rest, smplx_parents = _smplx_rest_joints_and_parents()
@@ -105,5 +114,9 @@ def dump_body_hands_bvh(
     # Reorient the whole skeleton from camera space into BVH's Y-up convention
     # by left-multiplying only the root (Pelvis, out_i 0)'s own rotation.
     rotations[:, 0] = CAMERA_TO_BVH_ROOT_ROTATION @ rotations[:, 0]
+    # A position vector needs the same reorientation a direction does -- applied
+    # here as a per-frame matrix-vector product, not a left-multiply of a
+    # rotation, since translation isn't a rotation to compose.
+    root_translation = transl @ CAMERA_TO_BVH_ROOT_ROTATION.T
 
-    write_bvh(out_path, names, parents, offsets, rotations, fps)
+    write_bvh(out_path, names, parents, offsets, rotations, fps, root_translation=root_translation)

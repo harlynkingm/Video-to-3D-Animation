@@ -249,7 +249,7 @@ This stage requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 <details>
 <summary><strong>Optional: Full Body and Hands Preview</strong></summary>
 
-Use `--dump-retarget-preview` when creating the run to also have this stage write `runs/my_clip/retarget/retarget_preview.bvh`, a bone-only animation of the whole body with the stage 4 hands attached. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**
+Use `--dump-retarget-preview` when creating the run to also have this stage write `runs/my_clip/retarget/retarget_preview.bvh`, a bone-only animation of the whole body with the stage 4 hands attached, including the body's real motion (walking, sitting down, etc.). This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**
 
 This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 </details>

@@ -93,10 +93,14 @@ def _write_hierarchy(
 
 def write_bvh(
     path: Path, joint_names: list[str], parents: list[int], offsets: np.ndarray,
-    rotations: np.ndarray, fps: float,
+    rotations: np.ndarray, fps: float, root_translation: np.ndarray | None = None,
 ) -> None:
     """rotations: (F, J, 3, 3) local rotation matrices, one per joint per frame.
-    `parents[root] == -1` (exactly one root, listed before its children)."""
+    `parents[root] == -1` (exactly one root, listed before its children).
+    root_translation: optional (F, 3), already in BVH space (see
+    CAMERA_TO_BVH_ROOT_ROTATION -- the caller applies the same change of basis
+    to translation as to the root's own rotation). Root position is written as
+    static zero when omitted, for previews where only relative pose matters."""
     root = parents.index(-1)
     children = _children_of(parents)
 
@@ -115,7 +119,11 @@ def write_bvh(
         values: list[str] = []
         for j in order:
             if j == root:
-                values += ["0.000000", "0.000000", "0.000000"]  # static root position
+                if root_translation is None:
+                    values += ["0.000000", "0.000000", "0.000000"]
+                else:
+                    px, py, pz = root_translation[f]
+                    values += [f"{px:.6f}", f"{py:.6f}", f"{pz:.6f}"]
             z, x, y = euler[f, j]
             values += [f"{z:.6f}", f"{x:.6f}", f"{y:.6f}"]
         lines.append(" ".join(values))
