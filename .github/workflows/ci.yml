@@ -12,5 +12,30 @@ jobs:
         with:
           environments: main
 
+      - name: Ensure pixi env is installed (explicit)
+        shell: pwsh
+        run: |
+          Write-Host "=== pixi version ==="
+          & $env:USERPROFILE\.pixi\bin\pixi.exe --version || pixi --version
+          Write-Host "Running: pixi install --yes (uses pixi.toml / pixi.lock)"
+          pixi install --yes
+
+      - name: Pixi environment diagnostics
+        shell: pwsh
+        run: |
+          Write-Host "=== Python version inside pixi environment ==="
+          pixi run -e main python -V
+
+          Write-Host "=== pip list inside pixi environment ==="
+          pixi run -e main pip list
+
       - name: Run tests
-        run: pixi run -e main pytest tests/
+        shell: pwsh
+        run: |
+          Write-Host "=== Running pytest ==="
+          # Run pytest and capture its exit code so logs include failures
+          pixi run -e main pytest tests/ || $LASTEXITCODE = $LASTEXITCODE
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "pytest failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
