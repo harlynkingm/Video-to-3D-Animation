@@ -130,8 +130,66 @@ def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeyp
     run_pipeline_module.main()
 
     assert "resuming" in capsys.readouterr().out
-    reloaded = ProgressRecord.load(progress_dir)
+    reloaded = RunRecord.load(progress_dir)
     assert reloaded.run_id == "original-run-id"
+
+
+def test_main_resumes_without_requiring_run_input_flags(tmp_path, monkeypatch, capsys):
+    """Regression test: resuming an existing run used to fail with argparse's
+    own "required" error for --input-video/--human-prompt/etc., since those
+    flags were registered as required regardless of whether a run already
+    existed at --output-dir -- only --output-dir itself should still be
+    required when resuming.
+    """
+    progress_dir = tmp_path / "run"
+    create_run(
+        progress_dir,
+        RunInput(
+            video_path=str(TEST_VIDEO_PATH), human_prompt=HUMAN_PROMPT,
+            focal_length_mm=FOCAL_LENGTH_MM, sensor_width_mm=SENSOR_WIDTH_MM,
+        ),
+        run_id="original-run-id",
+    )
+
+    monkeypatch.setattr(run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None: None)
+    monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir)])
+
+    run_pipeline_module.main()  # would previously raise SystemExit from argparse
+
+    assert "resuming" in capsys.readouterr().out
+
+
+def test_main_applies_an_override_flag_when_resuming(tmp_path, monkeypatch, capsys):
+    progress_dir = tmp_path / "run"
+    create_run(
+        progress_dir,
+        RunInput(
+            video_path=str(TEST_VIDEO_PATH), human_prompt=HUMAN_PROMPT,
+            focal_length_mm=FOCAL_LENGTH_MM, sensor_width_mm=SENSOR_WIDTH_MM,
+        ),
+        run_id="original-run-id",
+    )
+
+    monkeypatch.setattr(run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None: None)
+    monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir), "--render-mask-previews"])
+
+    run_pipeline_module.main()
+    capsys.readouterr()
+
+    reloaded = RunRecord.load(progress_dir)
+    assert reloaded.input.render_mask_previews is True
+    assert reloaded.input.video_path == str(TEST_VIDEO_PATH)  # untouched fields carry over
+
+
+def test_main_still_requires_run_input_flags_for_a_fresh_run(tmp_path, monkeypatch):
+    """The other half of the regression: creating a genuinely new run must
+    still fail fast with a clear argparse error when the required flags are
+    missing, not silently proceed with an incomplete RunInput."""
+    progress_dir = tmp_path / "does-not-exist-yet"
+    monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir)])
+
+    with pytest.raises(SystemExit):
+        run_pipeline_module.main()
 
 
 pytestmark_end_to_end = pytest.mark.skipif(
@@ -162,11 +220,7 @@ def test_pipeline_run_end_to_end(tmp_path):
     assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    for stage_name in (
-        "ingest_video", "mask_and_track", "estimate_human_motion",
-        "estimate_depth", "estimate_hands", "retarget_hands", "align_scene_scale",
-    ):
-        assert progress_json["stages"][stage_name]["status"] == "complete"
+    assert_stages_complete(progress_json)
 
 
 @pytestmark_end_to_end
@@ -188,6 +242,5 @@ def test_pipeline_run_stop_after_stage(tmp_path):
     assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    assert progress_json["stages"]["ingest_video"]["status"] == "complete"
-    assert progress_json["stages"]["mask_and_track"]["status"] == "complete"
-    assert progress_json["stages"]["estimate_human_motion"]["status"] == "pending"
+    assert_stages_complete(progress_json, through=StageName.STAGE_1_MASK_AND_TRACK)
+    assert progress_json["stages"][StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.value]["status"] == "pending"

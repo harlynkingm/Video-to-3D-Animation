@@ -45,6 +45,21 @@ from pipeline.run import ORDERED_STAGES
 TESTS_DIR = Path(__file__).parent
 TEST_VIDEO_PATH = TESTS_DIR / "assets" / "tiny_tennis_clip.mp4"
 
+
+def assert_stages_complete(progress_json: dict, through: StageName | None = None) -> None:
+    """Every stage up to and including `through` (default: every stage in
+    `ORDERED_STAGES`, i.e. everything currently implemented) must show
+    `status == "complete"` in an already-loaded progress.json. Derives the
+    stage list from the same `ORDERED_STAGES` `pipeline.run` itself iterates,
+    instead of a hand-typed list of stage-name strings -- that list had
+    already silently fallen out of sync once stage 7 shipped, missing from
+    both of this project's own full-pipeline end-to-end tests (neither had
+    been updated to check it).
+    """
+    stages = ORDERED_STAGES if through is None else ORDERED_STAGES[:ORDERED_STAGES.index(through) + 1]
+    for stage in stages:
+        assert progress_json["stages"][stage.value]["status"] == "complete", f"{stage.value} did not complete"
+
 # The exact frame count and resolution of the committed test clip (frames
 # 73-92 of the reference tennis clip used throughout this project's own
 # development) -- update these if the fixture video is ever replaced.

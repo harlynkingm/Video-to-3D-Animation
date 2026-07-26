@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import enum
 import json
-from dataclasses import MISSING, asdict, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -269,7 +269,7 @@ def add_dataclass_cli_arguments(parser: argparse.ArgumentParser, dataclass_type:
 def resolve_cli_value(f: Any, args: argparse.Namespace) -> Any:
     """The parsed value for one `cli_field(...)`-tagged field, with its
     `parse` transform (if any) applied -- shared by `build_dataclass_from_args`
-    and `update_run._apply_overrides` so "convert the raw string" can't drift
+    and `apply_run_input_overrides` so "convert the raw string" can't drift
     between fresh-construction and override-merge.
     """
     cli = f.metadata["cli"]
@@ -318,6 +318,33 @@ def run_input_from_args(args: argparse.Namespace) -> RunInput:
             if cli and cli["bool_flag"]:
                 setattr(run_input, f.name, True)
     return run_input
+
+
+def apply_run_input_overrides(existing: RunInput, args: argparse.Namespace) -> RunInput:
+    """Builds an updated `RunInput` via `dataclasses.replace`, applying only
+    the flags `args` actually carries a value for (parsed with
+    `add_run_input_arguments(parser, required=False)`, where an omitted flag
+    comes back as `None`) -- every other field, whether its flag simply
+    wasn't passed or it's a smoothing knob with no CLI flag at all, passes
+    through from `existing` untouched. Shared by `update_run` (its whole
+    purpose) and `pipeline.run`'s resume path (letting a resumed run still
+    pick up a flag like `--render-contacts-preview` without needing to
+    re-supply the ones that are already fixed, like `--input-video`).
+    """
+    render_all = args.render_previews
+    overrides: dict = {}
+    for f in fields(RunInput):
+        cli = f.metadata.get("cli")
+        if cli is None:
+            continue
+        value = resolve_cli_value(f, args)
+        if cli["bool_flag"]:
+            if render_all or value is not None:
+                overrides[f.name] = bool(render_all or value)
+        elif value is not None:
+            overrides[f.name] = value
+
+    return replace(existing, **overrides)
 
 
 @dataclass

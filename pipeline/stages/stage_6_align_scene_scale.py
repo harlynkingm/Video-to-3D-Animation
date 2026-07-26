@@ -37,7 +37,7 @@ from ..algorithms.similarity_transform import fit_scene_scale
 from ..pipeline_stage_base import cli_entrypoint
 from ..helpers.ply_export_helper import write_colored_ply
 from ..helpers.progress_reporter import report_single_shot
-from ..progress_tracker import ProgressRecord, StageName
+from ..progress_tracker import RunRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS, OUTPUT_OBJECT_MASKS
 from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 from ..stages.stage_3_estimate_depth import OUTPUT_DEPTH
@@ -149,9 +149,9 @@ def _load_mask_at_depth_res(masks_path: str, anchor: int, depth_hw: tuple[int, i
     return cv2.resize(mask_anchor, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
 
 
-def run(progress: ProgressRecord) -> dict[str, str]:
-    anchor = progress.scene.anchor_frame_index
-    stage_1_outputs = progress.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs
+def run(runRecord: RunRecord) -> dict[str, str]:
+    anchor = runRecord.scene.anchor_frame_index
+    stage_1_outputs = runRecord.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs
 
     motion = torch.load(
         runRecord.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],

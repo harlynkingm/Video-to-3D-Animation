@@ -7,7 +7,7 @@ moved since that stage's own record was written).
 
 Useful after a code change adds a new `RunInput` field or a
 new pipeline stage, and an in-progress run's progress.json predates it --
-loading that file straight into the current `RunInput`/`ProgressRecord`
+loading that file straight into the current `RunInput`/`RunRecord`
 dataclasses already tolerates new *fields* fine (they all have defaults), but
 a *new stage* has no record at all yet, and a stage's `depends_on` can go
 stale if the DAG changed after that stage last ran.
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-from dataclasses import fields, replace
 from pathlib import Path
 
 from .create_run import STAGE_DEPENDS_ON
@@ -36,36 +35,11 @@ from .progress_tracker import (
     StageRecord,
     add_dataclass_cli_arguments,
     add_run_input_arguments,
-    resolve_cli_value,
+    apply_run_input_overrides,
 )
 
 
-def _apply_overrides(existing: RunInput, args: argparse.Namespace) -> RunInput:
-    """Builds the updated `RunInput` via `dataclasses.replace`, reading the
-    same `cli_field(...)` metadata `add_run_input_arguments` registered the
-    parser from (see `progress_tracker.py`) -- so every field this doesn't
-    touch, whether because its flag wasn't passed or because it's a smoothing
-    knob with no CLI flag at all, passes through from `existing` untouched,
-    not reset to some default. Adding a new `RunInput` field never requires
-    touching this function.
-    """
-    render_all = args.render_previews
-    overrides: dict = {}
-    for f in fields(RunInput):
-        cli = f.metadata.get("cli")
-        if cli is None:
-            continue
-        value = resolve_cli_value(f, args)
-        if cli["bool_flag"]:
-            if render_all or value is not None:
-                overrides[f.name] = bool(render_all or value)
-        elif value is not None:
-            overrides[f.name] = value
-
-    return replace(existing, **overrides)
-
-
-def update_run(progress_dir: Path, args: argparse.Namespace) -> ProgressRecord:
+def update_run(progress_dir: Path, args: argparse.Namespace) -> RunRecord:
     progress_path = progress_dir / PROGRESS_JSON_NAME
     if not progress_path.exists():
         raise SystemExit(

@@ -12,7 +12,12 @@ registering a new stage.
 
 Resumable exactly like the per-stage manual workflow: if `progress.json`
 already exists at --output-dir, this skips `create_run` and just resumes
-against it (each stage still skips itself if already complete).
+against it (each stage still skips itself if already complete). Resuming
+doesn't require re-supplying `--input-video`/`--human-prompt`/etc. -- those
+only matter for a fresh run, since an existing one already has them stored.
+A RunInput flag passed while resuming still applies, though (via the same
+override mechanism `update_run` uses), so e.g. `--render-contacts-preview`
+works equally well tacked onto a resumed run as a fresh one.
 """
 
 from __future__ import annotations
@@ -29,14 +34,25 @@ from .progress_tracker import (
     StageName,
     add_dataclass_cli_arguments,
     add_run_input_arguments,
+    apply_run_input_overrides,
     run_input_from_args,
 )
 
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 
 
+def stage_module_name(index: int, stage_name: StageName) -> str:
+    """The `stage_{index}_{StageName.value}` naming convention every stage
+    module follows, as an importable dotted path -- pulled out of
+    `_load_stage_run` so tests (which need to invoke the same modules as
+    real subprocesses) can reuse this exact convention instead of
+    re-deriving it by hand.
+    """
+    return f"pipeline.stages.stage_{index}_{stage_name.value}"
+
+
 def _load_stage_run(index: int, stage_name: StageName):
-    module = importlib.import_module(f"pipeline.stages.stage_{index}_{stage_name.value}")
+    module = importlib.import_module(stage_module_name(index, stage_name))
     return module.run
 
 
@@ -56,6 +72,18 @@ def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None) -> N
 
 
 def main() -> None:
+    # Whether RunInput's own flags (--input-video, --human-prompt, etc.) are
+    # required depends on whether a run already exists at --output-dir: a
+    # fresh run needs them, resuming an existing one doesn't (its RunInput is
+    # already stored) -- but that isn't knowable until --output-dir itself
+    # has been parsed, so this resolves just that much first with a
+    # throwaway parser (add_help=False so a real --help still goes to the
+    # full parser below, not this partial one) before building the real one.
+    location_parser = argparse.ArgumentParser(add_help=False)
+    add_dataclass_cli_arguments(location_parser, NewRunID)
+    location_args, _ = location_parser.parse_known_args()
+    resuming = (location_args.progress_dir / PROGRESS_JSON_NAME).exists()
+
     parser = argparse.ArgumentParser(
         description="Create a run and execute every implemented stage in sequence, start to finish"
     )
@@ -67,14 +95,14 @@ def main() -> None:
         help="Run only through this stage number, inclusive (e.g. 5 runs stages 0-5, skipping 6+). "
              "Omit to run every implemented stage.",
     )
-    add_run_input_arguments(parser)
+    add_run_input_arguments(parser, required=not resuming)
     args = parser.parse_args()
 
     if args.stop_after_stage is not None and args.stop_after_stage < 0:
         parser.error("--stop-after-stage must be >= 0")
 
     progress_dir = args.progress_dir
-    if (progress_dir / PROGRESS_JSON_NAME).exists():
+    if resuming:
         print(f"Found an existing run at {progress_dir}, resuming")
         runRecord = RunRecord.load(progress_dir)
         runRecord.input = apply_run_input_overrides(runRecord.input, args)

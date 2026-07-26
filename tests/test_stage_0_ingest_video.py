@@ -11,6 +11,7 @@ import cv2
 import pytest
 
 from conftest import FOCAL_LENGTH_MM, SENSOR_WIDTH_MM, TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_FPS, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH
+from pipeline.stages.stage_0_ingest_video import _resolve_rotation
 
 
 def test_extracts_every_frame_as_a_valid_jpeg(stage_0_result):
@@ -24,11 +25,11 @@ def test_extracts_every_frame_as_a_valid_jpeg(stage_0_result):
         assert image.shape[:2] == (TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH)
 
 
-def test_scene_info_matches_the_real_video(progress, stage_0_result):
-    assert progress.scene.frame_count == TEST_VIDEO_FRAME_COUNT
-    assert progress.scene.width == TEST_VIDEO_WIDTH
-    assert progress.scene.height == TEST_VIDEO_HEIGHT
-    assert progress.scene.fps == pytest.approx(TEST_VIDEO_FPS, abs=0.1)
+def test_scene_info_matches_the_real_video(runRecord, stage_0_result):
+    assert runRecord.scene.frame_count == TEST_VIDEO_FRAME_COUNT
+    assert runRecord.scene.width == TEST_VIDEO_WIDTH
+    assert runRecord.scene.height == TEST_VIDEO_HEIGHT
+    assert runRecord.scene.fps == pytest.approx(TEST_VIDEO_FPS, abs=0.1)
 
 
 def test_intrinsics_matrix_is_built_from_the_given_lens_info(runRecord, stage_0_result):
@@ -39,3 +40,30 @@ def test_intrinsics_matrix_is_built_from_the_given_lens_info(runRecord, stage_0_
     assert K[0][2] == pytest.approx(TEST_VIDEO_WIDTH / 2)
     assert K[1][2] == pytest.approx(TEST_VIDEO_HEIGHT / 2)
     assert K[2][2] == 1.0
+
+
+def test_resolve_rotation_is_a_noop_for_unrotated_video():
+    rotate_code, width, height = _resolve_rotation(0.0, raw_width=1920, raw_height=1080)
+    assert rotate_code is None
+    assert (width, height) == (1920, 1080)
+
+
+def test_resolve_rotation_90_degrees():
+    """Confirmed against a real vertical phone clip by visual inspection:
+    CAP_PROP_ORIENTATION_META == 90 requires ROTATE_90_CLOCKWISE to produce a
+    correctly upright frame, not the other direction."""
+    rotate_code, width, height = _resolve_rotation(90.0, raw_width=3840, raw_height=2160)
+    assert rotate_code == cv2.ROTATE_90_CLOCKWISE
+    assert (width, height) == (2160, 3840)
+
+
+def test_resolve_rotation_270_degrees():
+    rotate_code, width, height = _resolve_rotation(270.0, raw_width=3840, raw_height=2160)
+    assert rotate_code == cv2.ROTATE_90_COUNTERCLOCKWISE
+    assert (width, height) == (2160, 3840)
+
+
+def test_resolve_rotation_180_degrees_keeps_dimensions():
+    rotate_code, width, height = _resolve_rotation(180.0, raw_width=1920, raw_height=1080)
+    assert rotate_code == cv2.ROTATE_180
+    assert (width, height) == (1920, 1080)

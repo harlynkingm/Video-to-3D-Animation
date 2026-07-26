@@ -29,7 +29,9 @@ from conftest import (
     SENSOR_WIDTH_MM,
     SMPLX_MODEL_PATH,
     TEST_VIDEO_PATH,
+    assert_stages_complete,
 )
+from pipeline.run import ORDERED_STAGES, stage_module_name
 
 pytestmark = pytest.mark.skipif(
     not torch.cuda.is_available()
@@ -63,25 +65,23 @@ def _run_stage(module: str, progress_dir: Path, *extra_args: str) -> subprocess.
 
 
 def test_full_pipeline_runs_end_to_end(tmp_path):
+    """Runs every currently-implemented stage as its own real subprocess, in
+    order -- this is the only test that exercises the per-stage CLI dispatch
+    path (see this module's own docstring). The stage list comes from
+    `ORDERED_STAGES` rather than a hand-typed module list, so this keeps up
+    automatically as new stages ship (a hardcoded list here had already
+    silently stopped at stage 6, missing stage 7 entirely).
+    """
     run_dir = tmp_path / "run"
     created = _create_run(run_dir)
     assert created.returncode == 0, created.stderr
 
-    for module in (
-        "pipeline.stages.stage_0_ingest_video",
-        "pipeline.stages.stage_1_mask_and_track",
-        "pipeline.stages.stage_2_estimate_human_motion",
-        "pipeline.stages.stage_3_estimate_depth",
-        "pipeline.stages.stage_4_estimate_hands",
-        "pipeline.stages.stage_5_retarget_hands",
-        "pipeline.stages.stage_6_align_scene_scale",
-    ):
-        result = _run_stage(module, run_dir)
+    for index, stage in enumerate(ORDERED_STAGES):
+        result = _run_stage(stage_module_name(index, stage), run_dir)
         assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    for stage_name in ("ingest_video", "mask_and_track", "estimate_human_motion", "estimate_depth", "estimate_hands", "retarget_hands", "align_scene_scale"):
-        assert progress_json["stages"][stage_name]["status"] == "complete"
+    assert_stages_complete(progress_json)
 
     motion_path = Path(progress_json["stages"]["estimate_human_motion"]["outputs"]["human_motion"])
     assert motion_path.exists()
