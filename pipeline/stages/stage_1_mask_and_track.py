@@ -25,7 +25,7 @@ import torch
 from ..adapters.sam31.sam31_adapter import KEY_HUMAN, KEY_OBJECT, Sam31Adapter
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..pipeline_stage_base import cli_entrypoint
-from ..progress_tracker import ProgressRecord, StageName
+from ..progress_tracker import RunRecord, StageName
 
 MASKS_DIRNAME = "masks"
 HUMAN_MASKS_FILENAME = "human.pt"
@@ -71,8 +71,8 @@ def _render_mask_previews(packed_masks: torch.Tensor, out_dir: Path, native_hw: 
         cv2.imwrite(str(out_dir / f"{i:06d}.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
 
-def run(progress: ProgressRecord) -> dict[str, str]:
-    frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
+def run(runRecord: RunRecord) -> dict[str, str]:
+    frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
     frame_paths = sorted(frames_dir.glob("*.jpg"))
     if not frame_paths:
         raise RuntimeError(f"No frames found in {frames_dir}")
@@ -82,25 +82,25 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     try:
         result = adapter.infer(
             frame_paths,
-            human_prompt=progress.input.human_prompt,
-            object_prompt=progress.input.object_prompt
+            human_prompt=runRecord.input.human_prompt,
+            object_prompt=runRecord.input.object_prompt
         )
     finally:
         adapter.unload()
 
     if result[KEY_HUMAN][KEY_PACKED_MASKS] is None:
-        raise RuntimeError(f"human_prompt {progress.input.human_prompt!r} was never detected in this clip")
+        raise RuntimeError(f"human_prompt {runRecord.input.human_prompt!r} was never detected in this clip")
 
-    masks_dir = Path(progress.progress_dir) / MASKS_DIRNAME
+    masks_dir = Path(runRecord.progress_dir) / MASKS_DIRNAME
     masks_dir.mkdir(parents=True, exist_ok=True)
 
-    native_hw = (progress.scene.height, progress.scene.width)
+    native_hw = (runRecord.scene.height, runRecord.scene.width)
 
     outputs = {}
     human_path = masks_dir / HUMAN_MASKS_FILENAME
     torch.save(result[KEY_HUMAN], human_path)
     outputs[OUTPUT_HUMAN_MASKS] = str(human_path)
-    if progress.input.render_mask_previews:
+    if runRecord.input.render_mask_previews:
         _render_mask_previews(result[KEY_HUMAN][KEY_PACKED_MASKS], masks_dir / HUMAN_PREVIEW_DIRNAME, native_hw)
         outputs[OUTPUT_HUMAN_MASKS_PREVIEW] = str(masks_dir / HUMAN_PREVIEW_DIRNAME)
 
@@ -108,14 +108,14 @@ def run(progress: ProgressRecord) -> dict[str, str]:
         object_path = masks_dir / OBJECT_MASKS_FILENAME
         torch.save(result[KEY_OBJECT], object_path)
         outputs[OUTPUT_OBJECT_MASKS] = str(object_path)
-        if progress.input.render_mask_previews:
+        if runRecord.input.render_mask_previews:
             _render_mask_previews(result[KEY_OBJECT][KEY_PACKED_MASKS], masks_dir / OBJECT_PREVIEW_DIRNAME, native_hw)
             outputs[OUTPUT_OBJECT_MASKS_PREVIEW] = str(masks_dir / OBJECT_PREVIEW_DIRNAME)
 
-    if progress.input.anchor_frame_override is not None:
-        progress.scene.anchor_frame_index = progress.input.anchor_frame_override
+    if runRecord.input.anchor_frame_override is not None:
+        runRecord.scene.anchor_frame_index = runRecord.input.anchor_frame_override
     else:
-        progress.scene.anchor_frame_index = _resolve_anchor_frame(result[KEY_OBJECT])
+        runRecord.scene.anchor_frame_index = _resolve_anchor_frame(result[KEY_OBJECT])
 
     return outputs
 

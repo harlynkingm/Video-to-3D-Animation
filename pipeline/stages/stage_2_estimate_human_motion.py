@@ -35,7 +35,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.motion_smoothing import smooth_rotation_sequence, smooth_translation_sequence
 from ..pipeline_stage_base import cli_entrypoint
-from ..progress_tracker import ProgressRecord, StageName
+from ..progress_tracker import RunRecord, StageName
 from .stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
 
 MOTION_DIRNAME = "motion"
@@ -102,17 +102,17 @@ def _smooth_body_params(params: dict, window: int, cutoff: float) -> None:
     params[KEY_TRANSL] = torch.from_numpy(smoothed).to(original.dtype)
 
 
-def run(progress: ProgressRecord) -> dict[str, str]:
-    frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
+def run(runRecord: RunRecord) -> dict[str, str]:
+    frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
     frame_paths = sorted(frames_dir.glob("*.jpg"))
     if not frame_paths:
         raise RuntimeError(f"No frames found in {frames_dir}")
 
-    human_masks_path = Path(progress.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs[OUTPUT_HUMAN_MASKS])
+    human_masks_path = Path(runRecord.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs[OUTPUT_HUMAN_MASKS])
     human_result = torch.load(human_masks_path, weights_only=False)
     masks = unpack_masks(human_result[KEY_PACKED_MASKS]).squeeze(1)  # (N, H, W) bool
 
-    K_fullimg = torch.tensor(progress.scene.intrinsics_K)
+    K_fullimg = torch.tensor(runRecord.scene.intrinsics_K)
 
     adapter = GVHMRAdapter()
     adapter.load()
@@ -123,20 +123,20 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     # Smooth both coordinate frames (incam feeds stage 5/6, global feeds the
     # eventual export + this stage's Blender preview) before anything reads them.
-    window = progress.input.body_smoothing_window
-    cutoff = progress.input.body_translation_cutoff
+    window = runRecord.input.body_smoothing_window
+    cutoff = runRecord.input.body_translation_cutoff
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_GLOBAL], window, cutoff)
 
-    motion_dir = Path(progress.progress_dir) / MOTION_DIRNAME
+    motion_dir = Path(runRecord.progress_dir) / MOTION_DIRNAME
     motion_dir.mkdir(parents=True, exist_ok=True)
     motion_path = motion_dir / HUMAN_MOTION_FILENAME
     torch.save(result, motion_path)
     outputs = {OUTPUT_HUMAN_MOTION: str(motion_path)}
 
-    if progress.input.render_motion_preview:
+    if runRecord.input.render_motion_preview:
         preview_path = motion_dir / MOTION_PREVIEW_FILENAME
-        _render_amass_npz(result[KEY_PRED_SMPL_PARAMS_GLOBAL], progress.scene.fps, preview_path)
+        _render_amass_npz(result[KEY_PRED_SMPL_PARAMS_GLOBAL], runRecord.scene.fps, preview_path)
         outputs[OUTPUT_MOTION_PREVIEW] = str(preview_path)
 
     return outputs

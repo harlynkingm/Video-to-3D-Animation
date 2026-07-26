@@ -27,13 +27,14 @@ from conftest import (
     SENSOR_WIDTH_MM,
     SMPLX_MODEL_PATH,
     TEST_VIDEO_PATH,
+    assert_stages_complete,
 )
 from pipeline import run as run_pipeline_module
 from pipeline.create_run import create_run
-from pipeline.progress_tracker import ProgressRecord, RunInput, StageName, StageStatus
+from pipeline.progress_tracker import RunRecord, RunInput, StageName, StageStatus
 
 
-def _make_progress(tmp_path: Path) -> ProgressRecord:
+def _make_runRecord(tmp_path: Path) -> RunRecord:
     run_input = RunInput(
         video_path=str(TEST_VIDEO_PATH),
         human_prompt=HUMAN_PROMPT,
@@ -46,7 +47,7 @@ def _make_progress(tmp_path: Path) -> ProgressRecord:
 
 def _fake_load_stage_run(calls: list[StageName]):
     def load(index: int, stage_name: StageName):
-        def fake_run(progress: ProgressRecord) -> dict[str, str]:
+        def fake_run(runRecord: RunRecord) -> dict[str, str]:
             calls.append(stage_name)
             return {}
         return fake_run
@@ -61,34 +62,34 @@ def test_load_stage_run_resolves_the_real_stage_module():
 
 
 def test_run_pipeline_runs_every_stage_when_no_bound_given(tmp_path, monkeypatch):
-    progress = _make_progress(tmp_path)
+    runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
 
-    run_pipeline_module.run_pipeline(progress)
+    run_pipeline_module.run_pipeline(runRecord)
 
     assert calls == run_pipeline_module.ORDERED_STAGES
-    assert all(progress.is_complete(s) for s in run_pipeline_module.ORDERED_STAGES)
+    assert all(runRecord.is_complete(s) for s in run_pipeline_module.ORDERED_STAGES)
 
 
 def test_run_pipeline_stops_after_the_requested_stage(tmp_path, monkeypatch):
-    progress = _make_progress(tmp_path)
+    runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
 
-    run_pipeline_module.run_pipeline(progress, stop_after_stage=1)
+    run_pipeline_module.run_pipeline(runRecord, stop_after_stage=1)
 
     assert calls == run_pipeline_module.ORDERED_STAGES[:2]
-    assert progress.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
-    assert not progress.is_complete(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
+    assert runRecord.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
+    assert not runRecord.is_complete(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
 
 
 def test_run_pipeline_clamps_a_stop_after_stage_beyond_what_is_implemented(tmp_path, monkeypatch, capsys):
-    progress = _make_progress(tmp_path)
+    runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
 
-    run_pipeline_module.run_pipeline(progress, stop_after_stage=99)
+    run_pipeline_module.run_pipeline(runRecord, stop_after_stage=99)
 
     assert calls == run_pipeline_module.ORDERED_STAGES
     assert "Only stages 0-" in capsys.readouterr().out

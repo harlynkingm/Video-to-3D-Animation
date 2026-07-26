@@ -21,7 +21,7 @@ from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unpr
 from ..pipeline_stage_base import cli_entrypoint
 from ..helpers.ply_export_helper import write_colored_ply
 from ..helpers.progress_reporter import report_single_shot
-from ..progress_tracker import ProgressRecord, StageName
+from ..progress_tracker import RunRecord, StageName
 
 # stage_0_ingest_video.py's own output key, consumed here.
 FRAMES_DIR_OUTPUT_KEY = "frames_dir"
@@ -65,12 +65,12 @@ def _render_pointcloud_preview(
     write_colored_ply(points[valid], colors[valid], out_path)
 
 
-def run(progress: ProgressRecord) -> dict[str, str]:
-    frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
+def run(runRecord: RunRecord) -> dict[str, str]:
+    frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
     frame_paths = sorted(frames_dir.glob("*.jpg"))
-    anchor_frame_path = frame_paths[progress.scene.anchor_frame_index]
+    anchor_frame_path = frame_paths[runRecord.scene.anchor_frame_index]
 
-    K = np.array(progress.scene.intrinsics_K)
+    K = np.array(runRecord.scene.intrinsics_K)
     # fx == fy by construction (camera_info_helpers.compute_intrinsics_matrix assumes square pixels).
     focal_length_px = K[0, 0]
 
@@ -82,7 +82,7 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     finally:
         adapter.unload()
 
-    depth_dir = Path(progress.progress_dir) / DEPTH_DIRNAME
+    depth_dir = Path(runRecord.progress_dir) / DEPTH_DIRNAME
     depth_dir.mkdir(parents=True, exist_ok=True)
 
     depth_path = depth_dir / DEPTH_FILENAME
@@ -90,9 +90,9 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     outputs = {OUTPUT_DEPTH: str(depth_path)}
 
-    if progress.input.render_depth_preview:
+    if runRecord.input.render_depth_preview:
         pointcloud_path = depth_dir / POINTCLOUD_FILENAME
-        native_hw = (progress.scene.height, progress.scene.width)
+        native_hw = (runRecord.scene.height, runRecord.scene.width)
         _render_pointcloud_preview(
             result[KEY_DEPTH], result.get(KEY_SKY), anchor_frame_path, K, native_hw, pointcloud_path
         )

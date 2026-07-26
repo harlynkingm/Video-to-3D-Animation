@@ -5,7 +5,7 @@ A stage file should look like:
     from .pipeline_stage_base import cli_entrypoint
     from .progress_tracker import StageName
 
-    def run(progress: ProgressRecord) -> dict[str, str]:
+    def run(runRecord: RunRecord) -> dict[str, str]:
         ...  # the actual stage logic
         return {"some_output": "path/to/it"}
 
@@ -20,7 +20,7 @@ import sys
 import traceback
 from typing import Callable
 
-from .progress_tracker import ProgressRecord, StageName, StageStatus
+from .progress_tracker import RunRecord, StageName, StageStatus
 
 
 class StageDependenciesNotMetError(RuntimeError):
@@ -28,8 +28,8 @@ class StageDependenciesNotMetError(RuntimeError):
 
 
 def run_stage(
-    progress: ProgressRecord,
-    run: Callable[[ProgressRecord], dict[str, str]],
+    runRecord: RunRecord,
+    run: Callable[[RunRecord], dict[str, str]],
     stage_name: StageName,
     force: bool = False,
 ) -> bool:
@@ -40,35 +40,35 @@ def run_stage(
     complete and got skipped); raises `StageDependenciesNotMetError` if this
     stage's dependencies aren't complete yet.
     """
-    if not progress.dependencies_met(stage_name):
+    if not runRecord.dependencies_met(stage_name):
         raise StageDependenciesNotMetError(f"{stage_name}: dependencies not met")
 
-    if progress.is_complete(stage_name) and not force:
-        print(f"{stage_name}: already complete, skipping (use --force to re-run)")
+    if runRecord.is_complete(stage_name) and not force:
+        print(f"[{stage_name.title}] already complete, skipping (use --force to re-run)")
         return False
 
-    progress.mark_progress(stage_name, StageStatus.RUNNING)
+    runRecord.mark_progress(stage_name, StageStatus.RUNNING)
     try:
-        outputs = run(progress)
+        outputs = run(runRecord)
     except Exception:
-        progress.mark_progress(stage_name, StageStatus.FAILED, error=traceback.format_exc())
+        runRecord.mark_progress(stage_name, StageStatus.FAILED, error=traceback.format_exc())
         raise
 
-    progress.mark_progress(stage_name, StageStatus.COMPLETE, outputs=outputs)
+    runRecord.mark_progress(stage_name, StageStatus.COMPLETE, outputs=outputs)
     return True
 
 
-def cli_entrypoint(run: Callable[[ProgressRecord], dict[str, str]], stage_name: StageName) -> None:
+def cli_entrypoint(run: Callable[[RunRecord], dict[str, str]], stage_name: StageName) -> None:
     parser = argparse.ArgumentParser(description=f"Run the {stage_name} stage")
     parser.add_argument("-o", "--output-dir", dest="progress_dir", metavar="OUTPUT_DIR", required=True,
                          help="Path to the run directory containing progress.json")
     parser.add_argument("--force", action="store_true", help="Re-run even if this stage is already marked complete")
     args = parser.parse_args()
 
-    progress = ProgressRecord.load(args.progress_dir)
+    runRecord = RunRecord.load(args.progress_dir)
 
     try:
-        run_stage(progress, run, stage_name, force=args.force)
+        run_stage(runRecord, run, stage_name, force=args.force)
     except StageDependenciesNotMetError as e:
         print(f"{e}, aborting", file=sys.stderr)
         sys.exit(1)

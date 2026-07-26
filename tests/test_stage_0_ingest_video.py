@@ -31,8 +31,8 @@ def test_scene_info_matches_the_real_video(progress, stage_0_result):
     assert progress.scene.fps == pytest.approx(TEST_VIDEO_FPS, abs=0.1)
 
 
-def test_intrinsics_matrix_is_built_from_the_given_lens_info(progress, stage_0_result):
-    K = progress.scene.intrinsics_K
+def test_intrinsics_matrix_is_built_from_the_given_lens_info(runRecord, stage_0_result):
+    K = runRecord.scene.intrinsics_K
     expected_focal_px = FOCAL_LENGTH_MM * (TEST_VIDEO_WIDTH / SENSOR_WIDTH_MM)
     assert K[0][0] == pytest.approx(expected_focal_px)
     assert K[1][1] == pytest.approx(expected_focal_px)

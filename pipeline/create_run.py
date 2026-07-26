@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .progress_tracker import (
     NewRunID,
-    ProgressRecord,
+    RunRecord,
     RunInput,
     StageName,
     StageRecord,
@@ -71,13 +71,13 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
 }
 
 
-def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = None) -> ProgressRecord:
+def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = None) -> RunRecord:
     """`run_id` is just a human-readable label stored alongside the run's data --
     `progress_dir` is what actually identifies a run on disk -- so it defaults to
     the directory's own name rather than requiring the caller to repeat it.
     """
     progress_dir.mkdir(parents=True, exist_ok=True)
-    progress = ProgressRecord(
+    runRecord = RunRecord(
         run_id=run_id or progress_dir.name,
         progress_dir=str(progress_dir),
         input=run_input,
@@ -86,8 +86,8 @@ def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = Non
             for stage, deps in STAGE_DEPENDS_ON.items()
         },
     )
-    progress.save()
-    return progress
+    runRecord.save()
+    return runRecord
 
 
 def main() -> None:
@@ -97,8 +97,8 @@ def main() -> None:
     args = parser.parse_args()
 
     run_input = run_input_from_args(args)
-    progress = create_run(args.progress_dir, run_input, run_id=args.run_id)
-    print(f"Created run {progress.run_id!r} at {args.progress_dir}")
+    runRecord = create_run(args.progress_dir, run_input, run_id=args.run_id)
+    print(f"Created run {runRecord.run_id!r} at {args.progress_dir}")
 
 
 if __name__ == "__main__":

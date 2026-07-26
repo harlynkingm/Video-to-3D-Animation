@@ -31,8 +31,7 @@ from .create_run import STAGE_DEPENDS_ON
 from .progress_tracker import (
     PROGRESS_JSON_NAME,
     SCHEMA_VERSION,
-    ProgressRecord,
-    RunInput,
+    RunRecord,
     RunLocation,
     StageRecord,
     add_dataclass_cli_arguments,
@@ -74,10 +73,10 @@ def update_run(progress_dir: Path, args: argparse.Namespace) -> ProgressRecord:
             "(use create_run or pipeline.run to start a new one)"
         )
 
-    progress = ProgressRecord.load(progress_dir)
-    shutil.copy2(progress_path, progress_path.with_suffix("-backup.json"))
+    runRecord = RunRecord.load(progress_dir)
+    shutil.copy2(progress_path, progress_path.with_suffix(".json.bak"))
 
-    progress.input = _apply_overrides(progress.input, args)
+    runRecord.input = apply_run_input_overrides(runRecord.input, args)
 
     # Add any stage the current DAG knows about that this run predates; for a
     # stage that already has a record, only refresh its depends_on (the DAG
@@ -86,14 +85,14 @@ def update_run(progress_dir: Path, args: argparse.Namespace) -> ProgressRecord:
     # Never touches an existing record's status/outputs/error.
     for stage, deps in STAGE_DEPENDS_ON.items():
         depends_on = [dep.value for dep in deps]
-        if stage.value in progress.stages:
-            progress.stages[stage.value].depends_on = depends_on
+        if stage.value in runRecord.stages:
+            runRecord.stages[stage.value].depends_on = depends_on
         else:
-            progress.stages[stage.value] = StageRecord(depends_on=depends_on)
+            runRecord.stages[stage.value] = StageRecord(depends_on=depends_on)
 
-    progress.schema_version = SCHEMA_VERSION
-    progress.save()
-    return progress
+    runRecord.schema_version = SCHEMA_VERSION
+    runRecord.save()
+    return runRecord
 
 
 def main() -> None:
@@ -104,8 +103,8 @@ def main() -> None:
     add_run_input_arguments(parser, required=False)
     args = parser.parse_args()
 
-    progress = update_run(args.progress_dir, args)
-    print(f"Updated run {progress.run_id!r} at {args.progress_dir} (backup saved as progress-backup.json)")
+    runRecord = update_run(args.progress_dir, args)
+    print(f"Updated run {runRecord.run_id!r} at {args.progress_dir} (backup saved as progress.json.bak)")
 
 
 if __name__ == "__main__":

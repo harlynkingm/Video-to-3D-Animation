@@ -154,15 +154,15 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     stage_1_outputs = progress.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs
 
     motion = torch.load(
-        progress.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
+        runRecord.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
         weights_only=False,
     )
     smplx_verts = _build_smplx_anchor_mesh(motion[KEY_PRED_SMPL_PARAMS_INCAM], anchor)
 
-    depth = np.load(progress.stages[StageName.STAGE_3_ESTIMATE_DEPTH].outputs[OUTPUT_DEPTH])
+    depth = np.load(runRecord.stages[StageName.STAGE_3_ESTIMATE_DEPTH].outputs[OUTPUT_DEPTH])
     depth_hw = depth.shape
-    native_hw = (progress.scene.height, progress.scene.width)
-    K = scale_intrinsics_to_resolution(np.array(progress.scene.intrinsics_K), native_hw, depth_hw)
+    native_hw = (runRecord.scene.height, runRecord.scene.width)
+    K = scale_intrinsics_to_resolution(np.array(runRecord.scene.intrinsics_K), native_hw, depth_hw)
 
     human_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_HUMAN_MASKS], anchor, depth_hw)
 

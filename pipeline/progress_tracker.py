@@ -366,7 +366,7 @@ class RunOutputs:
 
 
 @dataclass
-class ProgressRecord:
+class RunRecord:
     run_id: str
     progress_dir: str
     input: RunInput
@@ -386,7 +386,7 @@ class ProgressRecord:
         tmp_path.replace(self.path)  # atomic rename on the same filesystem
 
     @classmethod
-    def load(cls, progress_dir: str | Path) -> ProgressRecord:
+    def load(cls, progress_dir: str | Path) -> RunRecord:
         data = json.loads((Path(progress_dir) / PROGRESS_JSON_NAME).read_text())
         data[FIELD_INPUT] = RunInput(
             **{

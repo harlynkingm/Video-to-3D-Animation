@@ -39,7 +39,8 @@ import pytest
 import torch
 
 from pipeline.create_run import create_run
-from pipeline.progress_tracker import ProgressRecord, RunInput, StageName, StageStatus
+from pipeline.progress_tracker import RunRecord, RunInput, StageName, StageStatus
+from pipeline.run import ORDERED_STAGES
 
 TESTS_DIR = Path(__file__).parent
 TEST_VIDEO_PATH = TESTS_DIR / "assets" / "tiny_tennis_clip.mp4"
@@ -76,7 +77,7 @@ SMPLX_MODEL_PATH = TESTS_DIR.parent / "body_models" / "smplx" / "SMPLX_NEUTRAL.n
 
 
 @pytest.fixture(scope="session")
-def progress(tmp_path_factory) -> ProgressRecord:
+def runRecord(tmp_path_factory) -> RunRecord:
     run_dir = tmp_path_factory.mktemp("pipeline_test_run")
     run_input = RunInput(
         video_path=str(TEST_VIDEO_PATH),
@@ -89,21 +90,22 @@ def progress(tmp_path_factory) -> ProgressRecord:
         render_depth_preview=True,
         render_scene_preview=True,
         render_retarget_preview=True,
+        render_contacts_preview=True,
     )
     return create_run(run_dir, run_input, run_id="test")
 
 
 @pytest.fixture(scope="session")
-def stage_0_result(progress: ProgressRecord) -> dict[str, str]:
+def stage_0_result(runRecord: RunRecord) -> dict[str, str]:
     from pipeline.stages import stage_0_ingest_video
 
-    outputs = stage_0_ingest_video.run(progress)
-    progress.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_0_ingest_video.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
 @pytest.fixture(scope="session")
-def stage_1_result(progress: ProgressRecord, stage_0_result: dict[str, str]) -> dict[str, str]:
+def stage_1_result(runRecord: RunRecord, stage_0_result: dict[str, str]) -> dict[str, str]:
     if not torch.cuda.is_available():
         pytest.skip("needs a CUDA GPU")
     if not SAM31_CHECKPOINT.exists():
@@ -111,13 +113,13 @@ def stage_1_result(progress: ProgressRecord, stage_0_result: dict[str, str]) -> 
 
     from pipeline.stages import stage_1_mask_and_track
 
-    outputs = stage_1_mask_and_track.run(progress)
-    progress.mark_progress(StageName.STAGE_1_MASK_AND_TRACK, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_1_mask_and_track.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_1_MASK_AND_TRACK, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
 @pytest.fixture(scope="session")
-def stage_2_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
+def stage_2_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
     if not torch.cuda.is_available():
         pytest.skip("needs a CUDA GPU")
     missing = [p.name for p in GVHMR_CHECKPOINTS if not p.exists()]
@@ -126,26 +128,26 @@ def stage_2_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> 
 
     from pipeline.stages import stage_2_estimate_human_motion
 
-    outputs = stage_2_estimate_human_motion.run(progress)
-    progress.mark_progress(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_2_estimate_human_motion.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
 @pytest.fixture(scope="session")
-def stage_3_result(progress: ProgressRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
+def stage_3_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
     if not torch.cuda.is_available():
         pytest.skip("needs a CUDA GPU")
 
     from pipeline.stages import stage_3_estimate_depth
 
-    outputs = stage_3_estimate_depth.run(progress)
-    progress.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_3_estimate_depth.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
 @pytest.fixture(scope="session")
 def stage_4_result(
-    progress: ProgressRecord, stage_1_result: dict[str, str], stage_2_result: dict[str, str]
+    runRecord: RunRecord, stage_1_result: dict[str, str], stage_2_result: dict[str, str]
 ) -> dict[str, str]:
     # Depends on stage_2_result (not just stage_1_result) now: stage 4 checks
     # every raw wrist estimate against GVHMR's own elbow orientation for
@@ -162,14 +164,14 @@ def stage_4_result(
 
     from pipeline.stages import stage_4_estimate_hands
 
-    outputs = stage_4_estimate_hands.run(progress)
-    progress.mark_progress(StageName.STAGE_4_ESTIMATE_HANDS, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_4_estimate_hands.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_4_ESTIMATE_HANDS, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
 @pytest.fixture(scope="session")
 def stage_5_result(
-    progress: ProgressRecord, stage_2_result: dict[str, str], stage_4_result: dict[str, str]
+    runRecord: RunRecord, stage_2_result: dict[str, str], stage_4_result: dict[str, str]
 ) -> dict[str, str]:
     # No GPU/checkpoints of its own, but SmplxSkeleton (for the kinematic tree)
     # and the optional preview both need the registration-gated SMPL-X model
@@ -180,20 +182,35 @@ def stage_5_result(
 
     from pipeline.stages import stage_5_retarget_hands
 
-    outputs = stage_5_retarget_hands.run(progress)
-    progress.mark_progress(StageName.STAGE_5_RETARGET_HANDS, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_5_retarget_hands.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_5_RETARGET_HANDS, StageStatus.COMPLETE, outputs=outputs)
     return outputs
 
 
 @pytest.fixture(scope="session")
 def stage_6_result(
-    progress: ProgressRecord, stage_2_result: dict[str, str], stage_3_result: dict[str, str]
+    runRecord: RunRecord, stage_2_result: dict[str, str], stage_3_result: dict[str, str]
 ) -> dict[str, str]:
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
 
     from pipeline.stages import stage_6_align_scene_scale
 
-    outputs = stage_6_align_scene_scale.run(progress)
-    progress.mark_progress(StageName.STAGE_6_ALIGN_SCENE_SCALE, StageStatus.COMPLETE, outputs=outputs)
+    outputs = stage_6_align_scene_scale.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_6_ALIGN_SCENE_SCALE, StageStatus.COMPLETE, outputs=outputs)
+    return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_7_result(runRecord: RunRecord, stage_5_result: dict[str, str]) -> dict[str, str]:
+    # Only needs stage 5's retargeted motion + stage 1's object mask -- see
+    # create_run.STAGE_DEPENDS_ON's comment for why this deliberately doesn't
+    # wait on align_scene_scale (stage 6).
+    if not SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    from pipeline.stages import stage_7_annotate_contacts
+
+    outputs = stage_7_annotate_contacts.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_7_ANNOTATE_CONTACTS, StageStatus.COMPLETE, outputs=outputs)
     return outputs

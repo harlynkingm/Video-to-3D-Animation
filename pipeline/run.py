@@ -25,7 +25,7 @@ from .pipeline_stage_base import run_stage
 from .progress_tracker import (
     PROGRESS_JSON_NAME,
     NewRunID,
-    ProgressRecord,
+    RunRecord,
     StageName,
     add_dataclass_cli_arguments,
     add_run_input_arguments,
@@ -40,7 +40,7 @@ def _load_stage_run(index: int, stage_name: StageName):
     return module.run
 
 
-def run_pipeline(progress: ProgressRecord, stop_after_stage: int | None = None) -> None:
+def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None) -> None:
     max_stage_index = len(ORDERED_STAGES) - 1
     if stop_after_stage is None:
         last_index = max_stage_index
@@ -52,7 +52,7 @@ def run_pipeline(progress: ProgressRecord, stop_after_stage: int | None = None) 
     for index, stage_name in enumerate(ORDERED_STAGES):
         if index > last_index:
             break
-        run_stage(progress, _load_stage_run(index, stage_name), stage_name)
+        run_stage(runRecord, _load_stage_run(index, stage_name), stage_name)
 
 
 def main() -> None:
@@ -76,13 +76,15 @@ def main() -> None:
     progress_dir = args.progress_dir
     if (progress_dir / PROGRESS_JSON_NAME).exists():
         print(f"Found an existing run at {progress_dir}, resuming")
-        progress = ProgressRecord.load(progress_dir)
+        runRecord = RunRecord.load(progress_dir)
+        runRecord.input = apply_run_input_overrides(runRecord.input, args)
+        runRecord.save()
     else:
         run_input = run_input_from_args(args)
-        progress = create_run(progress_dir, run_input, run_id=args.run_id)
-        print(f"Created run {progress.run_id!r} at {progress_dir}")
+        runRecord = create_run(progress_dir, run_input, run_id=args.run_id)
+        print(f"Created run {runRecord.run_id!r} at {progress_dir}")
 
-    run_pipeline(progress, stop_after_stage=args.stop_after_stage)
+    run_pipeline(runRecord, stop_after_stage=args.stop_after_stage)
 
 
 if __name__ == "__main__":

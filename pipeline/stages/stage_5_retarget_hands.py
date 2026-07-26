@@ -37,7 +37,7 @@ from ..adapters.hamer.hamer_adapter import (
 )
 from ..algorithms.hand_retarget import retarget_hands
 from ..pipeline_stage_base import cli_entrypoint
-from ..progress_tracker import ProgressRecord, StageName
+from ..progress_tracker import RunRecord, StageName
 from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 from ..stages.stage_4_estimate_hands import OUTPUT_HAND_POSE
 
@@ -62,9 +62,9 @@ def _as_f32_tensor(x: np.ndarray | torch.Tensor) -> torch.Tensor:
     return x.detach().cpu().float()
 
 
-def run(progress: ProgressRecord) -> dict[str, str]:
+def run(runRecord: RunRecord) -> dict[str, str]:
     motion = torch.load(
-        progress.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
+        runRecord.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
         weights_only=False,
     )
     incam = motion[KEY_PRED_SMPL_PARAMS_INCAM]
@@ -73,7 +73,7 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     betas = _as_f32_tensor(incam[KEY_BETAS])
     transl = _as_f32_tensor(incam[KEY_TRANSL])
 
-    hands = np.load(progress.stages[StageName.STAGE_4_ESTIMATE_HANDS].outputs[OUTPUT_HAND_POSE])
+    hands = np.load(runRecord.stages[StageName.STAGE_4_ESTIMATE_HANDS].outputs[OUTPUT_HAND_POSE])
     if hands[KEY_LEFT_VALID].shape[0] != global_orient.shape[0]:
         raise RuntimeError(
             f"frame count mismatch: body motion has {global_orient.shape[0]} frames, "
@@ -104,19 +104,19 @@ def run(progress: ProgressRecord) -> dict[str, str]:
         KEY_RIGHT_HAND_POSE: right_hand_pose,
     }
 
-    retarget_dir = Path(progress.progress_dir) / RETARGET_DIRNAME
+    retarget_dir = Path(runRecord.progress_dir) / RETARGET_DIRNAME
     retarget_dir.mkdir(parents=True, exist_ok=True)
     motion_path = retarget_dir / RETARGET_MOTION_FILENAME
     torch.save(merged, motion_path)
 
     outputs = {OUTPUT_RETARGET_MOTION: str(motion_path)}
 
-    if progress.input.render_retarget_preview:
+    if runRecord.input.render_retarget_preview:
         from ..helpers.smplx_bvh_preview import render_body_hands_bvh
 
         preview_path = retarget_dir / RETARGET_PREVIEW_FILENAME
         render_body_hands_bvh(
-            global_orient, merged_body_pose, left_hand_pose, right_hand_pose, transl, progress.scene.fps, preview_path
+            global_orient, merged_body_pose, left_hand_pose, right_hand_pose, transl, runRecord.scene.fps, preview_path
         )
         outputs[OUTPUT_RETARGET_PREVIEW] = str(preview_path)
 

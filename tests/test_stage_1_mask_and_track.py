@@ -54,8 +54,8 @@ def test_object_tracked_in_every_frame_with_plausible_area(stage_1_result):
     assert (fractions < MAX_OBJECT_AREA_FRACTION).all(), fractions.tolist()
 
 
-def test_anchor_frame_resolved_within_bounds(progress, stage_1_result):
-    assert 0 <= progress.scene.anchor_frame_index < TEST_VIDEO_FRAME_COUNT
+def test_anchor_frame_resolved_within_bounds(runRecord, stage_1_result):
+    assert 0 <= runRecord.scene.anchor_frame_index < TEST_VIDEO_FRAME_COUNT
 
 
 def test_mask_previews_written_at_native_resolution(stage_1_result):

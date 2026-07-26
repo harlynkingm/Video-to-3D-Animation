@@ -61,7 +61,7 @@ from ..algorithms.motion_smoothing import (
     smooth_rotation_sequence,
 )
 from ..pipeline_stage_base import cli_entrypoint
-from ..progress_tracker import ProgressRecord, StageName
+from ..progress_tracker import RunRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
 from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 
@@ -143,7 +143,7 @@ def _smooth_hand_result(
         )
 
 
-def _compute_wrist_validity(result: dict, progress: ProgressRecord) -> None:
+def _compute_wrist_validity(result: dict, runRecord: RunRecord) -> None:
     """In place: adds `KEY_LEFT_WRIST_VALID`/`KEY_RIGHT_WRIST_VALID` to `result`
     -- each hand's base `*_valid` narrowed further wherever the raw wrist
     estimate is anatomically impossible relative to GVHMR's own elbow (see this
@@ -151,7 +151,7 @@ def _compute_wrist_validity(result: dict, progress: ProgressRecord) -> None:
     for why this runs here, before any smoothing, rather than downstream in
     stage 5, and why it's a separate array rather than overwriting `*_valid`)."""
     motion = torch.load(
-        progress.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
+        runRecord.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
         weights_only=False,
     )
     incam = motion[KEY_PRED_SMPL_PARAMS_INCAM]
@@ -159,9 +159,9 @@ def _compute_wrist_validity(result: dict, progress: ProgressRecord) -> None:
     body_pose = torch.as_tensor(incam[KEY_BODY_POSE]).float()
     global_rot = body_joint_global_rotations(global_orient, body_pose, SmplxSkeleton().parents)
 
-    max_deg = progress.input.hand_wrist_max_deviation_deg
-    release_deg = progress.input.hand_wrist_release_deviation_deg
-    window = progress.input.hand_wrist_deviation_window
+    max_deg = runRecord.input.hand_wrist_max_deviation_deg
+    release_deg = runRecord.input.hand_wrist_release_deviation_deg
+    window = runRecord.input.hand_wrist_deviation_window
     for elbow, global_orient_key, valid_key, wrist_valid_key in (
         (LEFT_ELBOW, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID, KEY_LEFT_WRIST_VALID),
         (RIGHT_ELBOW, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID, KEY_RIGHT_WRIST_VALID),
@@ -177,14 +177,14 @@ def _compute_wrist_validity(result: dict, progress: ProgressRecord) -> None:
         result[wrist_valid_key] = gated.numpy()
 
 
-def run(progress: ProgressRecord) -> dict[str, str]:
-    frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
+def run(runRecord: RunRecord) -> dict[str, str]:
+    frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
     frame_paths = sorted(frames_dir.glob("*.jpg"))
     if not frame_paths:
         raise RuntimeError(f"No frames found in {frames_dir}")
 
     human_masks = torch.load(
-        progress.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs[OUTPUT_HUMAN_MASKS],
+        runRecord.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs[OUTPUT_HUMAN_MASKS],
         weights_only=False,
     )
 
@@ -195,20 +195,20 @@ def run(progress: ProgressRecord) -> dict[str, str]:
     finally:
         adapter.unload()
 
-    _compute_wrist_validity(result, progress)
+    _compute_wrist_validity(result, runRecord)
 
     _smooth_hand_result(
         result,
-        progress.scene.fps,
-        progress.input.hand_smoothing_window,
-        progress.input.hand_beta,
-        progress.input.hand_finger_min_cutoff_hz,
-        progress.input.hand_wrist_min_cutoff_hz,
-        progress.input.hand_finger_decimate_deg,
-        progress.input.hand_wrist_decimate_deg,
+        runRecord.scene.fps,
+        runRecord.input.hand_smoothing_window,
+        runRecord.input.hand_beta,
+        runRecord.input.hand_finger_min_cutoff_hz,
+        runRecord.input.hand_wrist_min_cutoff_hz,
+        runRecord.input.hand_finger_decimate_deg,
+        runRecord.input.hand_wrist_decimate_deg,
     )
 
-    hands_dir = Path(progress.progress_dir) / HANDS_DIRNAME
+    hands_dir = Path(runRecord.progress_dir) / HANDS_DIRNAME
     hands_dir.mkdir(parents=True, exist_ok=True)
     hand_pose_path = hands_dir / HAND_POSE_FILENAME
     np.savez(
@@ -227,11 +227,11 @@ def run(progress: ProgressRecord) -> dict[str, str]:
 
     outputs = {OUTPUT_HAND_POSE: str(hand_pose_path)}
 
-    if progress.input.render_hands_preview:
+    if runRecord.input.render_hands_preview:
         from ..adapters.hamer.hamer_bvh_preview import render_hands_bvh
 
         preview_path = hands_dir / HANDS_PREVIEW_FILENAME
-        render_hands_bvh(result, progress.scene.fps, preview_path)
+        render_hands_bvh(result, runRecord.scene.fps, preview_path)
         outputs[OUTPUT_HANDS_PREVIEW] = str(preview_path)
 
     return outputs

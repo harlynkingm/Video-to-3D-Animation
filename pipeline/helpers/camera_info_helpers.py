@@ -10,15 +10,26 @@ from __future__ import annotations
 def compute_intrinsics_matrix(
     focal_length_mm: float,
     sensor_width_mm: float,
+    sensor_width_px: int,
     image_width_px: int,
     image_height_px: int,
 ) -> list[list[float]]:
     """Build the pinhole camera intrinsics matrix K.
 
+    `sensor_width_px` is the camera sensor's own native pixel width -- what
+    the focal-length ratio is measured against -- which is NOT always the
+    same as `image_width_px`/`image_height_px` (the actual output frame's
+    own dimensions, used only to center the principal point). These differ
+    when a frame has been rotated after capture without changing the
+    physical sensor itself: a phone's "vertical video" is really landscape
+    sensor data, rotated for display (see stage_0_ingest_video.py's own
+    rotation handling) -- the sensor's physical width never changes, but the
+    frame you're actually centering the principal point in does.
+
     Assumes square pixels and a centered principal point, which holds for
     essentially all consumer camera/phone footage.
     """
-    focal_length_px = focal_length_mm * (image_width_px / sensor_width_mm)
+    focal_length_px = focal_length_mm * (sensor_width_px / sensor_width_mm)
     cx = image_width_px / 2.0
     cy = image_height_px / 2.0
     return [
