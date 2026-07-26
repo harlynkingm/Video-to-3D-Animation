@@ -8,10 +8,12 @@ command picks up where it left off instead of starting over.
 
 from __future__ import annotations
 
+import argparse
 import enum
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from pathlib import Path
+from typing import Any, Callable
 
 SCHEMA_VERSION = 1
 
@@ -41,9 +43,9 @@ class StageName(enum.StrEnum):
     STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion"
     STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body"
     STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale"
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: align human-object interaction"
-    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize animation"
-    STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: exporting animation"
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect contact points"
+    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize human-object interaction"
+    STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: export animation"
 
 
 class StageStatus(enum.StrEnum):
@@ -57,24 +59,97 @@ class StageStatus(enum.StrEnum):
 class ObjectShapeHint(enum.StrEnum):
     AUTO = "auto"
     BOX = "box"
-    SPHERE = "sphere"
+    ELLIPSOID = "ellipsoid"
+    CYLINDER = "cylinder"
+
+
+def cli_field(
+    *,
+    flag: str,
+    short_flag: str | None = None,
+    default: Any = MISSING,
+    help: str = "",
+    required: bool = False,
+    bool_flag: bool = False,
+    value_type: Callable[[str], Any] = str,
+    choices: list[str] | None = None,
+    parse: Callable[[str], Any] | None = None,
+    metavar: str | None = None,
+) -> Any:
+    """Declares a dataclass field's CLI presentation (flag name, help text,
+    choices, type) as part of the field's own declaration, instead of a
+    separate hand-maintained list living elsewhere -- `add_dataclass_cli_arguments`/
+    `build_dataclass_from_args` below read this metadata back via
+    `dataclasses.fields(...)`, so a new field only needs to be declared once,
+    here, to show up correctly everywhere it's used. Not `RunInput`-specific:
+    `RunLocation`/`NewRunLocation` below use it too, for the `-o/--output-dir`
+    and `--run-id` flags shared across `create_run`/`pipeline.run`/`update_run`.
+
+    `bool_flag=True` fields (`RunInput`'s `--render-*-preview` flags) double
+    as `--render-previews`-shorthand members automatically in
+    `run_input_from_args` -- every current boolean field is a preview flag,
+    so there's no separate marker for that.
+
+    `parse`, if given, converts the raw parsed string into the field's real
+    type (e.g. `ObjectShapeHint`). It's applied by `build_dataclass_from_args`/
+    `update_run`, not registered as argparse's own `type=`, so a `None` value
+    (meaning "flag not passed", in `update_run`'s optional mode) never runs
+    through it.
+    """
+    metadata = {"cli": {
+        "flag": flag, "short_flag": short_flag, "help": help, "required": required, "bool_flag": bool_flag,
+        "value_type": value_type, "choices": choices, "parse": parse, "metavar": metavar,
+    }}
+    if default is MISSING:
+        return field(metadata=metadata)
+    return field(default=default, metadata=metadata)
 
 
 @dataclass
 class RunInput:
-    video_path: str
-    human_prompt: str
-    object_prompt: str | None = None
-    object_shape_hint: ObjectShapeHint = ObjectShapeHint.AUTO
-    focal_length_mm: float = 0.0
-    sensor_width_mm: float = 0.0
-    anchor_frame_override: int | None = None
-    render_mask_previews: bool = False
-    render_motion_preview: bool = False
-    render_depth_preview: bool = False
-    render_scene_preview: bool = False
-    render_hands_preview: bool = False
-    render_retarget_preview: bool = False
+    video_path: str = cli_field(
+        flag="--input-video", metavar="INPUT_VIDEO", required=True,
+        help="Path to the source video file (MP4, MOV, MPEG, FLV, or WMV)",
+    )
+    human_prompt: str = cli_field(flag="--human-prompt", required=True, help='e.g. "a person"')
+    object_prompt: str | None = cli_field(
+        flag="--object-prompt", default=None, help='e.g. "a teddy bear" (omit if there is no object)',
+    )
+    object_shape_hint: ObjectShapeHint = cli_field(
+        flag="--object-shape-hint", default=ObjectShapeHint.AUTO, parse=ObjectShapeHint,
+        choices=[hint.value for hint in ObjectShapeHint],
+    )
+    focal_length_mm: float = cli_field(flag="--focal-length-mm", default=0.0, required=True, value_type=float)
+    sensor_width_mm: float = cli_field(flag="--sensor-width-mm", default=0.0, required=True, value_type=float)
+    anchor_frame_override: int | None = cli_field(flag="--anchor-frame-override", default=None, value_type=int)
+    render_mask_previews: bool = cli_field(
+        flag="--render-mask-previews", default=False, bool_flag=True,
+        help="Stage 1 also writes black/white JPEG mask previews for visual spot-checking",
+    )
+    render_motion_preview: bool = cli_field(
+        flag="--render-motion-preview", default=False, bool_flag=True,
+        help="Stage 2 also writes an AMASS .npz importable into Blender for visual spot-checking",
+    )
+    render_depth_preview: bool = cli_field(
+        flag="--render-depth-preview", default=False, bool_flag=True,
+        help="Stage 3 also writes a colored .ply point cloud importable into Blender for visual spot-checking",
+    )
+    render_scene_preview: bool = cli_field(
+        flag="--render-scene-preview", default=False, bool_flag=True,
+        help="Stage 6 also writes a .ply combining human, object, and scene in one aligned space for visual spot-checking",
+    )
+    render_hands_preview: bool = cli_field(
+        flag="--render-hands-preview", default=False, bool_flag=True,
+        help="Stage 4 also writes a .bvh hand skeleton animation importable into Blender for visual spot-checking",
+    )
+    render_retarget_preview: bool = cli_field(
+        flag="--render-retarget-preview", default=False, bool_flag=True,
+        help="Stage 5 also writes a .bvh full-body-plus-hands skeleton importable into Blender for visual spot-checking",
+    )
+    render_contacts_preview: bool = cli_field(
+        flag="--render-contacts-preview", default=False, bool_flag=True,
+        help="Stage 7 also writes one annotated JPEG per contact event for visual spot-checking",
+    )
 
     # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
     # the defaults are tuned to need no adjustment; a power user can override them
@@ -145,6 +220,126 @@ class RunInput:
     hand_wrist_max_deviation_deg: float = 110.0
     hand_wrist_release_deviation_deg: float = 55.0
     hand_wrist_deviation_window: int = 5
+
+
+def add_dataclass_cli_arguments(parser: argparse.ArgumentParser, dataclass_type: type, *, required: bool = True) -> None:
+    """Registers every `cli_field(...)`-tagged field of `dataclass_type` onto
+    `parser`, read directly off each field's own metadata -- the shared
+    engine `add_run_input_arguments` (for `RunInput`) builds on, and that
+    `create_run`/`pipeline.run`/`update_run` also use directly for
+    `RunLocation`/`NewRunID` (the `-o/--output-dir`/`--run-id` flags),
+    so no CLI entrypoint hand-writes its own `parser.add_argument` calls for
+    a field any of these dataclasses already declares.
+
+    `required=False` (used only by `update_run`, for `RunInput`'s own fields)
+    makes every otherwise-required flag optional and switches every flag's
+    "not passed" value to `None` instead of a real default -- `update_run`
+    treats `None` as "leave this field's existing value alone", so a flag
+    only overrides anything when the caller actually passes it. Boolean
+    flags can therefore only be turned ON via `update_run`, never explicitly
+    back off; that's an acceptable limitation for a dev-only migration tool
+    (hand-edit progress.json to turn one off).
+    """
+    for f in fields(dataclass_type):
+        cli = f.metadata.get("cli")
+        if cli is None:
+            continue  # a field with no CLI presence (RunInput's smoothing knobs)
+
+        flags = (cli["short_flag"], cli["flag"]) if cli["short_flag"] else (cli["flag"],)
+        kwargs: dict[str, Any] = {"dest": f.name, "help": cli["help"]}
+        if cli["bool_flag"]:
+            kwargs["action"] = "store_true"
+            kwargs["default"] = False if required else None
+        else:
+            kwargs["type"] = cli["value_type"]
+            kwargs["required"] = cli["required"] and required
+            default = f.default
+            if isinstance(default, enum.Enum):
+                default = default.value
+            elif default is MISSING:
+                default = None
+            kwargs["default"] = default if required else None
+            if cli["choices"] is not None:
+                kwargs["choices"] = cli["choices"]
+            if cli["metavar"] is not None:
+                kwargs["metavar"] = cli["metavar"]
+        parser.add_argument(*flags, **kwargs)
+
+
+def resolve_cli_value(f: Any, args: argparse.Namespace) -> Any:
+    """The parsed value for one `cli_field(...)`-tagged field, with its
+    `parse` transform (if any) applied -- shared by `build_dataclass_from_args`
+    and `update_run._apply_overrides` so "convert the raw string" can't drift
+    between fresh-construction and override-merge.
+    """
+    cli = f.metadata["cli"]
+    value = getattr(args, f.name)
+    if value is not None and cli["parse"] is not None:
+        value = cli["parse"](value)
+    return value
+
+
+def build_dataclass_from_args(dataclass_type: type, args: argparse.Namespace) -> Any:
+    """Constructs a fresh instance of `dataclass_type` from parsed CLI args --
+    any field with no CLI flag is simply omitted here, so it falls back to
+    its own dataclass default.
+    """
+    kwargs: dict[str, Any] = {}
+    for f in fields(dataclass_type):
+        if f.metadata.get("cli") is None:
+            continue
+        kwargs[f.name] = resolve_cli_value(f, args)
+    return dataclass_type(**kwargs)
+
+
+def add_run_input_arguments(parser: argparse.ArgumentParser, required: bool = True) -> None:
+    """`RunInput`'s own wrapper around `add_dataclass_cli_arguments`, adding
+    the one thing that isn't a plain per-field concern: the
+    `--render-previews` shorthand, which has no `RunInput` field of its own
+    (it toggles several other fields at once) so it can't be declared via
+    `cli_field` like everything else.
+    """
+    add_dataclass_cli_arguments(parser, RunInput, required=required)
+    preview_default = False if required else None
+    parser.add_argument("--render-previews", action="store_true", default=preview_default,
+                         help="Shorthand for every --render-*-preview flag above at once")
+
+
+def run_input_from_args(args: argparse.Namespace) -> RunInput:
+    """Builds a fresh `RunInput` from parsed CLI args, then applies the
+    `--render-previews` shorthand on top of the generic per-field
+    construction (see `add_run_input_arguments` for why that flag can't just
+    be another `cli_field`).
+    """
+    run_input = build_dataclass_from_args(RunInput, args)
+    if args.render_previews:
+        for f in fields(RunInput):
+            cli = f.metadata.get("cli")
+            if cli and cli["bool_flag"]:
+                setattr(run_input, f.name, True)
+    return run_input
+
+
+@dataclass
+class RunLocation:
+    """Where a run lives on disk -- shared by `create_run`, `pipeline.run`,
+    and `update_run` via `add_dataclass_cli_arguments`, as opposed to
+    `RunInput`'s own video/prompt/camera parameters (which get persisted
+    separately, under progress.json's own `input` key, not here).
+    """
+    progress_dir: Path = cli_field(
+        flag="--output-dir", short_flag="-o", metavar="OUTPUT_DIR", required=True, value_type=Path,
+        help="Directory for this run's progress.json and outputs",
+    )
+
+
+@dataclass
+class NewRunID(RunLocation):
+    """Adds `--run-id`, registered only where a run might not exist yet
+    (`create_run`, `pipeline.run`) -- an existing run's id is already fixed,
+    so `update_run` doesn't offer a way to change it.
+    """
+    run_id: str | None = cli_field(flag="--run-id", default=None, help="Defaults to --output-dir's own folder name")
 
 
 @dataclass

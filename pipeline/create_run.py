@@ -9,7 +9,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .progress_tracker import ObjectShapeHint, ProgressRecord, RunInput, StageName, StageRecord
+from .progress_tracker import (
+    NewRunID,
+    ProgressRecord,
+    RunInput,
+    StageName,
+    StageRecord,
+    add_dataclass_cli_arguments,
+    add_run_input_arguments,
+    run_input_from_args,
+)
 
 # The pipeline's dependency DAG. Stages not yet implemented are included here too
 # (as pending, never-run records) so the full chain is visible in `progress.json`
@@ -48,6 +57,17 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
         StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
         StageName.STAGE_3_ESTIMATE_DEPTH,
     ],
+    # annotate_contacts detects hand-to-object proximity in 2D image space,
+    # using the retargeted hand joints (stage 5) and the object's own 2D mask
+    # (stage 1) -- deliberately NOT align_scene_scale's 3D object primitive or
+    # real-world depth, since GVHMR's own Z estimate is measurably unreliable
+    # for a reaching/foreshortened arm and an animation only needs the hand and
+    # object to agree with each other in their own shared space, not with
+    # absolute ground truth (see contact_detection.py's module docstring).
+    StageName.STAGE_7_ANNOTATE_CONTACTS: [
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_5_RETARGET_HANDS,
+    ],
 }
 
 
@@ -70,65 +90,14 @@ def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = Non
     return progress
 
 
-def add_run_input_arguments(parser: argparse.ArgumentParser) -> None:
-    """Registers every `RunInput` CLI flag onto `parser` -- shared by this
-    module's own `main()` and `pipeline.run` (the one-shot command) so the two
-    can never drift apart.
-    """
-    parser.add_argument("--input-video", dest="video_path", metavar="INPUT_VIDEO", required=True,
-                         help="Path to the source video file (MP4, MOV, MPEG, FLV, or WMV)")
-    parser.add_argument("--human-prompt", required=True, help='e.g. "a tennis player"')
-    parser.add_argument("--object-prompt", default=None, help='e.g. "a tennis racket" (omit if there is no object)')
-    parser.add_argument("--object-shape-hint", default=ObjectShapeHint.AUTO.value,
-                         choices=[hint.value for hint in ObjectShapeHint])
-    parser.add_argument("--focal-length-mm", required=True, type=float)
-    parser.add_argument("--sensor-width-mm", required=True, type=float)
-    parser.add_argument("--anchor-frame-override", default=None, type=int)
-    parser.add_argument("--render-mask-previews", action="store_true",
-                         help="Stage 1 also writes black/white JPEG mask previews for visual spot-checking")
-    parser.add_argument("--render-motion-preview", action="store_true",
-                         help="Stage 2 also writes an AMASS .npz importable into Blender for visual spot-checking")
-    parser.add_argument("--render-depth-preview", action="store_true",
-                         help="Stage 3 also writes a colored .ply point cloud importable into Blender for visual spot-checking")
-    parser.add_argument("--render-hands-preview", action="store_true",
-                         help="Stage 4 also writes a .bvh hand skeleton animation importable into Blender for visual spot-checking")
-    parser.add_argument("--render-retarget-preview", action="store_true",
-                         help="Stage 5 also writes a .bvh full-body-plus-hands skeleton importable into Blender for visual spot-checking")
-    parser.add_argument("--render-scene-preview", action="store_true",
-                         help="Stage 6 also writes a .ply combining human, object, and scene in one aligned space for visual spot-checking")
-    parser.add_argument("--render-previews", action="store_true",
-                         help="Shorthand for every --render-*-preview flag above at once")
-
-
-def run_input_from_args(args: argparse.Namespace) -> RunInput:
-    render_all = args.render_previews
-    return RunInput(
-        video_path=args.video_path,
-        human_prompt=args.human_prompt,
-        object_prompt=args.object_prompt,
-        object_shape_hint=ObjectShapeHint(args.object_shape_hint),
-        focal_length_mm=args.focal_length_mm,
-        sensor_width_mm=args.sensor_width_mm,
-        anchor_frame_override=args.anchor_frame_override,
-        render_mask_previews=render_all or args.render_mask_previews,
-        render_motion_preview=render_all or args.render_motion_preview,
-        render_depth_preview=render_all or args.render_depth_preview,
-        render_scene_preview=render_all or args.render_scene_preview,
-        render_hands_preview=render_all or args.render_hands_preview,
-        render_retarget_preview=render_all or args.render_retarget_preview,
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create a new pipeline run")
-    parser.add_argument("-o", "--output-dir", dest="progress_dir", metavar="OUTPUT_DIR", required=True,
-                         help="Directory to create for this run's state and outputs")
-    parser.add_argument("--run-id", default=None, help="Defaults to --output-dir's own folder name")
+    add_dataclass_cli_arguments(parser, NewRunID)
     add_run_input_arguments(parser)
     args = parser.parse_args()
 
     run_input = run_input_from_args(args)
-    progress = create_run(Path(args.progress_dir), run_input, run_id=args.run_id)
+    progress = create_run(args.progress_dir, run_input, run_id=args.run_id)
     print(f"Created run {progress.run_id!r} at {args.progress_dir}")
 
 

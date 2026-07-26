@@ -19,11 +19,18 @@ from __future__ import annotations
 
 import argparse
 import importlib
-from pathlib import Path
 
-from .create_run import STAGE_DEPENDS_ON, add_run_input_arguments, create_run, run_input_from_args
+from .create_run import STAGE_DEPENDS_ON, create_run
 from .pipeline_stage_base import run_stage
-from .progress_tracker import PROGRESS_JSON_NAME, ProgressRecord, StageName
+from .progress_tracker import (
+    PROGRESS_JSON_NAME,
+    NewRunID,
+    ProgressRecord,
+    StageName,
+    add_dataclass_cli_arguments,
+    add_run_input_arguments,
+    run_input_from_args,
+)
 
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 
@@ -52,9 +59,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create a run and execute every implemented stage in sequence, start to finish"
     )
-    parser.add_argument("-o", "--output-dir", dest="progress_dir", metavar="OUTPUT_DIR", required=True,
-                         help="Directory for this run's state and outputs")
-    parser.add_argument("--run-id", default=None, help="Defaults to --output-dir's own folder name")
+    add_dataclass_cli_arguments(parser, NewRunID)
     parser.add_argument(
         "--stop-after-stage",
         type=int,
@@ -68,7 +73,7 @@ def main() -> None:
     if args.stop_after_stage is not None and args.stop_after_stage < 0:
         parser.error("--stop-after-stage must be >= 0")
 
-    progress_dir = Path(args.progress_dir)
+    progress_dir = args.progress_dir
     if (progress_dir / PROGRESS_JSON_NAME).exists():
         print(f"Found an existing run at {progress_dir}, resuming")
         progress = ProgressRecord.load(progress_dir)
