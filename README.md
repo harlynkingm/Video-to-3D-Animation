@@ -81,6 +81,14 @@ pixi run -e main python -m pipeline.run \
 
 This creates a progress file at `runs/my_clip/progress.json` then runs every stage in order.
 
+If you interrupt a run and want to continue it, just re-run with `--output-dir` pointing at the same folder.
+
+```bash
+pixi run -e main python -m pipeline.run --output-dir runs/my_clip
+```
+
+Passed stages are skipped. You can also add new flags to the run this way.
+
 <details>
 <summary>All available run options</summary>
 
@@ -93,7 +101,7 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--sensor-width-mm` | **Yes** | | Camera sensor width in mm, used alongside focal length to build the intrinsics matrix. |
 | `--run-id` | No | `--output-dir`'s own folder name | A human-readable label for the run. Doesn't affect anything on disk. |
 | `--object-prompt` | No | none | Text description of the object to track, e.g. `"a teddy bear"`. Omit if there's no object to track. |
-| `--object-shape-hint` | No | `auto` | Forces the tracked object's proxy shape to `box` or `sphere` instead of letting a later stage auto-fit it (relevant once `align_scene_scale` is implemented). |
+| `--object-shape-hint` | No | `auto` | Forces the tracked object's proxy shape to `box`, `ellipsoid`, or `cylinder` instead of letting stage 6 auto-fit whichever shape better matches the object. |
 | `--anchor-frame-override` | No | auto-selected | Forces a specific frame index as the "anchor" frame instead of letting stage 1 pick the frame with the clearest view of the object. |
 | `--stop-after-stage` | No | runs every implemented stage | Stops after the given stage number, inclusive -- e.g. `5` runs stages 0-5 and stops before stage 6. |
 | `--render-previews` | No | off | Enables every `--render-*-preview` flag below at once. |
@@ -103,6 +111,7 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--render-hands-preview` | No | off | Stage 4 also writes a `.bvh` hand-skeleton animation (both hands, bones only) importable into Blender for visual spot-checking. See [stage 4](#stage-4-estimate-hands) below. |
 | `--render-retarget-preview` | No | off | Stage 5 also writes a `.bvh` full-body-plus-hands skeleton animation importable into Blender for confirming the hands sit correctly on the body. See [stage 5](#stage-5-retarget-hands) below. |
 | `--render-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#stage-6-align-scene-scale) below. |
+| `--render-contacts-preview` | No | off | Stage 7 also writes one annotated JPEG per contact event, circling the contact point on the source frame, for visual spot-checking. See [stage 7](#stage-7-annotate-contacts) below. |
 </details>
 
 **Running stages individually**: `pipeline.run` is just `pipeline.create_run` followed by every stage's own script, run in sequence. See [Pipeline](#pipeline) below for each stage's individual command and options.
@@ -122,8 +131,8 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 3. Estimate depth | `stage_3_estimate_depth` | `frames/*.jpg` <br> anchor frame index in `progress.json` | `depth/anchor_depth.npy` <br> `depth/anchor_pointcloud.ply` (optional) |
 | 4. Estimate hands | `stage_4_estimate_hands` | `frames/*.jpg` <br> `masks/human.pt` | `hands/hand_pose.npz` <br> `hands/hands_preview.bvh` (optional) |
 | 5. Retarget hands | `stage_5_retarget_hands` | `motion/human_motion.pt` <br> `hands/hand_pose.npz` | `retarget/retargeted_motion.pt` <br> `retarget/retarget_preview.bvh` (optional) |
-| 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy` <br> `motion/human_motion.pt` <br> `masks/human.pt` | `scale/scene_scale.json` <br> `scale/scale_preview.ply` (optional). Object proxy shape (box/sphere) is planned here too but not yet implemented. |
-| 7. Annotate contacts *(not yet implemented)* | `stage_7_annotate_contacts` | SMPL-X sequence <br> object proxy shape | per-frame hand↔object contact points |
+| 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy` <br> `motion/human_motion.pt` <br> `masks/human.pt` <br> `masks/object.pt` (optional) | `scale/scene_scale.json` <br> `scale/object_shape.json` (if an object was tracked) <br> `scale/scene_preview.ply` (optional) |
+| 7. Annotate contacts | `stage_7_annotate_contacts` | `retarget/retargeted_motion.pt` <br> `masks/object.pt` | `contacts/contact_events.json` <br> `contacts/contacts_preview/*.jpg` (optional) |
 | 8. Optimize HOI *(not yet implemented)* | `stage_8_optimize_hoi` | contact points <br> object proxy shape | refined SMPL-X sequence <br> per-frame object 6DoF pose |
 | 9. Export FBX *(not yet implemented)* | `stage_9_export_fbx` | refined SMPL-X sequence <br> object pose | final `.fbx` |
 
@@ -268,15 +277,45 @@ pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale -o runs/my_
 
 The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage 2](#stage-2-estimate-human-motion)) are both represented in real-world meters, but disagree on scale. This stage reconciles them at the anchor frame by matching the SMPL-X body pose against depth values within the SAM-3 human mask. The result is written to `runs/my_clip/scale/scene_scale.json`
 
+If an object was tracked, this stage also fits a shape to it (a box, ellipsoid, or cylinder chosen via `--object-shape-hint`, or 'auto' which automatically chooses the shape of best fit), written to `runs/my_clip/scale/object_shape.json`.
+
 <details>
 <summary><strong>Optional: Aligned Scene Preview</strong></summary>
 
-Use `--render-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts all three elements in the human's metric space, color-coded so you can confirm the fit. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
+Use `--render-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts every element in the human's metric space, color-coded so you can confirm the fit: green for the SMPL-X body, red for the tracked object's depth points, and (if an object was tracked) a yellow wireframe of its fitted primitive shape. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
 </details>
 
-### Stage 7, 8, 9. Contacts, optimization, FBX export
+### Stage 7. Detect human-object contact points
+
+```bash
+pixi run -e main python -m pipeline.stages.stage_7_annotate_contacts -o runs/my_clip
+```
+
+Detects contact points between the body and object across 8 body regions. The mask + depth inferred by Depth-Anything-3 are used to determine where the body and object interact. Interaction events written to `runs/my_clip/contacts/contact_events.json`
+
+<details>
+<summary><strong>Optional: Contact Points Preview</strong></summary>
+
+Use `--render-contacts-preview` when creating the run to also have this stage write `runs/my_clip/contacts/contacts_preview/` This saves one JPEG per contact event named `{peak_confidence_frame:06d}_{regions-joined-by-plus}.jpg`. Each image is the source frame at that event's most-confident moment, with a circle drawn around the joint that triggered it.
+</details>
+
+### Stage 8, 9. Optimization, FBX export
 
 Not yet implemented.
+
+### Update a Run File
+
+If you want to update some of the run options used in a `progress.json` file without opening the file in a text editor, you can use `pipeline.update_run` with any of the run options listed in the [Quick Start](#quick-start).
+
+For example, the following command updates a run file to render preview files for every stage:
+
+```bash
+pixi run -e main python -m pipeline.update_run \
+  --output-dir runs/my_clip \
+  --render-previews
+```
+
+After updating, a backup of your previous version is saved in the same folder, in case you want to revert your changes.
 
 ## Motion smoothing
 

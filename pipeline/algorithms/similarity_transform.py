@@ -4,7 +4,7 @@ SMPL-X human mesh.
 
 Both point sets live in the *same camera coordinate frame* already (GVHMR's
 "incam" SMPL-X and the depth cloud are both camera-space), so there is no
-rotation to solve -- only a scale `s` and translation `b`. This is the
+rotation to solve -- only a scale and a translation `b`. This is the
 static-camera, metric-depth specialization of `open4dhoi`'s
 `preprocessing/scripts/hoi_utils.py::align` (which had to first normalize a
 *relative*-depth map and use an orthographic back-projection; DA3METRIC-LARGE
@@ -17,6 +17,19 @@ are not the same physical points), so we trust only aggregate statistics --
 the ratio of spatial spreads for scale, the centroid offset for translation --
 not individual point matches. This mirrors the reference's own deliberate
 robustness choice.
+
+The scale is anisotropic -- one value shared by the lateral X/Y (image-plane)
+axes, a separate value for Z (the camera's own depth axis) -- confirmed on
+real data: monocular depth (DA3METRIC-LARGE here) is measurably less
+reliable specifically along Z than laterally. On a real clip, the
+per-point ratio needed to reconcile depth against the SMPL-X body was a tight
+~2.1 for X/Y but a noisy ~0.9 (with points closer to the camera needing
+noticeably less than points farther away) for Z -- a single isotropic scalar
+structurally cannot correct that, no matter how it's tuned. This still won't
+fully close the gap (the underlying per-point noise along Z is real, not just
+a missing constant -- monocular depth is known to flatten/underestimate
+foreshortened, camera-facing protrusions like a reaching arm), but it removes
+the average bias an isotropic fit leaves on the table for free.
 """
 
 from __future__ import annotations
@@ -92,13 +105,23 @@ def _correspond_human_to_depth(
     return body_pts, scene_pts
 
 
+def _fit_anisotropic_scale(body_pts: np.ndarray, scene_pts: np.ndarray) -> np.ndarray:
+    """(3,) array: a shared spread-ratio scale for the lateral X/Y (image-plane)
+    axes, and a separate one for Z (the camera's own depth axis) -- see this
+    module's docstring for why a single isotropic scalar can't be trusted here."""
+    scale_xy = _mean_pairwise_distance(scene_pts[:, :2]) / _mean_pairwise_distance(body_pts[:, :2])
+    scale_z = _mean_pairwise_distance(scene_pts[:, 2:3]) / _mean_pairwise_distance(body_pts[:, 2:3])
+    return np.array([scale_xy, scale_xy, scale_z])
+
+
 def fit_scene_scale(
     smplx_verts: np.ndarray, depth: np.ndarray, K: np.ndarray, human_mask: np.ndarray
-) -> tuple[float, np.ndarray, int]:
+) -> tuple[np.ndarray, np.ndarray, int]:
     """Fit `(scale, translation)` mapping SMPL-X metric space onto the depth
     cloud's space: a depth-space point `p` maps back into SMPL-X space via
     `(p - translation) / scale`, and a SMPL-X point `q` maps into depth space
-    via `q * scale + translation`.
+    via `q * scale + translation` (elementwise -- `scale` is a (3,) array, not
+    a scalar, so this broadcasts against an (N, 3) point array either way).
 
     Args:
         smplx_verts: (V, 3) SMPL-X vertices, camera-space metric (GVHMR incam).
@@ -109,7 +132,8 @@ def fit_scene_scale(
         human_mask: (H, W) bool, True on the person, at `depth`'s resolution.
 
     Returns:
-        `(scale, translation, n_correspondences)`.
+        `(scale, translation, n_correspondences)` -- `scale` is `[scale_xy,
+        scale_xy, scale_z]`, a (3,) array.
     """
     body_pts, scene_pts = _correspond_human_to_depth(smplx_verts, depth, K, human_mask)
     if len(body_pts) < MIN_CORRESPONDENCE_POINTS:
@@ -118,8 +142,8 @@ def fit_scene_scale(
             f"{MIN_CORRESPONDENCE_POINTS}); the person may be mostly out of frame at the anchor"
         )
 
-    body_spread = _mean_pairwise_distance(_subsample(body_pts, MAX_CORRESPONDENCE_POINTS))
-    scene_spread = _mean_pairwise_distance(_subsample(scene_pts, MAX_CORRESPONDENCE_POINTS))
-    scale = scene_spread / body_spread
+    scale = _fit_anisotropic_scale(
+        _subsample(body_pts, MAX_CORRESPONDENCE_POINTS), _subsample(scene_pts, MAX_CORRESPONDENCE_POINTS)
+    )
     translation = scene_pts.mean(axis=0) - scale * body_pts.mean(axis=0)
-    return float(scale), translation, len(body_pts)
+    return scale, translation, len(body_pts)

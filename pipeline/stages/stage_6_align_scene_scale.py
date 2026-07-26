@@ -1,18 +1,19 @@
 """align_scene_scale: recovers the metric relationship between the depth map
-and the GVHMR SMPL-X human, at the anchor frame.
+and the GVHMR SMPL-X human, at the anchor frame, and (if an object was
+tracked) fits a proxy primitive to its shape in that same metric space.
 
 DA3METRIC-LARGE's depth and GVHMR's SMPL-X are both nominally metric but
 disagree by a systematic factor on real data (measured ~1.26x on the test
 clip), so this stage fits the scale + translation that reconciles them
-(`similarity_transform.fit_scene_scale`). The result lets any depth-derived
-geometry (later: the object point cloud) be placed in the SMPL-X human's metric space.
+(`similarity_transform.fit_scene_scale`). The object's mask is back-projected
+through the same depth map and the same fitted `(scale, translation)`, then
+`object_extent_fit.fit_object_shape` picks a box, ellipsoid, or cylinder primitive (or the
+user's `--object-shape-hint` override) -- see that module's own docstring for
+why a primitive instead of a reconstructed mesh.
 
-**Scope, as of when this was written**: this stage currently only fits the
-scene scale. Fitting the object's proxy shape (box/sphere) from its mask +
-depth -- the other half of the reference's `make_hoi.py` -- is deferred until
-object placement is actually built. It uses the body-only SMPL-X from
-`estimate_human_motion` (hands don't affect the body's overall scale), so it
-does not wait on `retarget_hands`.
+This stage uses the body-only SMPL-X from `estimate_human_motion` (hands
+don't affect the body's overall scale), so it does not wait on
+`retarget_hands`.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
 )
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unproject_depth_to_points
+from ..algorithms.object_extent_fit import fit_object_shape, sample_shape_surface
 from ..algorithms.similarity_transform import fit_scene_scale
 from ..pipeline_stage_base import cli_entrypoint
 from ..helpers.ply_export_helper import write_colored_ply
@@ -60,10 +62,12 @@ FRAMES_DIR_OUTPUT_KEY = "frames_dir"
 
 SCALE_DIRNAME = "scale"
 SCENE_SCALE_FILENAME = "scene_scale.json"
+OBJECT_SHAPE_FILENAME = "object_shape.json"
 SCENE_PREVIEW_FILENAME = "scene_preview.ply"
 
 # This stage's own progress.json output keys.
 OUTPUT_SCENE_SCALE = "scene_scale"
+OUTPUT_OBJECT_SHAPE = "object_shape"
 OUTPUT_SCENE_PREVIEW = "scene_preview"
 
 # Keys inside scene_scale.json.
@@ -71,13 +75,25 @@ KEY_SCALE = "scale"
 KEY_TRANSLATION = "translation"
 KEY_N_CORRESPONDENCES = "n_correspondences"
 
-# scene_preview.ply color coding, so the three elements are visually separable.
+# scene_preview.ply color coding, so the elements are visually separable.
 HUMAN_COLOR = np.array([80, 220, 100], dtype=np.uint8)  # green: SMPL-X body mesh
 OBJECT_COLOR = np.array([230, 60, 60], dtype=np.uint8)  # red: tracked object pixels
+SHAPE_COLOR = np.array([255, 220, 0], dtype=np.uint8)  # yellow: fitted proxy primitive wireframe
 # Drop scene points beyond this multiple of the human's own depth, so far
 # background/sky doesn't dwarf the person and object (no sky mask is available
 # in this stage, unlike stage 3's standalone preview).
 SCENE_PREVIEW_DEPTH_CLIP_FACTOR = 3.0
+
+
+def _object_points_in_body_space(
+    depth: np.ndarray, K: np.ndarray, object_mask: np.ndarray, scale: np.ndarray, translation: np.ndarray
+) -> np.ndarray:
+    """Back-projects the object's masked depth pixels and maps them into the
+    same body-metric space `fit_scene_scale` already put the human in (see
+    `_render_scene_preview`'s identical `scene_in_body` conversion)."""
+    scene_cloud = unproject_depth_to_points(depth, K)
+    object_points = scene_cloud[object_mask.reshape(-1)]
+    return (object_points - translation) / scale
 
 
 def _build_smplx_anchor_mesh(incam_params: dict, anchor_frame_index: int) -> np.ndarray:
@@ -108,18 +124,21 @@ def _render_scene_preview(
     smplx_verts: np.ndarray,
     depth: np.ndarray,
     K: np.ndarray,
-    scale: float,
+    scale: np.ndarray,
     translation: np.ndarray,
     human_mask: np.ndarray,
     object_mask: np.ndarray | None,
+    object_shape: dict | None,
     anchor_frame_path: Path,
     out_path: Path,
 ) -> None:
-    """One PLY that puts all three elements in the SMPL-X human's metric space,
-    color-coded, so the fitted scale can be eyeballed in Blender: the green
-    SMPL-X body mesh should sit inside its own (RGB) depth points, and the red
-    object points should land at the hands. The depth cloud is mapped into body
-    space via the fitted `(scale, translation)`; the human mesh is already there.
+    """One PLY that puts every element in the SMPL-X human's metric space,
+    color-coded, so the fit can be eyeballed in Blender: the green SMPL-X body
+    mesh should sit inside its own (RGB) depth points, the red object points
+    should land at the hands, and (if the object was tracked) a yellow
+    wireframe of the fitted proxy primitive should hug those same red points.
+    The depth cloud is mapped into body space via the fitted
+    `(scale, translation)`; the human mesh is already there.
     """
     scene_cloud = unproject_depth_to_points(depth, K)  # (H*W, 3), camera space
     scene_in_body = (scene_cloud - translation) / scale
@@ -140,6 +159,13 @@ def _render_scene_preview(
 
     points = np.vstack([scene_points, smplx_verts])
     colors = np.vstack([scene_colors, human_colors])
+
+    if object_shape is not None:
+        shape_points = sample_shape_surface(object_shape)
+        shape_colors = np.tile(SHAPE_COLOR, (len(shape_points), 1))
+        points = np.vstack([points, shape_points])
+        colors = np.vstack([colors, shape_colors])
+
     write_colored_ply(points, colors, out_path)
 
 
@@ -165,17 +191,25 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     K = scale_intrinsics_to_resolution(np.array(runRecord.scene.intrinsics_K), native_hw, depth_hw)
 
     human_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_HUMAN_MASKS], anchor, depth_hw)
+    object_mask = None
+    if OUTPUT_OBJECT_MASKS in stage_1_outputs:
+        object_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_OBJECT_MASKS], anchor, depth_hw)
 
     with report_single_shot(StageName.STAGE_6_ALIGN_SCENE_SCALE.title):
         scale, translation, n_correspondences = fit_scene_scale(smplx_verts, depth, K, human_mask)
 
-    scale_dir = Path(progress.progress_dir) / SCALE_DIRNAME
+        object_shape = None
+        if object_mask is not None:
+            object_points = _object_points_in_body_space(depth, K, object_mask, scale, translation)
+            object_shape = fit_object_shape(object_points, runRecord.input.object_shape_hint)
+
+    scale_dir = Path(runRecord.progress_dir) / SCALE_DIRNAME
     scale_dir.mkdir(parents=True, exist_ok=True)
     scene_scale_path = scale_dir / SCENE_SCALE_FILENAME
     scene_scale_path.write_text(
         json.dumps(
             {
-                KEY_SCALE: scale,
+                KEY_SCALE: scale.tolist(),
                 KEY_TRANSLATION: translation.tolist(),
                 KEY_N_CORRESPONDENCES: n_correspondences,
             },
@@ -185,15 +219,18 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     outputs = {OUTPUT_SCENE_SCALE: str(scene_scale_path)}
 
-    if progress.input.render_scene_preview:
-        object_mask = None
-        if OUTPUT_OBJECT_MASKS in stage_1_outputs:
-            object_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_OBJECT_MASKS], anchor, depth_hw)
-        frames_dir = Path(progress.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
+    if object_shape is not None:
+        object_shape_path = scale_dir / OBJECT_SHAPE_FILENAME
+        object_shape_path.write_text(json.dumps(object_shape, indent=2))
+        outputs[OUTPUT_OBJECT_SHAPE] = str(object_shape_path)
+
+    if runRecord.input.render_scene_preview:
+        frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
         anchor_frame_path = sorted(frames_dir.glob("*.jpg"))[anchor]
         scene_preview_path = scale_dir / SCENE_PREVIEW_FILENAME
         _render_scene_preview(
-            smplx_verts, depth, K, scale, translation, human_mask, object_mask, anchor_frame_path, scene_preview_path
+            smplx_verts, depth, K, scale, translation, human_mask, object_mask, object_shape,
+            anchor_frame_path, scene_preview_path,
         )
         outputs[OUTPUT_SCENE_PREVIEW] = str(scene_preview_path)
 
