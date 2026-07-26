@@ -16,6 +16,7 @@ needed once tracking quality on a given prompt/video is already trusted.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import cv2
@@ -61,7 +62,13 @@ def _render_mask_previews(packed_masks: torch.Tensor, out_dir: Path, native_hw: 
     previews aren't stretched to a square aspect ratio for widescreen video.
     Unpacks and resizes one frame at a time rather than the whole clip at once,
     so this stays cheap in RAM even on a long clip.
+
+    Clears out `out_dir` first: a re-run (e.g. after changing the input video
+    via `--force`) can produce a different frame count than a previous run,
+    which would otherwise leave stale images past the new count sitting
+    alongside the current ones.
     """
+    shutil.rmtree(out_dir, ignore_errors=True)
     out_dir.mkdir(parents=True, exist_ok=True)
     native_h, native_w = native_hw
     for i in range(packed_masks.shape[0]):

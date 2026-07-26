@@ -12,7 +12,8 @@ from pathlib import Path
 import cv2
 import torch
 
-from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
+from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks, unpack_masks
+from pipeline.stages.stage_1_mask_and_track import _render_mask_previews
 from conftest import TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH
 
 # SAM 3.1's own fixed internal mask resolution (see gvhmr_adapter.py's docstring) --
@@ -67,3 +68,24 @@ def test_mask_previews_written_at_native_resolution(stage_1_result):
         image = cv2.imread(str(preview_paths[0]))
         assert image is not None
         assert image.shape[:2] == (TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH)
+
+
+def test_render_mask_previews_clears_stale_images_from_a_previous_run(tmp_path):
+    """A re-run can produce a different frame count than a previous one (e.g.
+    the input video changed via --force), so a stale image past the new
+    count must not survive alongside the current run's own output."""
+    working_h, working_w = 8, 16  # W must be divisible by 8 for pack_masks
+    raw_masks = torch.zeros((2, 1, working_h, working_w), dtype=torch.bool)
+    raw_masks[0, 0, 2:5, 4:10] = True
+    raw_masks[1, 0, 0:3, 0:3] = True
+    packed = pack_masks(raw_masks)
+
+    out_dir = tmp_path / "preview"
+    out_dir.mkdir()
+    stale_file = out_dir / "000099.jpg"
+    stale_file.write_bytes(b"stale")
+
+    _render_mask_previews(packed, out_dir, native_hw=(32, 64))
+
+    assert not stale_file.exists()
+    assert sorted(f.name for f in out_dir.iterdir()) == ["000000.jpg", "000001.jpg"]
