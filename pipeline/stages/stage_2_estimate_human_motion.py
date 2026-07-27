@@ -20,7 +20,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import torch
 
 from ..adapters.gvhmr.gvhmr_adapter import (
@@ -34,6 +33,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
 )
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.motion_smoothing import smooth_rotation_sequence, smooth_translation_sequence
+from ..helpers.amass_export_helper import write_amass_npz
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 from .stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
@@ -48,44 +48,6 @@ FRAMES_DIR_OUTPUT_KEY = "frames_dir"
 # This stage's own progress.json output keys.
 OUTPUT_HUMAN_MOTION = "human_motion"
 OUTPUT_MOTION_PREVIEW = "motion_preview"
-
-# SMPL-X joint layout the AMASS `poses` array must match (see the addon's own
-# `utils/model_spec.py`): 22 body joints (pelvis + 21, all GVHMR predicts) + jaw
-# + 2 eyes + 15+15 hand joints = 55 joints * 3 axis-angle values = 165.
-AMASS_POSE_DIM = 55 * 3
-_GVHMR_POSE_DIM = 3 + 63  # global_orient + body_pose -- everything GVHMR itself predicts
-
-
-def _render_amass_npz(pred_smpl_params_global: dict, fps: float, out_path: Path) -> None:
-    """Writes GVHMR's world-grounded pose as an AMASS `.npz`. Hand and face
-    joints are left at zero (flat/neutral) -- GVHMR only ever predicts body
-    pose; real hand pose is a later, not-yet-built stage (`retarget_hands`).
-    Gender is always "neutral", matching the one SMPL-X body model
-    (`SMPLX_NEUTRAL.npz`) this project's math already uses throughout.
-
-    Uses the *global* (world-grounded) pose, not *incam* -- this artifact is
-    for standing a character up in Blender's own world space, which is what
-    GVHMR's "global" frame is for; `incam` is for this project's own later
-    depth/scale alignment, a different consumer with a different need.
-    """
-    body_pose = pred_smpl_params_global[KEY_BODY_POSE].numpy()
-    global_orient = pred_smpl_params_global[KEY_GLOBAL_ORIENT].numpy()
-    transl = pred_smpl_params_global[KEY_TRANSL].numpy()
-    betas = pred_smpl_params_global[KEY_BETAS][0].numpy()  # pooled across the clip, identical every frame
-
-    num_frames = body_pose.shape[0]
-    hand_and_face = np.zeros((num_frames, AMASS_POSE_DIM - _GVHMR_POSE_DIM), dtype=np.float32)
-    poses = np.concatenate([global_orient, body_pose, hand_and_face], axis=-1).astype(np.float32)
-
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(
-        out_path,
-        trans=transl.astype(np.float32),
-        gender=np.array("neutral"),
-        mocap_frame_rate=np.array(round(fps)),
-        betas=betas.astype(np.float32),
-        poses=poses,
-    )
 
 
 def _smooth_body_params(params: dict, window: int, cutoff: float) -> None:
@@ -136,7 +98,21 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     if runRecord.input.render_motion_preview:
         preview_path = motion_dir / MOTION_PREVIEW_FILENAME
-        _render_amass_npz(result[KEY_PRED_SMPL_PARAMS_GLOBAL], runRecord.scene.fps, preview_path)
+        # *global* (world-grounded) pose, not *incam* -- this artifact is for
+        # standing a character up in Blender's own world space, which is what
+        # GVHMR's "global" frame is for; `incam` is for this project's own
+        # later depth/scale alignment, a different consumer with a different
+        # need. No hand pose yet at this point in the pipeline (left/right
+        # default to flat/neutral).
+        global_params = result[KEY_PRED_SMPL_PARAMS_GLOBAL]
+        write_amass_npz(
+            global_orient=global_params[KEY_GLOBAL_ORIENT].numpy(),
+            body_pose=global_params[KEY_BODY_POSE].numpy(),
+            betas=global_params[KEY_BETAS][0].numpy(),
+            transl=global_params[KEY_TRANSL].numpy(),
+            fps=runRecord.scene.fps,
+            out_path=preview_path,
+        )
         outputs[OUTPUT_MOTION_PREVIEW] = str(preview_path)
 
     return outputs
