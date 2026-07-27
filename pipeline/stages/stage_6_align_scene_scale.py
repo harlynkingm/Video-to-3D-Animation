@@ -74,6 +74,9 @@ OUTPUT_SCENE_PREVIEW = "scene_preview"
 KEY_SCALE = "scale"
 KEY_TRANSLATION = "translation"
 KEY_N_CORRESPONDENCES = "n_correspondences"
+# Only present when an object was tracked -- see _pelvis_rest_position's own
+# docstring for why stage 9's object placement needs this.
+KEY_PELVIS_REST = "pelvis_rest_incam"
 
 # scene_preview.ply color coding, so the elements are visually separable.
 HUMAN_COLOR = np.array([80, 220, 100], dtype=np.uint8)  # green: SMPL-X body mesh
@@ -118,6 +121,31 @@ def _build_smplx_anchor_mesh(incam_params: dict, anchor_frame_index: int) -> np.
     }
     output = model(**{key: value.float() for key, value in params.items()})
     return output.vertices.detach().numpy()[0]
+
+
+def _pelvis_rest_position(betas: torch.Tensor) -> np.ndarray:
+    """The pelvis joint's own position at zero pose/orientation/translation,
+    for these betas -- SMPL-X's `global_orient` rotates the body *about this
+    point*, not the world origin (confirmed empirically: with `transl=0`,
+    changing `global_orient` leaves the reported pelvis joint position
+    unchanged). A skeleton joint's own world position already accounts for
+    this automatically via forward kinematics; a standalone point that isn't
+    part of the kinematic chain (the fitted object's own `center`) needs this
+    pivot explicitly to undergo the *same* rigid transform stage 9 applies to
+    the body -- see that stage's `_object_shape_to_blender_world`.
+    """
+    import smplx
+
+    model = smplx.create(
+        str(SMPLX_MODEL_PATH),
+        model_type=SMPLX_MODEL_TYPE,
+        gender=SMPLX_GENDER,
+        num_betas=SMPLX_NUM_BETAS,
+        use_pca=False,
+        flat_hand_mean=True,
+    )
+    output = model(betas=betas.float().reshape(1, SMPLX_NUM_BETAS))
+    return output.joints.detach().numpy()[0, 0]
 
 
 def _render_scene_preview(
@@ -199,23 +227,23 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         scale, translation, n_correspondences = fit_scene_scale(smplx_verts, depth, K, human_mask)
 
         object_shape = None
+        pelvis_rest = None
         if object_mask is not None:
             object_points = _object_points_in_body_space(depth, K, object_mask, scale, translation)
             object_shape = fit_object_shape(object_points, runRecord.input.object_shape_hint)
+            pelvis_rest = _pelvis_rest_position(motion[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BETAS][anchor])
 
     scale_dir = Path(runRecord.progress_dir) / SCALE_DIRNAME
     scale_dir.mkdir(parents=True, exist_ok=True)
     scene_scale_path = scale_dir / SCENE_SCALE_FILENAME
-    scene_scale_path.write_text(
-        json.dumps(
-            {
-                KEY_SCALE: scale.tolist(),
-                KEY_TRANSLATION: translation.tolist(),
-                KEY_N_CORRESPONDENCES: n_correspondences,
-            },
-            indent=2,
-        )
-    )
+    scene_scale_json = {
+        KEY_SCALE: scale.tolist(),
+        KEY_TRANSLATION: translation.tolist(),
+        KEY_N_CORRESPONDENCES: n_correspondences,
+    }
+    if pelvis_rest is not None:
+        scene_scale_json[KEY_PELVIS_REST] = pelvis_rest.tolist()
+    scene_scale_path.write_text(json.dumps(scene_scale_json, indent=2))
 
     outputs = {OUTPUT_SCENE_SCALE: str(scene_scale_path)}
 
