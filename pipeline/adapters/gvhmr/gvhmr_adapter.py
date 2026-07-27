@@ -230,7 +230,7 @@ class GVHMRAdapter:
         bbx_xys_list, kp2d_list, f_imgseq_list = [], [], []
         last_bbox_xywh = None
         with torch.inference_mode():
-            for i, frame_path in frame_progress(enumerate(frame_paths), total=N, label=StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.title):
+            for i, frame_path in frame_progress(enumerate(frame_paths), total=N, label=StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.label):
                 frame_bgr = cv2.imread(str(frame_path))
                 if frame_bgr is None:
                     raise RuntimeError(f"Could not read frame: {frame_path}")

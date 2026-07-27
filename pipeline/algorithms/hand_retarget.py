@@ -25,7 +25,7 @@ verification rather than assumed here -- the seam is the wrist-global term below
 
 Stage 4 already fills in the frames it couldn't detect (interpolating an
 occlusion that recovers, freezing one that runs to either end of the clip --
-see `motion_smoothing._fill_invalid`), so every frame of `left/right_wrist_global`
+see `motion_smoothing.fill_invalid`), so every frame of `left/right_wrist_global`
 and `left/right_hand_pose` is a usable pose whenever the hand was detected at
 least once anywhere in the clip. Only a hand that was *never once* detected in
 the whole clip has nothing usable to reconcile -- that one keeps GVHMR's own
@@ -150,7 +150,7 @@ def reject_biomechanically_implausible_wrist(
     Deliberately a validity gate, not a clamp: a clamped value would still look
     wrong (the wrist visibly stopping dead at a ceiling instead of continuing
     to move), whereas marking frames invalid lets the existing occlusion
-    gap-fill (`motion_smoothing._fill_invalid`, run by stage 4's own smoothing
+    gap-fill (`motion_smoothing.fill_invalid`, run by stage 4's own smoothing
     chain right after this) bridge across the whole excursion with a plausible
     transition, the same as any other occlusion. Called from stage 4 on
     HaMeR's raw per-frame estimate, before that smoothing chain runs --

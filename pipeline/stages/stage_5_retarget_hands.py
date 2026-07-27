@@ -80,7 +80,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             f"hand pose has {hands[KEY_LEFT_VALID].shape[0]}"
         )
 
-    with report_single_shot(StageName.STAGE_5_RETARGET_HANDS.title):
+    with report_single_shot(StageName.STAGE_5_RETARGET_HANDS.label):
         merged_body_pose, left_hand_pose, right_hand_pose = retarget_hands(
             global_orient=global_orient,
             body_pose=body_pose,

@@ -77,7 +77,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     adapter = DepthAnything3Adapter()
     adapter.load()
     try:
-        with report_single_shot(StageName.STAGE_3_ESTIMATE_DEPTH.title):
+        with report_single_shot(StageName.STAGE_3_ESTIMATE_DEPTH.label):
             result = adapter.infer(str(anchor_frame_path), focal_length_px)
     finally:
         adapter.unload()

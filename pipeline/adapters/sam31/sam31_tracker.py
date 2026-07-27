@@ -1411,7 +1411,7 @@ class Sam31Tracker(nn.Module):
         self, backbone_fn, images: torch.Tensor, initial_masks: torch.Tensor | None, detect_fn=None,
         new_det_thresh: float = 0.5, max_objects: int = 0, detect_interval: int = 1,
         backbone_obj=None, target_device: torch.device | None = None, target_dtype: torch.dtype | None = None,
-        progress_label: str = StageName.STAGE_1_MASK_AND_TRACK.title,
+        progress_label: str = StageName.STAGE_1_MASK_AND_TRACK.label,
     ) -> dict:
         """Track a clip with per-frame text-prompted detection (this project never passes
         `initial_masks`; new objects are found purely by `detect_fn`, built in

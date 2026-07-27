@@ -46,7 +46,7 @@ def _make_runRecord(tmp_path: Path) -> RunRecord:
 
 
 def _fake_load_stage_run(calls: list[StageName]):
-    def load(index: int, stage_name: StageName):
+    def load(stage_name: StageName):
         def fake_run(runRecord: RunRecord) -> dict[str, str]:
             calls.append(stage_name)
             return {}

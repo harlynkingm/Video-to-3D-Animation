@@ -217,9 +217,9 @@ class Sam31Adapter:
         packed mask format.
         """
         images = _LazyFrameLoader(frame_paths)
-        human_result = self._track_one_prompt(images, human_prompt, progress_label=StageName.STAGE_1A_HUMAN_MASK.title)
+        human_result = self._track_one_prompt(images, human_prompt, progress_label=StageName.STAGE_1A_HUMAN_MASK.label)
         object_result = (
-            self._track_one_prompt(images, object_prompt, progress_label=StageName.STAGE_1B_OBJECT_MASK.title)
+            self._track_one_prompt(images, object_prompt, progress_label=StageName.STAGE_1B_OBJECT_MASK.label)
             if object_prompt else None
         )
         return {KEY_HUMAN: human_result, KEY_OBJECT: object_result}

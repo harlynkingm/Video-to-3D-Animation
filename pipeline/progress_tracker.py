@@ -28,24 +28,25 @@ PROGRESS_JSON_NAME = "progress.json"
 
 
 class StageName(enum.StrEnum):
-    def __new__(cls, value, title) -> StageName:
+    def __new__(cls, value: str, label: str, stage_number: int) -> StageName:
         obj = str.__new__(cls, value)
         obj._value_ = value
-        obj.title = title
+        obj.label = label
+        obj.stage_number = stage_number
         return obj
 
-    STAGE_0_INGEST_VIDEO = "ingest_video", "initial stage: processing video"
-    STAGE_1_MASK_AND_TRACK = "mask_and_track", "stage 1: generate masks"
-    STAGE_1A_HUMAN_MASK = "generate_human_mask", "stage 1: generate human mask"
-    STAGE_1B_OBJECT_MASK = "generate_object_mask", "stage 1: generate object mask"
-    STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion", "stage 2: estimate human motion"
-    STAGE_3_ESTIMATE_DEPTH = "estimate_depth", "stage 3: estimate scene depth"
-    STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion"
-    STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body"
-    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale"
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect contact points"
-    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize human-object interaction"
-    STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: export animation"
+    STAGE_0_INGEST_VIDEO = "ingest_video", "initial stage: processing video", 0
+    STAGE_1_MASK_AND_TRACK = "mask_and_track", "stage 1: generate masks", 1
+    STAGE_1A_HUMAN_MASK = "generate_human_mask", "stage 1: generate human mask", 1
+    STAGE_1B_OBJECT_MASK = "generate_object_mask", "stage 1: generate object mask", 1
+    STAGE_2_ESTIMATE_HUMAN_MOTION = "estimate_human_motion", "stage 2: estimate human motion", 2
+    STAGE_3_ESTIMATE_DEPTH = "estimate_depth", "stage 3: estimate scene depth", 3
+    STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion", 4
+    STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body", 5
+    STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale", 6
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect contact points", 7
+    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize human-object interaction", 8
+    STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: export animation", 9
 
 
 class StageStatus(enum.StrEnum):

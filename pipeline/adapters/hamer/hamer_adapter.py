@@ -77,7 +77,7 @@ HAND_POSE_DIM = 45  # 15 MANO joints x 3 axis-angle
 # 700 frames across both hands.
 #
 # Frames that fail this are left `valid=False`, letting the existing gap-fill
-# contract (`motion_smoothing._fill_invalid`, called from stage 4) interpolate
+# contract (`motion_smoothing.fill_invalid`, called from stage 4) interpolate
 # or freeze through them exactly like any other occlusion.
 MIN_ROLLING_WRIST_CONFIDENCE = 0.6
 WRIST_CONFIDENCE_WINDOW_FRAMES = 7  # centered rolling window
@@ -182,7 +182,7 @@ class HamerAdapter:
         # (including frames after each one) so it can't run inline in this loop.
         wrist_conf = {True: np.zeros(n, np.float32), False: np.zeros(n, np.float32)}
 
-        for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=StageName.STAGE_4_ESTIMATE_HANDS.title):
+        for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=StageName.STAGE_4_ESTIMATE_HANDS.label):
             frame_bgr = cv2.imread(str(frame_path))
             frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 

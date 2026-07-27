@@ -293,7 +293,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         region_confidence = {region: np.zeros(n_frames) for region in REGION_NAMES}
         region_joint_idx = {region: np.full(n_frames, -1, dtype=int) for region in REGION_NAMES}
 
-        for f in frame_progress(range(n_frames), total=n_frames, label=StageName.STAGE_7_ANNOTATE_CONTACTS.title):
+        for f in frame_progress(range(n_frames), total=n_frames, label=StageName.STAGE_7_ANNOTATE_CONTACTS.label):
             for region, (confidence, joint_idx) in per_frame_region_confidence(joints[f], K, object_masks[f]).items():
                 region_confidence[region][f] = confidence
                 region_joint_idx[region][f] = joint_idx

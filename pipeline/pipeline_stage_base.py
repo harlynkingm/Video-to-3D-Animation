@@ -44,7 +44,7 @@ def run_stage(
         raise StageDependenciesNotMetError(f"{stage_name}: dependencies not met")
 
     if runRecord.is_complete(stage_name) and not force:
-        print(f"[{stage_name.title}] already complete, skipping (use --force to re-run)")
+        print(f"[{stage_name.label}] already complete, skipping (use --force to re-run)")
         return False
 
     runRecord.mark_progress(stage_name, StageStatus.RUNNING)

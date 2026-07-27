@@ -48,27 +48,34 @@ def stage_module_name(index: int, stage_name: StageName) -> str:
     real subprocesses) can reuse this exact convention instead of
     re-deriving it by hand.
     """
-    return f"pipeline.stages.stage_{index}_{stage_name.value}"
+    return f"pipeline.stages.stage_{stage_name.stage_number}_{stage_name.value}"
 
 
-def _load_stage_run(index: int, stage_name: StageName):
-    module = importlib.import_module(stage_module_name(index, stage_name))
+def _load_stage_run(stage_name: StageName):
+    module = importlib.import_module(stage_module_name(stage_name))
     return module.run
 
 
 def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None) -> None:
-    max_stage_index = len(ORDERED_STAGES) - 1
+    max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
     if stop_after_stage is None:
-        last_index = max_stage_index
+        last_stage_number = max_stage_number
     else:
-        if stop_after_stage > max_stage_index:
-            print(f"Only stages 0-{max_stage_index} are implemented; running through stage {max_stage_index}")
-        last_index = min(stop_after_stage, max_stage_index)
+        if stop_after_stage > max_stage_number:
+            print(f"Only stages 0-{max_stage_number} are implemented; running through stage {max_stage_number}")
+        last_stage_number = min(stop_after_stage, max_stage_number)
 
-    for index, stage_name in enumerate(ORDERED_STAGES):
-        if index > last_index:
+    # Assumes ORDERED_STAGES is declared in ascending stage-number order
+    # (true today) so a number exceeding the bound can short-circuit the
+    # rest via `break` instead of scanning every remaining stage.
+    for stage_name in ORDERED_STAGES:
+        if stage_name.stage_number > last_stage_number:
             break
-        run_stage(runRecord, _load_stage_run(index, stage_name), stage_name)
+        if stage_name == StageName.STAGE_9_EXPORT_FBX:
+            _run_in_fbx_export_env(runRecord)
+            runRecord = RunRecord.load(runRecord.progress_dir)
+            continue
+        run_stage(runRecord, _load_stage_run(stage_name), stage_name)
 
 
 def main() -> None:

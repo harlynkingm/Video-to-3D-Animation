@@ -31,6 +31,7 @@ from conftest import (
     TEST_VIDEO_PATH,
     assert_stages_complete,
 )
+from pipeline.progress_tracker import StageName
 from pipeline.run import ORDERED_STAGES, stage_module_name
 
 pytestmark = pytest.mark.skipif(

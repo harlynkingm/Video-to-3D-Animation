@@ -71,7 +71,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     frame_count = 0
-    with frame_progress(None, total=total_frames, label=StageName.STAGE_0_INGEST_VIDEO.title) as progress_update:
+    with frame_progress(None, total=total_frames, label=StageName.STAGE_0_INGEST_VIDEO.label) as progress_update:
         while True:
             success, frame = capture.read()
             if not success:
