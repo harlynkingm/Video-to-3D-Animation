@@ -24,9 +24,9 @@ Human-in-the-loop, per this project's own philosophy (machine-triggered
 prompts only, never an open-ended manual review pile): a large depth gap is
 not ambiguous -- it's DA3 confidently saying the object and body were never
 actually close -- so `_verify_events_with_depth` drops that event outright
-rather than keeping it around flagged for review. Conversely, a small gap is
+rather than keeping it around flagged as uncertain. Conversely, a small gap is
 strong positive evidence of contact and overrides a merely-noisy 2D
-confidence score, so `_event_to_dict` only sets `needs_review` when the 2D
+confidence score, so `_event_to_dict` only sets `is_low_confidence` when the 2D
 confidence is low AND depth verification couldn't settle it either way (no
 mask that frame). If `RunInput.render_contacts_preview` is set, also writes
 one annotated JPEG per surviving event (see `_render_contacts_preview`) as a
@@ -90,10 +90,10 @@ CONTACT_PREVIEW_CIRCLE_THICKNESS = 3
 OUTPUT_CONTACT_EVENTS = "contact_events"
 OUTPUT_CONTACTS_PREVIEW = "contacts_preview"
 
-# Below this mean confidence, an event is flagged for human review rather than
+# Below this mean confidence, an event is flagged as low-confidence rather than
 # trusted outright -- see this module's docstring for why there's no actual
-# interactive prompt here yet.
-LOW_CONFIDENCE_REVIEW_THRESHOLD = 0.85
+# interactive prompt here, just a passive data flag.
+LOW_CONFIDENCE_THRESHOLD = 0.85
 
 # Beyond this metric depth gap (meters), a 2D-detected event is confidently
 # incidental occlusion, not real contact (see depth_gap_for_joint's own
@@ -176,8 +176,8 @@ class _LazyMaskLoader:
 
 def _event_to_dict(event: ContactEvent) -> dict:
     depth_confirms_contact = event.depth_gap_m is not None and event.depth_gap_m <= DEPTH_GAP_OCCLUSION_THRESHOLD_M
-    needs_review = event.mean_confidence < LOW_CONFIDENCE_REVIEW_THRESHOLD and not depth_confirms_contact
-    return {**asdict(event), "needs_review": needs_review}
+    is_low_confidence = event.mean_confidence < LOW_CONFIDENCE_THRESHOLD and not depth_confirms_contact
+    return {**asdict(event), "is_low_confidence": is_low_confidence}
 
 
 def _verify_events_with_depth(
@@ -193,8 +193,8 @@ def _verify_events_with_depth(
     that survive: a gap over `DEPTH_GAP_OCCLUSION_THRESHOLD_M` means the 2D
     mask overlap that triggered detection was confidently incidental
     occlusion, not real contact, so that event is dropped outright rather
-    than kept around flagged for review -- DA3 already resolved it, there's
-    nothing left to review. An event whose masks were missing that frame
+    than kept around flagged as uncertain -- DA3 already resolved it, there's
+    nothing left to flag. An event whose masks were missing that frame
     (can't verify either way) is kept as-is, its `depth_gap_m` left None, so
     `_event_to_dict` falls back to confidence alone. Loads the DA3 model once
     for the whole batch of events, not once per event.

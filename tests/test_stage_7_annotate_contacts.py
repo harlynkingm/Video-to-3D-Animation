@@ -19,7 +19,7 @@ from pipeline.algorithms.contact_detection import REGION_NAMES, ContactEvent
 from pipeline.stages import stage_7_annotate_contacts
 from pipeline.stages.stage_7_annotate_contacts import (
     DEPTH_GAP_OCCLUSION_THRESHOLD_M,
-    LOW_CONFIDENCE_REVIEW_THRESHOLD,
+    LOW_CONFIDENCE_THRESHOLD,
     OUTPUT_CONTACTS_PREVIEW,
     _LazyMaskLoader,
     _event_to_dict,
@@ -39,7 +39,7 @@ def test_contact_events_output_is_plausible(stage_7_result):
         assert event["regions"] and all(r in REGION_NAMES for r in event["regions"])
         assert 0 <= event["start_frame"] <= event["peak_frame"] <= event["end_frame"]
         assert 0.0 <= event["mean_confidence"] <= 1.0
-        assert isinstance(event["needs_review"], bool)
+        assert isinstance(event["is_low_confidence"], bool)
         # A gap over threshold means confidently-occlusion -- _verify_events_with_depth
         # drops those outright, so nothing surviving into the output should have one.
         assert event["depth_gap_m"] is None or 0.0 <= event["depth_gap_m"] <= DEPTH_GAP_OCCLUSION_THRESHOLD_M
@@ -144,32 +144,32 @@ def test_render_contacts_preview_joins_a_consolidated_event_regions_for_the_file
     assert written[0].name == "000007_left_hand+left_arm.jpg"
 
 
-def test_event_to_dict_flags_needs_review_for_low_confidence():
+def test_event_to_dict_sets_is_low_confidence_below_threshold():
     event = ContactEvent(
         regions=["left_hand"], joint="wrist", start_frame=0, end_frame=5, peak_frame=2,
-        mean_confidence=LOW_CONFIDENCE_REVIEW_THRESHOLD - 0.01,
+        mean_confidence=LOW_CONFIDENCE_THRESHOLD - 0.01,
     )
-    assert _event_to_dict(event)["needs_review"] is True
+    assert _event_to_dict(event)["is_low_confidence"] is True
 
 
-def test_event_to_dict_does_not_need_review_when_confident_and_depth_verified():
+def test_event_to_dict_is_not_low_confidence_when_confident_and_depth_verified():
     event = ContactEvent(
         regions=["left_hand"], joint="wrist", start_frame=0, end_frame=5, peak_frame=2,
         mean_confidence=1.0, depth_gap_m=0.01,
     )
-    assert _event_to_dict(event)["needs_review"] is False
+    assert _event_to_dict(event)["is_low_confidence"] is False
 
 
-def test_event_to_dict_does_not_need_review_when_depth_confirms_contact_despite_low_confidence():
+def test_event_to_dict_is_not_low_confidence_when_depth_confirms_contact_despite_weak_2d_confidence():
     """Real case from the coffee-mug clip that motivated this: a hand-grip
-    event with weak 2D confidence (0.49, below LOW_CONFIDENCE_REVIEW_THRESHOLD)
+    event with weak 2D confidence (0.49, below LOW_CONFIDENCE_THRESHOLD)
     but a tiny depth gap (0.01m). Depth is the stronger, physically-grounded
     signal here and should override a merely-noisy 2D confidence score."""
     event = ContactEvent(
         regions=["right_hand"], joint="index_tip", start_frame=309, end_frame=319, peak_frame=312,
         mean_confidence=0.49, depth_gap_m=0.01,
     )
-    assert _event_to_dict(event)["needs_review"] is False
+    assert _event_to_dict(event)["is_low_confidence"] is False
 
 
 class _FakeDepthAdapter:
@@ -193,8 +193,8 @@ class _FakeDepthAdapter:
 def test_verify_events_with_depth_drops_occlusion_keeps_real_contact(tmp_path, monkeypatch):
     """Regression test for the actual coffee-mug bug: a chest/leg event whose
     object mask merely overlapped the body in 2D, with no real proximity in
-    depth, must be dropped outright rather than kept around flagged for
-    review -- while a real hand-grip event (small depth gap) survives."""
+    depth, must be dropped outright rather than kept around flagged as
+    uncertain -- while a real hand-grip event (small depth gap) survives."""
     native_hw = (20, 20)
     depth = np.ones(native_hw, dtype=np.float32)
     depth[0:3, 0:3] = 1.0    # frame 0's object region
