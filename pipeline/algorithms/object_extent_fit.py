@@ -196,6 +196,26 @@ def _reject_depth_outliers(points: np.ndarray) -> np.ndarray:
     return points[keep]
 
 
+def fit_position_and_orientation(points: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+    """Position + orientation only, no shape/dimension fit -- reuses the same
+    outlier rejection and PCA machinery `fit_object_shape` itself builds on,
+    for a caller that already knows the object's own fixed dimensions (e.g.
+    re-deriving *where* the object is at some other frame, not what size it
+    is) and just needs a fresh `(center, rotation)`.
+
+    Returns `None` if there aren't enough points to trust a fit (mirrors
+    `fit_object_shape`'s own `MIN_OBJECT_POINTS` gate, but returns a sentinel
+    instead of raising -- a caller re-deriving pose at an arbitrary frame
+    expects this to sometimes fail, e.g. a heavily hand-occluded grip, not a
+    hard error).
+    """
+    if len(points) < MIN_OBJECT_POINTS:
+        return None
+    points = _reject_depth_outliers(points)
+    centroid, rotation, _ = _pca_frame(points)
+    return centroid, rotation
+
+
 _FITTERS = {
     ObjectShapeHint.BOX: _fit_box,
     ObjectShapeHint.ELLIPSOID: _fit_ellipsoid,

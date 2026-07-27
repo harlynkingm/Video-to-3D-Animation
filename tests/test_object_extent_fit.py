@@ -13,6 +13,7 @@ from pipeline.algorithms.object_extent_fit import (
     MIN_OBJECT_POINTS,
     _reject_depth_outliers,
     fit_object_shape,
+    fit_position_and_orientation,
     sample_shape_surface,
 )
 from pipeline.progress_tracker import ObjectShapeHint
@@ -187,6 +188,29 @@ def test_reject_depth_outliers_falls_back_when_trim_would_starve_the_fit():
     kept = _reject_depth_outliers(points)
 
     assert len(kept) == len(points)
+
+
+def test_fit_position_and_orientation_recovers_center_and_rotation():
+    center = np.array([0.1, -0.2, 2.0])
+    rotation = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])  # 90deg about Z
+    points = _box_point_cloud(center, np.array([0.3, 0.1, 0.2]), rotation)
+
+    result = fit_position_and_orientation(points)
+
+    assert result is not None
+    fitted_center, fitted_rotation = result
+    assert np.allclose(fitted_center, center, atol=0.02)
+    # PCA's own axis order/sign is ambiguous (see hoi_object_pose's own
+    # axis-disambiguation for why) -- checking the *plane spanned* by the
+    # fitted rotation matches the real one is what's actually guaranteed here,
+    # not that the columns land in the same order/sign as the input.
+    assert np.allclose(fitted_rotation @ fitted_rotation.T, np.eye(3), atol=1e-6)
+    assert abs(np.linalg.det(fitted_rotation) - 1.0) < 1e-6
+
+
+def test_fit_position_and_orientation_returns_none_for_too_few_points():
+    points = np.zeros((MIN_OBJECT_POINTS - 1, 3))
+    assert fit_position_and_orientation(points) is None
 
 
 def test_sample_shape_surface_box_returns_points_on_the_surface():
