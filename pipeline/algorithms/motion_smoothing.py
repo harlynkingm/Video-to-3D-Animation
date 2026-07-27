@@ -56,7 +56,7 @@ def _odd_window(window: int, n_frames: int) -> int | None:
     return max(w, 3)
 
 
-def _fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
+def fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     """Fill invalid rows of `values` (T, C) per channel from the valid ones, so
     the filter downstream never sees the placeholder poses on undetected frames.
     `np.interp`'s own default boundary behavior gives exactly the two occlusion
@@ -82,7 +82,7 @@ def _hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | 
     -continuity enforced across *detected* frames (a unit quaternion and its
     negation are the same rotation, so each is flipped to share a hemisphere
     with the previous real one -- otherwise interpolation/filtering treats a
-    sign flip as a huge jump), then gap-filled per `_fill_invalid` if `valid` is
+    sign flip as a huge jump), then gap-filled per `fill_invalid` if `valid` is
     given. Shared by both rotation-smoothing functions below so the fiddly
     continuity/gap-fill logic exists in exactly one place."""
     quats = Rotation.from_rotvec(joint_axis_angle).as_quat()  # (T, 4) xyzw
@@ -94,7 +94,7 @@ def _hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | 
                 quats[t] = -quats[t]
             last = quats[t]
     if valid is not None:
-        quats = _fill_invalid(quats, valid)
+        quats = fill_invalid(quats, valid)
     return quats
 
 
@@ -112,7 +112,7 @@ def smooth_rotation_sequence(
             filtering: interpolated if bounded by valid frames on both sides
             (the tracked thing reappears), held constant at the nearest valid
             frame if not (occlusion runs to either end of the clip) -- see
-            `_fill_invalid`. The filter then runs over the filled series.
+            `fill_invalid`. The filter then runs over the filled series.
 
     Returns the same shape/dtype, smoothed. Returned unchanged when the clip is
     too short, or when `valid` marks too few real frames to smooth meaningfully.
@@ -156,7 +156,7 @@ def _one_euro_alpha(cutoff_hz: float, dt: float) -> float:
     return 1.0 / (1.0 + tau / dt)
 
 
-def _slerp(q0: np.ndarray, q1: np.ndarray, frac: float) -> np.ndarray:
+def slerp(q0: np.ndarray, q1: np.ndarray, frac: float) -> np.ndarray:
     """Spherical interpolation from unit quaternion q0 toward q1 by `frac`
     (0 -> q0, 1 -> q1), taking the shorter path across the double-cover."""
     dot = float(np.dot(q0, q1))
@@ -216,7 +216,7 @@ def one_euro_filter_rotation_sequence(
             real motion, at the cost of passing more raw jitter through while moving.
         dcutoff_hz: fixed cutoff for smoothing the speed estimate itself.
         valid: optional (T,) bool, gap-filled the same way as
-            `smooth_rotation_sequence` -- see `_fill_invalid`.
+            `smooth_rotation_sequence` -- see `fill_invalid`.
 
     Returns the same shape/dtype. Returned unchanged when there are fewer than
     2 frames, or fewer than 2 valid frames to filter from.
@@ -258,7 +258,7 @@ def one_euro_filter_rotation_sequence(
             speed = float(np.linalg.norm(smoothed_omega))
 
             value_alpha = _one_euro_alpha(min_cutoff_hz + beta * speed, dt)
-            filtered[t] = _slerp(filtered[t - 1], quats[t], value_alpha)
+            filtered[t] = slerp(filtered[t - 1], quats[t], value_alpha)
 
         out[:, j, :] = Rotation.from_quat(filtered).as_rotvec()
 
@@ -335,7 +335,7 @@ def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, val
             convention as the smoothing functions above.
         tolerance_deg: max allowed angular deviation of the fit, in degrees.
         valid: optional (T,) bool, gap-filled the same way as
-            `smooth_rotation_sequence` before fitting -- see `_fill_invalid`. The
+            `smooth_rotation_sequence` before fitting -- see `fill_invalid`. The
             occlusion contract survives decimation: a frozen (constant) trailing
             gap keeps needing no interior knots, and a linearly-interpolated
             interior gap is already representable by its two bounding knots.
@@ -343,7 +343,7 @@ def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, val
     Returns the same shape/dtype. Returned unchanged when the clip is too short
     (< 3 frames), or when `valid` marks too few real frames to fit through
     (mirrors `smooth_rotation_sequence`/`one_euro_filter_rotation_sequence`'s
-    own guard -- with zero real frames there's nothing for `_fill_invalid` to
+    own guard -- with zero real frames there's nothing for `fill_invalid` to
     interpolate from).
     """
     axis_angle = np.asarray(axis_angle)
@@ -397,7 +397,7 @@ def decimate_translation_sequence(transl: np.ndarray, tolerance_m: float) -> np.
     letting it float, without needing a separate lock/release/hysteresis
     mechanism to get there.
 
-    Reconstruction reuses `_fill_invalid` rather than a bespoke linear
+    Reconstruction reuses `fill_invalid` rather than a bespoke linear
     interpolant: from that function's point of view, the frames that AREN'T
     kept as knots are exactly the "invalid" gap it already knows how to
     linearly interpolate across, with the knots standing in as the "valid" frames.
@@ -427,7 +427,7 @@ def decimate_translation_sequence(transl: np.ndarray, tolerance_m: float) -> np.
 
     knot_mask = np.zeros(n_frames, dtype=bool)
     knot_mask[knots] = True
-    return _fill_invalid(transl, knot_mask).astype(transl.dtype, copy=False)
+    return fill_invalid(transl, knot_mask).astype(transl.dtype, copy=False)
 
 
 def smooth_translation_sequence(transl: np.ndarray, cutoff: float, order: int = DEFAULT_BUTTER_ORDER) -> np.ndarray:

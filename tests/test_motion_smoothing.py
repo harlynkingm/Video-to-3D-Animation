@@ -218,7 +218,7 @@ def test_short_sequence_is_returned_unchanged_by_decimate():
 def test_decimate_zero_valid_frames_returns_unchanged():
     """Regression guard: a hand whose wrist is rejected on every single frame
     (e.g. never once biomechanically plausible) previously crashed here --
-    `_fill_invalid` has nothing to interpolate from with zero real anchors.
+    `fill_invalid` has nothing to interpolate from with zero real anchors.
     Mirrors `smooth_rotation_sequence`/`one_euro_filter_rotation_sequence`'s
     own existing guard for the same case."""
     seq = np.random.default_rng(15).normal(0, 0.5, (20, 3))
@@ -242,7 +242,7 @@ def test_translation_decimate_removes_jitter_outright():
 
 def test_translation_decimate_stays_within_tolerance():
     """The fitted curve never departs the original by more than the tolerance --
-    guaranteed by construction, since reconstruction (`_fill_invalid`, linear)
+    guaranteed by construction, since reconstruction (`fill_invalid`, linear)
     matches the fit RDP selection used to check deviation."""
     rng = np.random.default_rng(21)
     n = 120

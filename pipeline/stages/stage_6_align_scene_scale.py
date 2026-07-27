@@ -195,7 +195,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     if OUTPUT_OBJECT_MASKS in stage_1_outputs:
         object_mask = _load_mask_at_depth_res(stage_1_outputs[OUTPUT_OBJECT_MASKS], anchor, depth_hw)
 
-    with report_single_shot(StageName.STAGE_6_ALIGN_SCENE_SCALE.title):
+    with report_single_shot(StageName.STAGE_6_ALIGN_SCENE_SCALE.label):
         scale, translation, n_correspondences = fit_scene_scale(smplx_verts, depth, K, human_mask)
 
         object_shape = None

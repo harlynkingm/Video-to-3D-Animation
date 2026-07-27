@@ -96,7 +96,7 @@ def _smooth_hand_channel(
     matters: decimation before the one-euro pass would place keyframes on the
     noise and lock it in. Occlusion handling (interpolate a gap that recovers,
     freeze one that runs to the clip's end) is carried by every pass via `valid`;
-    see `motion_smoothing._fill_invalid`."""
+    see `motion_smoothing.fill_invalid`."""
     smoothed = smooth_rotation_sequence(axis_angle, savgol_window, valid=valid)
     smoothed = one_euro_filter_rotation_sequence(smoothed, fps, min_cutoff_hz, beta, valid=valid)
     return decimate_rotation_sequence(smoothed, decimate_deg, valid=valid)
