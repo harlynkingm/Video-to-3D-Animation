@@ -81,14 +81,6 @@ pixi run -e main python -m pipeline.run \
 
 This creates a progress file at `runs/my_clip/progress.json` then runs every stage in order.
 
-If you interrupt a run and want to continue it, just re-run with `--output-dir` pointing at the same folder.
-
-```bash
-pixi run -e main python -m pipeline.run --output-dir runs/my_clip
-```
-
-Passed stages are skipped. You can also add new flags to the run this way.
-
 <details>
 <summary>All available run options</summary>
 
@@ -303,6 +295,16 @@ Use `--render-contacts-preview` when creating the run to also have this stage wr
 
 Not yet implemented.
 
+### Pausing and Resuming a Run
+
+If you interrupt a run and want to continue it, just re-run with `--output-dir` pointing at the same folder.
+
+```bash
+pixi run -e main python -m pipeline.run --output-dir runs/my_clip
+```
+
+Passed stages are skipped. You can also add new flags to the run this way.
+
 ### Update a Run File
 
 If you want to update some of the run options used in a `progress.json` file without opening the file in a text editor, you can use `pipeline.update_run` with any of the run options listed in the [Quick Start](#quick-start).
@@ -319,7 +321,7 @@ After updating, a backup of your previous version is saved in the same folder, i
 
 ## Motion smoothing
 
-Stage 2 (body) and stage 4 (hands) temporally smooth their output before saving. This is always on. The hands need much stronger smoothing than the body because HaMeR runs independently per frame, while GVHMR already runs a temporal model over the entire video.
+Stage 2 (body) and stage 4 (hands) temporally smooth their output before saving. The hands need much stronger smoothing than the body because HaMeR runs independently per frame, while GVHMR already runs a temporal model over the entire video.
 
 <details>
 <summary>Smoothness tuning</summary>
