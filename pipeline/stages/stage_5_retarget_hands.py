@@ -45,10 +45,12 @@ from ..helpers.progress_reporter import report_single_shot
 
 RETARGET_DIRNAME = "retarget"
 RETARGET_MOTION_FILENAME = "retargeted_motion.pt"
+RETARGET_MOTION_NPZ_FILENAME = "retargeted_motion.npz"
 RETARGET_PREVIEW_FILENAME = "retarget_preview.bvh"
 
 # This stage's own progress.json output keys.
 OUTPUT_RETARGET_MOTION = "retarget_motion"
+OUTPUT_RETARGET_MOTION_NPZ = "retarget_motion_npz"
 OUTPUT_RETARGET_PREVIEW = "retarget_preview"
 
 # The merged SMPL-X params are keyed by smplx.forward's own kwarg names (the same
@@ -109,7 +111,16 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     motion_path = retarget_dir / RETARGET_MOTION_FILENAME
     torch.save(merged, motion_path)
 
-    outputs = {OUTPUT_RETARGET_MOTION: str(motion_path)}
+    # A plain-numpy companion to the .pt above -- not a preview, a real
+    # interchange format for the one downstream consumer (export_fbx) that
+    # runs in a separate environment with no torch installed at all.
+    motion_npz_path = retarget_dir / RETARGET_MOTION_NPZ_FILENAME
+    np.savez(motion_npz_path, **{key: value.numpy() for key, value in merged.items()})
+
+    outputs = {
+        OUTPUT_RETARGET_MOTION: str(motion_path),
+        OUTPUT_RETARGET_MOTION_NPZ: str(motion_npz_path),
+    }
 
     if runRecord.input.render_retarget_preview:
         from ..helpers.smplx_bvh_preview import render_body_hands_bvh

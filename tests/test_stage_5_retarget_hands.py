@@ -355,6 +355,17 @@ def test_retargeted_motion_shapes_and_no_nan(stage_5_result):
         assert not torch.isnan(value).any()
 
 
+def test_retarget_motion_npz_matches_the_pt_file(stage_5_result):
+    """A plain-numpy companion artifact for the one downstream consumer
+    (export_fbx) that runs in an environment with no torch at all -- must
+    carry the exact same keys and values as the .pt, just without torch."""
+    merged = torch.load(stage_5_result["retarget_motion"], weights_only=False)
+    with np.load(stage_5_result["retarget_motion_npz"]) as npz:
+        assert set(npz.keys()) == set(merged.keys())
+        for key, value in merged.items():
+            assert np.allclose(npz[key], value.numpy())
+
+
 def test_retarget_changes_wrists_and_copies_fingers(stage_5_result, stage_2_result, stage_4_result):
     merged = torch.load(stage_5_result["retarget_motion"], weights_only=False)
     body_motion = torch.load(stage_2_result["human_motion"], weights_only=False)
