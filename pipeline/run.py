@@ -1,14 +1,17 @@
 """run: one-shot command that creates a run (if one doesn't already exist at
 --output-dir) and then executes every implemented stage in order, start to
-finish, in this one process.
+finish.
 
-Stages run in-process (each stage module's own `run(progress)`, not a
-subprocess per stage) via dynamic import keyed off the existing
-`stage_{index}_{StageName.value}` file-naming convention -- so as later
-stages (7, 8, 9...) get real files following that same convention, this loop
-picks them up automatically; the only thing that needs updating is
+Every stage except `export_fbx` runs in-process (each stage module's own
+`run(progress)`, not a subprocess per stage) via dynamic import keyed off the
+existing `stage_{number}_{StageName.value}` file-naming convention -- so as
+later stages get real files following that same convention, this loop picks
+them up automatically; the only thing that needs updating is
 `create_run.STAGE_DEPENDS_ON`, which is already the existing convention for
-registering a new stage.
+registering a new stage. `export_fbx` is the one exception: it needs `bpy`,
+which lives only in a separate pixi environment that can't be imported into
+this process, so it's dispatched as its own subprocess instead (see
+`_run_in_fbx_export_env`).
 
 Resumable exactly like the per-stage manual workflow: if `progress.json`
 already exists at --output-dir, this skips `create_run` and just resumes
@@ -24,6 +27,8 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import subprocess
+from pathlib import Path
 
 from .create_run import STAGE_DEPENDS_ON, create_run
 from .pipeline_stage_base import run_stage
@@ -40,6 +45,10 @@ from .progress_tracker import (
 
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 
+# repo root is 1 level up from this file (pipeline/ -> root) -- needed so the
+# fbx-export subprocess below finds pixi.toml regardless of the caller's cwd.
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 def stage_module_name(stage_name: StageName) -> str:
     """The `stage_{number}_{StageName.value}` naming convention every stage
@@ -54,6 +63,25 @@ def stage_module_name(stage_name: StageName) -> str:
 def _load_stage_run(stage_name: StageName):
     module = importlib.import_module(stage_module_name(stage_name))
     return module.run
+
+
+def _run_in_fbx_export_env(runRecord: RunRecord) -> None:
+    """`export_fbx` needs `bpy`, which lives only in the separate
+    `fbx-export` pixi environment (kept separate from `main` since bpy pins
+    hard to its own Python release) -- it can't be dynamically imported into
+    this process the way every other stage is. Shells out via `pixi run`
+    itself, rather than hand-deriving the environment's own python.exe path,
+    so the subprocess resolves the right interpreter the same way a person
+    would run it manually. The subprocess's own `cli_entrypoint`/`run_stage`
+    already does the right dependency/skip/mark-progress bookkeeping against
+    `progress.json`, so nothing is duplicated here.
+    """
+    module_name = stage_module_name(StageName.STAGE_9_EXPORT_FBX)
+    subprocess.run(
+        ["pixi", "run", "-e", "fbx-export", "python", "-m", module_name,
+         "--output-dir", str(runRecord.progress_dir)],
+        check=True, cwd=_REPO_ROOT,
+    )
 
 
 def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None) -> None:
