@@ -54,10 +54,21 @@ def _fake_load_stage_run(calls: list[StageName]):
     return load
 
 
+def _fake_run_in_fbx_export_env(calls: list[StageName]):
+    """Stands in for the real `_run_in_fbx_export_env` (which shells out to a
+    separate pixi environment/subprocess) so plumbing-only tests don't need
+    that environment installed. Marks the stage complete itself, mirroring
+    what the real subprocess's own `cli_entrypoint`/`run_stage` would do."""
+    def fake(runRecord: RunRecord) -> None:
+        calls.append(StageName.STAGE_9_EXPORT_FBX)
+        runRecord.mark_progress(StageName.STAGE_9_EXPORT_FBX, StageStatus.COMPLETE, outputs={})
+    return fake
+
+
 def test_load_stage_run_resolves_the_real_stage_module():
     from pipeline.stages import stage_0_ingest_video
 
-    run = run_pipeline_module._load_stage_run(0, StageName.STAGE_0_INGEST_VIDEO)
+    run = run_pipeline_module._load_stage_run(StageName.STAGE_0_INGEST_VIDEO)
     assert run is stage_0_ingest_video.run
 
 
@@ -65,6 +76,7 @@ def test_run_pipeline_runs_every_stage_when_no_bound_given(tmp_path, monkeypatch
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_in_fbx_export_env", _fake_run_in_fbx_export_env(calls))
 
     run_pipeline_module.run_pipeline(runRecord)
 
@@ -88,6 +100,7 @@ def test_run_pipeline_clamps_a_stop_after_stage_beyond_what_is_implemented(tmp_p
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_in_fbx_export_env", _fake_run_in_fbx_export_env(calls))
 
     run_pipeline_module.run_pipeline(runRecord, stop_after_stage=99)
 

@@ -41,8 +41,8 @@ from .progress_tracker import (
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 
 
-def stage_module_name(index: int, stage_name: StageName) -> str:
-    """The `stage_{index}_{StageName.value}` naming convention every stage
+def stage_module_name(stage_name: StageName) -> str:
+    """The `stage_{number}_{StageName.value}` naming convention every stage
     module follows, as an importable dotted path -- pulled out of
     `_load_stage_run` so tests (which need to invoke the same modules as
     real subprocesses) can reuse this exact convention instead of

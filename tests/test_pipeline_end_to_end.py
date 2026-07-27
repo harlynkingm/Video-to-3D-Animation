@@ -66,19 +66,26 @@ def _run_stage(module: str, progress_dir: Path, *extra_args: str) -> subprocess.
 
 
 def test_full_pipeline_runs_end_to_end(tmp_path):
-    """Runs every currently-implemented stage as its own real subprocess, in
-    order -- this is the only test that exercises the per-stage CLI dispatch
-    path (see this module's own docstring). The stage list comes from
-    `ORDERED_STAGES` rather than a hand-typed module list, so this keeps up
-    automatically as new stages ship (a hardcoded list here had already
-    silently stopped at stage 6, missing stage 7 entirely).
+    """Runs every currently-implemented `main`-environment stage as its own
+    real subprocess, in order -- this is the only test that exercises the
+    per-stage CLI dispatch path (see this module's own docstring). The stage
+    list comes from `ORDERED_STAGES` rather than a hand-typed module list, so
+    this keeps up automatically as new stages ship (a hardcoded list here had
+    already silently stopped at stage 6, missing stage 7 entirely).
+
+    Deliberately excludes `export_fbx`: it needs `bpy` from a separate pixi
+    environment this test's `sys.executable` (the `main` env's own
+    interpreter) can't provide -- see `tests/test_stage_9_export_fbx.py` for
+    its own dedicated, appropriately-gated coverage.
     """
     run_dir = tmp_path / "run"
     created = _create_run(run_dir)
     assert created.returncode == 0, created.stderr
 
-    for index, stage in enumerate(ORDERED_STAGES):
-        result = _run_stage(stage_module_name(index, stage), run_dir)
+    for stage in ORDERED_STAGES:
+        if stage == StageName.STAGE_9_EXPORT_FBX:
+            continue
+        result = _run_stage(stage_module_name(stage), run_dir)
         assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
