@@ -204,6 +204,9 @@ pytestmark_end_to_end = pytest.mark.skipif(
 
 @pytestmark_end_to_end
 def test_pipeline_run_end_to_end(tmp_path):
+    """Capped at stage 7 -- `export_fbx` needs `bpy` from a separate pixi
+    environment this test's own `main`-env interpreter can't provide (see
+    `tests/test_stage_9_export_fbx.py` for its own dedicated coverage)."""
     run_dir = tmp_path / "run"
     result = subprocess.run(
         [
@@ -214,13 +217,14 @@ def test_pipeline_run_end_to_end(tmp_path):
             "--object-prompt", OBJECT_PROMPT,
             "--focal-length-mm", str(FOCAL_LENGTH_MM),
             "--sensor-width-mm", str(SENSOR_WIDTH_MM),
+            "--stop-after-stage", "7",
         ],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    assert_stages_complete(progress_json)
+    assert_stages_complete(progress_json, through=StageName.STAGE_7_ANNOTATE_CONTACTS)
 
 
 @pytestmark_end_to_end

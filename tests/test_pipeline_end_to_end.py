@@ -82,7 +82,7 @@ def test_full_pipeline_runs_end_to_end(tmp_path):
         assert result.returncode == 0, result.stderr
 
     progress_json = json.loads((run_dir / "progress.json").read_text())
-    assert_stages_complete(progress_json)
+    assert_stages_complete(progress_json, through=StageName.STAGE_7_ANNOTATE_CONTACTS)
 
     motion_path = Path(progress_json["stages"]["estimate_human_motion"]["outputs"]["human_motion"])
     assert motion_path.exists()
