@@ -16,6 +16,7 @@ import torch
 from pipeline.adapters.depth_anything3_adapter import KEY_DEPTH
 from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks
 from pipeline.algorithms.contact_detection import REGION_NAMES, ContactEvent
+from pipeline.stages.stage_0_ingest_video import INPUT_FRAMES_DIRNAME
 from pipeline.stages import stage_7_annotate_contacts
 from pipeline.stages.stage_7_annotate_contacts import (
     DEPTH_GAP_OCCLUSION_THRESHOLD_M,
@@ -52,7 +53,7 @@ def test_contact_events_output_is_plausible(stage_7_result):
 
 
 def test_render_contacts_preview_writes_one_labeled_jpeg_per_event(tmp_path):
-    frames_dir = tmp_path / "frames"
+    frames_dir = tmp_path / INPUT_FRAMES_DIRNAME
     frames_dir.mkdir()
     cv2.imwrite(str(frames_dir / "000003.jpg"), np.zeros((20, 20, 3), dtype=np.uint8))
 
@@ -79,7 +80,7 @@ def test_render_contacts_preview_writes_one_labeled_jpeg_per_event(tmp_path):
 def test_render_contacts_preview_skips_an_event_with_no_source_frame(tmp_path):
     """A frame that was never extracted (shouldn't happen, but the renderer
     shouldn't crash the stage over a missing preview image)."""
-    frames_dir = tmp_path / "frames"
+    frames_dir = tmp_path / INPUT_FRAMES_DIRNAME
     frames_dir.mkdir()
 
     K = np.eye(3)
@@ -99,7 +100,7 @@ def test_render_contacts_preview_clears_stale_images_from_a_previous_run(tmp_pat
     """A re-run can produce fewer events than a previous one (e.g. a
     detection-logic change), so a stale image left over from a now-removed
     event must not survive alongside the current run's own output."""
-    frames_dir = tmp_path / "frames"
+    frames_dir = tmp_path / INPUT_FRAMES_DIRNAME
     frames_dir.mkdir()
     cv2.imwrite(str(frames_dir / "000003.jpg"), np.zeros((20, 20, 3), dtype=np.uint8))
 
@@ -123,7 +124,7 @@ def test_render_contacts_preview_clears_stale_images_from_a_previous_run(tmp_pat
 
 
 def test_render_contacts_preview_joins_a_consolidated_event_regions_for_the_filename(tmp_path):
-    frames_dir = tmp_path / "frames"
+    frames_dir = tmp_path / INPUT_FRAMES_DIRNAME
     frames_dir.mkdir()
     cv2.imwrite(str(frames_dir / "000007.jpg"), np.zeros((20, 20, 3), dtype=np.uint8))
 

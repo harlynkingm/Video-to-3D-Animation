@@ -15,6 +15,8 @@ from ..helpers.progress_reporter import frame_progress
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import StageName, RunRecord
 
+INPUT_FRAMES_DIRNAME = "input_frames"
+
 # High-quality JPEG rather than lossless PNG: downstream models (SAM 3.1, GVHMR,
 # depth estimation) are themselves trained on JPEG-compressed web imagery, so the
 # accuracy cost is negligible, and it's a fraction of the disk space/write time.
@@ -67,7 +69,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         capture.get(cv2.CAP_PROP_ORIENTATION_META), raw_width, raw_height
     )
 
-    frames_dir = Path(runRecord.progress_dir) / "frames"
+    frames_dir = Path(runRecord.progress_dir) / INPUT_FRAMES_DIRNAME
     frames_dir.mkdir(parents=True, exist_ok=True)
 
     frame_count = 0
