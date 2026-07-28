@@ -28,6 +28,7 @@ from conftest import (
     SMPLX_MODEL_PATH,
     TEST_VIDEO_PATH,
     assert_stages_complete,
+    make_run_input,
 )
 from pipeline import run as run_pipeline_module
 from pipeline.create_run import create_run
@@ -35,14 +36,7 @@ from pipeline.progress_tracker import RunRecord, RunInput, StageName, StageStatu
 
 
 def _make_runRecord(tmp_path: Path) -> RunRecord:
-    run_input = RunInput(
-        video_path=str(TEST_VIDEO_PATH),
-        human_prompt=HUMAN_PROMPT,
-        object_prompt=OBJECT_PROMPT,
-        focal_length_mm=FOCAL_LENGTH_MM,
-        sensor_width_mm=SENSOR_WIDTH_MM,
-    )
-    return create_run(tmp_path / "run", run_input, run_id="test")
+    return create_run(tmp_path / "run", make_run_input(), run_id="test")
 
 
 def _fake_run_stage_subprocess(calls: list[StageName]):

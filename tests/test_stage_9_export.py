@@ -1,0 +1,479 @@
+"""Stage 9 (export) tests: fast pure-numpy tests of the AMASS-preparation
+logic (always run, no bpy needed) plus a real bpy smoke test gated behind
+`bpy` importability, since this stage only ever actually runs in the
+separate `export` pixi environment. Run the real one with:
+`pixi run -e export python -m pytest tests/test_stage_9_export.py -v`.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+from scipy.spatial.transform import Rotation
+
+from pipeline.helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
+from pipeline.progress_tracker import RunInput, RunRecord, SceneInfo, StageName, StageRecord
+from pipeline.stages.stage_9_export import (
+    OUTPUT_BLEND,
+    _lowest_foot_z,
+    _object_pose_to_blender_world,
+    _prepend_rest_pose_frame,
+    _root_camera_to_upright,
+    _write_body_amass,
+    run,
+)
+from tests.conftest import make_run_input
+
+try:
+    import bpy  # noqa: F401
+    HAS_BPY = True
+except ImportError:
+    HAS_BPY = False
+
+
+if HAS_BPY:
+    @pytest.fixture(autouse=True)
+    def _isolated_bpy_scene():
+        """A real, order-dependent bug was found running this file's own
+        tests together: a prior test's large (300-frame) build left bpy in a
+        state that corrupted a *later* test's otherwise-correct output, even
+        though `run()` already clears the scene at its own start (something
+        more subtle than orphaned objects/actions -- never fully root-caused,
+        and not worth chasing further since it's purely a test-harness
+        artifact: every real invocation of this stage is its own fresh
+        `pixi run -e export python -m ...` subprocess, so bpy state never
+        actually carries over between runs in production). Clearing before
+        *and* after each test, rather than trusting `run()`'s own single
+        clear at the start, is what actually made the suite order-independent.
+        """
+        from pipeline.stages.stage_9_export import _clear_scene
+        _clear_scene(bpy)
+        yield
+        _clear_scene(bpy)
+
+N_FRAMES = 5
+
+
+def _fake_motion() -> dict:
+    rng = np.random.default_rng(0)
+    betas = np.tile(rng.normal(size=(1, 10)).astype(np.float32), (N_FRAMES, 1))
+    return {
+        "global_orient": rng.normal(size=(N_FRAMES, 3)).astype(np.float32),
+        "body_pose": rng.normal(size=(N_FRAMES, 63)).astype(np.float32),
+        "betas": betas,
+        "transl": rng.normal(size=(N_FRAMES, 3)).astype(np.float32),
+        "left_hand_pose": rng.normal(size=(N_FRAMES, 45)).astype(np.float32),
+        "right_hand_pose": rng.normal(size=(N_FRAMES, 45)).astype(np.float32),
+    }
+
+
+def test_root_camera_to_upright_maps_camera_up_to_target_plus_y():
+    """Camera space is Y-down (a point "up" from the origin has negative Y);
+    the target frame is Y-up, matching the already-proven BVH convention
+    this reuses -- so a purely-vertical camera-space offset should land on
+    positive Y, not Z or X, in the corrected frame."""
+    global_orient = np.zeros((1, 3), dtype=np.float32)
+    transl = np.array([[0.0, -1.0, 0.0]], dtype=np.float32)  # 1 unit "up" in camera space
+
+    _, corrected_transl = _root_camera_to_upright(global_orient, transl)
+
+    assert np.allclose(corrected_transl, [[0.0, 1.0, 0.0]], atol=1e-5)
+
+
+def test_root_camera_to_upright_round_trips_identity_orientation():
+    """A zero rotation, once converted matrix->corrected->back to axis-angle,
+    should land on the fixed correction's own rotation, not drift or explode
+    (a real risk with axis-angle round trips near singular points)."""
+    global_orient = np.zeros((1, 3), dtype=np.float32)
+    transl = np.zeros((1, 3), dtype=np.float32)
+
+    corrected_orient, corrected_transl = _root_camera_to_upright(global_orient, transl)
+
+    expected = Rotation.from_matrix(CAMERA_TO_BVH_ROOT_ROTATION).as_rotvec()
+    assert np.allclose(corrected_orient[0], expected, atol=1e-5)
+    assert np.allclose(corrected_transl, 0.0)
+
+
+def test_prepend_rest_pose_frame_adds_one_all_zero_frame():
+    global_orient = np.full((N_FRAMES, 3), 2.0, dtype=np.float32)
+    body_pose = np.full((N_FRAMES, 63), 3.0, dtype=np.float32)
+    transl = np.arange(N_FRAMES * 3, dtype=np.float32).reshape(N_FRAMES, 3)
+    left_hand_pose = np.full((N_FRAMES, 45), 4.0, dtype=np.float32)
+    right_hand_pose = np.full((N_FRAMES, 45), 5.0, dtype=np.float32)
+
+    go, bp, tr, lh, rh = _prepend_rest_pose_frame(global_orient, body_pose, transl, left_hand_pose, right_hand_pose)
+
+    assert go.shape == (N_FRAMES + 1, 3)
+    assert np.allclose(go[0], 0.0) and np.allclose(go[1:], global_orient)
+    assert np.allclose(bp[0], 0.0) and np.allclose(bp[1:], body_pose)
+    assert np.allclose(lh[0], 0.0) and np.allclose(lh[1:], left_hand_pose)
+    assert np.allclose(rh[0], 0.0) and np.allclose(rh[1:], right_hand_pose)
+    # The rest frame sits at the real motion's own first-frame position, not
+    # the origin -- only the pose should jump at the 0->1 boundary.
+    assert np.allclose(tr[0], transl[0])
+    assert np.allclose(tr[1:], transl)
+
+
+def test_write_body_amass_embeds_real_hand_pose(tmp_path):
+    motion = _fake_motion()
+    out_path = tmp_path / "body.npz"
+
+    _write_body_amass(motion, fps=30.0, out_path=out_path)
+
+    with np.load(out_path) as data:
+        assert data["poses"].shape == (N_FRAMES + 1, 55 * 3)
+        hand_start = 3 + 63 + 9  # global_orient + body_pose + jaw/eyes
+        # Frame 0 is the prepended rest-pose frame -- real hand data starts at 1.
+        assert np.allclose(data["poses"][0, hand_start:hand_start + 90], 0.0)
+        assert np.allclose(data["poses"][1:, hand_start:hand_start + 45], motion["left_hand_pose"])
+        assert np.allclose(data["poses"][1:, hand_start + 45:hand_start + 90], motion["right_hand_pose"])
+        expected_trans = motion["transl"] @ CAMERA_TO_BVH_ROOT_ROTATION.T
+        assert np.allclose(data["trans"][1:], expected_trans, atol=1e-5)
+        assert np.allclose(data["trans"][0], expected_trans[0], atol=1e-5)
+
+
+def test_write_body_amass_applies_the_floor_offset_to_every_frame_including_rest(tmp_path):
+    motion = _fake_motion()
+    out_path = tmp_path / "body.npz"
+
+    _write_body_amass(motion, fps=30.0, out_path=out_path, floor_offset=5.0)
+
+    with np.load(out_path) as data:
+        baseline = motion["transl"] @ CAMERA_TO_BVH_ROOT_ROTATION.T
+        assert np.allclose(data["trans"][1:, 1], baseline[:, 1] + 5.0, atol=1e-5)
+        assert np.allclose(data["trans"][0, 1], baseline[0, 1] + 5.0, atol=1e-5)
+
+
+def test_write_body_amass_pools_betas_from_the_first_frame(tmp_path):
+    motion = _fake_motion()
+    motion["betas"] = motion["betas"].copy()
+    motion["betas"][1:] = 0.0  # only frame 0 carries the "real" repeated value
+
+    out_path = tmp_path / "body.npz"
+    _write_body_amass(motion, fps=30.0, out_path=out_path)
+
+    with np.load(out_path) as data:
+        assert np.allclose(data["betas"], motion["betas"][0])
+
+
+def test_object_pose_to_blender_world_pivots_around_pelvis_rest_not_the_origin():
+    """Regression test for a real bug: SMPL-X's `global_orient` rotates the
+    body about the pelvis's own rest position, not the world origin (a
+    skeleton joint gets this for free via forward kinematics; a standalone
+    point like the object's own `center` does not). Ignoring this placed a
+    real clip's object ~0.7m away from the hand it was fit next to, instead
+    of the ~0.2m the raw (untransformed) data itself shows.
+
+    Picks `center` so `center - pelvis_rest` is a simple "1 unit up in
+    camera space" vector -- reusing the same known mapping
+    `test_root_camera_to_upright_maps_camera_up_to_target_plus_y` already
+    established (camera-space up -> target +Y) to hand-derive the expected
+    result, rather than trusting a from-real-data magic number.
+    """
+    pelvis_rest = np.array([1.0, 2.0, 3.0])
+    center = np.array([1.0, 1.0, 3.0])  # pelvis_rest + (0, -1, 0): "1 unit up" in camera space
+    rotation = np.eye(3)
+
+    blender_location, _ = _object_pose_to_blender_world(center, rotation, pelvis_rest, floor_offset=0.0)
+
+    # upright_center = CAMERA_TO_BVH_ROOT_ROTATION @ (0, -1, 0) + pelvis_rest = (0, 1, 0) + pelvis_rest = (1, 3, 3)
+    # blender_location maps (x, y, z) -> (x, -z, y): (1, -3, 3)
+    assert np.allclose(blender_location, [1.0, -3.0, 3.0], atol=1e-6)
+
+    # Guard against regressing to the naive (pivot-at-origin) formula, which
+    # would give a visibly different, wrong answer for this same input.
+    naive_wrong = CAMERA_TO_BVH_ROOT_ROTATION @ center
+    assert not np.allclose(blender_location, naive_wrong, atol=1e-3)
+
+
+def test_object_pose_to_blender_world_applies_floor_offset():
+    pelvis_rest = np.zeros(3)
+    center = np.zeros(3)
+    rotation = np.eye(3)
+
+    blender_location, _ = _object_pose_to_blender_world(center, rotation, pelvis_rest, floor_offset=5.0)
+
+    # floor_offset lands on the AMASS-frame's own up axis (index 1), which
+    # `_AMASS_TO_BLENDER_WORLD_ROTATION` maps to Blender's own Z.
+    assert np.allclose(blender_location, [0.0, 0.0, 5.0], atol=1e-6)
+
+
+def _make_runRecord(
+    tmp_path, motion_npz_path, object_shape=None, pelvis_rest=None, object_pose_npz_path=None,
+    attachment_events=None,
+) -> RunRecord:
+    """A real run always has a `STAGE_6_ALIGN_SCENE_SCALE` entry (a hard DAG
+    dependency of `export`) -- its own `scene_scale.json` always exists,
+    but only carries `object_shape`/`pelvis_rest_incam` when an object was
+    actually tracked. Mirrored here rather than omitting the stage entirely
+    for the human-only case, which `run()` doesn't expect. `object_pose_npz_path`
+    (stage 8's real per-frame pose) and `attachment_events` (stage 8's own
+    `attachment_events.json`, defaults to no events -- see
+    `hoi_object_pose.compute_object_pose_sequence`'s own docstring for what
+    each event carries) are only read by `run()` when an object was tracked,
+    so the human-only tests never need to pass either."""
+    run_input = make_run_input()
+    scene_scale_path = tmp_path / "scene_scale.json"
+    scene_scale_json = {}
+    stage_6_outputs = {"scene_scale": str(scene_scale_path)}
+    if object_shape is not None:
+        object_shape_path = tmp_path / "object_shape.json"
+        object_shape_path.write_text(json.dumps(object_shape))
+        scene_scale_json["pelvis_rest_incam"] = pelvis_rest.tolist()
+        stage_6_outputs["object_shape"] = str(object_shape_path)
+    scene_scale_path.write_text(json.dumps(scene_scale_json))
+
+    stages = {
+        StageName.STAGE_5_RETARGET_HANDS.value: StageRecord(
+            outputs={"retarget_motion_npz": str(motion_npz_path)},
+        ),
+        StageName.STAGE_6_ALIGN_SCENE_SCALE.value: StageRecord(outputs=stage_6_outputs),
+    }
+    if object_pose_npz_path is not None:
+        attachment_events_path = tmp_path / "attachment_events.json"
+        attachment_events_path.write_text(json.dumps(attachment_events or []))
+        stages[StageName.STAGE_8_OPTIMIZE_HOI.value] = StageRecord(
+            outputs={
+                "object_pose_npz": str(object_pose_npz_path),
+                "attachment_events": str(attachment_events_path),
+            },
+        )
+    return RunRecord(
+        run_id="test",
+        progress_dir=str(tmp_path),
+        input=run_input,
+        scene=SceneInfo(fps=30.0),
+        stages=stages,
+    )
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_run_produces_a_real_blend_file(tmp_path):
+    motion_npz_path = tmp_path / "retargeted_motion.npz"
+    np.savez(motion_npz_path, **_fake_motion())
+    runRecord = _make_runRecord(tmp_path, motion_npz_path)
+
+    outputs = run(runRecord)
+
+    output_path = tmp_path / "output.blend"
+    assert outputs[OUTPUT_BLEND] == str(output_path)
+    assert output_path.exists()
+    assert output_path.stat().st_size > 0
+    assert runRecord.outputs.final_blend == str(output_path)
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_run_grounds_the_lowest_foot_position_near_zero(tmp_path):
+    """Regression test for the real bug the user found: incam space has no
+    floor reference, so without the offset the character sits wherever
+    GVHMR's raw numbers happened to put it (~1.7m underground on a real
+    clip). After `run()`, the lowest point any foot/ankle bone reaches
+    across the whole clip should land at (approximately) Z=0.
+
+    Uses 300 frames (not the usual N_FRAMES=5) deliberately -- a real bug
+    was found and fixed at this exact frame count boundary: Blender's own
+    scene.frame_end defaults to 250 and the addon never extends it to match
+    a longer animation, so trusting it (instead of the armature's own
+    action.frame_range, what `_lowest_foot_z` actually uses) would silently
+    stop scanning partway through a clip like this one.
+    """
+    import bpy
+
+    n_frames = 300
+    rng = np.random.default_rng(1)
+    long_motion = {
+        "global_orient": rng.normal(size=(n_frames, 3)).astype(np.float32),
+        "body_pose": rng.normal(size=(n_frames, 63)).astype(np.float32),
+        "betas": np.tile(rng.normal(size=(1, 10)).astype(np.float32), (n_frames, 1)),
+        "transl": rng.normal(size=(n_frames, 3)).astype(np.float32),
+        "left_hand_pose": rng.normal(size=(n_frames, 45)).astype(np.float32),
+        "right_hand_pose": rng.normal(size=(n_frames, 45)).astype(np.float32),
+    }
+    motion_npz_path = tmp_path / "retargeted_motion.npz"
+    np.savez(motion_npz_path, **long_motion)
+    runRecord = _make_runRecord(tmp_path, motion_npz_path)
+
+    run(runRecord)
+
+    # Saving doesn't touch the live scene, so the just-built armature is
+    # still right here -- no need to reopen the file to check it. A separate
+    # test below (`test_run_with_an_object_shape...`) covers a real
+    # save->reopen round trip.
+    armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+    assert abs(_lowest_foot_z(armature)) < 0.01
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(tmp_path):
+    """When `align_scene_scale` tracked an object, the object is added
+    directly into the same live scene as the body and the whole scene is
+    saved together in one `output.blend` (see module docstring for why this
+    doesn't need the addon's own body-only export operator at all). Held
+    frames get baked world-space keyframes; an attachment event instead gets
+    a live Child Of constraint targeting the attaching bone (see module
+    docstring for why: this is what lets the object stay correctly attached
+    if the skeleton's own animation is later retargeted onto a different
+    rig). This test covers both: a flat held value before/after one
+    attachment event on the right wrist.
+
+    Also a regression test for a real bug: leftover orphaned data-blocks
+    from this stage's own two-pass floor-offset build resurfacing in the
+    saved file in place of the corrected body, silently undoing the
+    floor-grounding fix (`_clear_scene`'s own `orphans_purge` call is what
+    this asserts against).
+
+    Runs `run()` in a genuinely separate process rather than in-process like
+    this file's other `run()` tests: a *second*, distinct order-dependent bpy
+    quirk was found chaining this test after `test_run_grounds_the_lowest_foot_
+    position_near_zero` in the same pytest session (a large, 300-frame build
+    left something -- never fully root-caused, and not orphaned objects/
+    actions/`scene.frame_end`, all of which were checked directly -- that
+    corrupted this test's own otherwise-correct output). Not worth chasing
+    further: it's purely a test-harness artifact, since every real invocation
+    of this stage is its own fresh subprocess (`pixi run -e export python
+    -m pipeline.stages.stage_9_export`) that never shares bpy state with a
+    prior run to begin with -- so making *this* test match that same
+    real-world shape sidesteps the whole class of bug rather than chasing an
+    uncharacterized one.
+    """
+    n_frames = 60
+    rng = np.random.default_rng(2)
+    motion = {
+        "global_orient": rng.normal(size=(n_frames, 3)).astype(np.float32),
+        "body_pose": rng.normal(size=(n_frames, 63)).astype(np.float32),
+        "betas": np.tile(rng.normal(size=(1, 10)).astype(np.float32), (n_frames, 1)),
+        "transl": rng.normal(size=(n_frames, 3)).astype(np.float32),
+        "left_hand_pose": np.zeros((n_frames, 45), dtype=np.float32),
+        "right_hand_pose": np.zeros((n_frames, 45), dtype=np.float32),
+    }
+    motion_npz_path = tmp_path / "retargeted_motion.npz"
+    np.savez(motion_npz_path, **motion)
+
+    object_kind = "box"
+    object_shape = {"kind": object_kind, "half_extents": [0.05, 0.06, 0.04]}
+    pelvis_rest = np.array([0.01, -0.3, 0.02])
+
+    # A flat held value, far from the body -- stage 8's own real contract
+    # for every non-attached frame (see hoi_object_pose.py's own module
+    # docstring). The attachment event below (right wrist, joint_idx=21)
+    # covers frames 20-40; these array values are never actually read for
+    # that range (see `_held_frame_mask`) -- left flat here specifically so
+    # that if stage 9 ever regressed to reading them for attached frames
+    # too, the check below (which compares against the *live* wrist bone,
+    # not this array) would catch it by disagreeing wildly.
+    held_value = np.array([5.0, 5.0, 5.0])
+    translations = np.tile(held_value, (n_frames, 1))
+    rotations = np.tile(np.eye(3), (n_frames, 1, 1))
+    object_pose_npz_path = tmp_path / "object_pose.npz"
+    np.savez(
+        object_pose_npz_path,
+        translation=translations,
+        rotation=rotations,
+        is_low_confidence=np.zeros(n_frames, dtype=bool),
+    )
+
+    event = {
+        "region": "right_hand", "joint_idx": 21,  # right_wrist
+        "start_frame": 20, "end_frame": 40, "snap_frame": 20,
+        "ref_center": [0.05, 0.02, 1.3], "ref_rotation": np.eye(3).tolist(),
+        "is_low_confidence": False,
+    }
+
+    runRecord = _make_runRecord(
+        tmp_path, motion_npz_path, object_shape=object_shape, pelvis_rest=pelvis_rest,
+        object_pose_npz_path=object_pose_npz_path, attachment_events=[event],
+    )
+    runRecord.save()
+
+    # No `check=True`: bpy has a reproducible access-violation exit code on
+    # interpreter teardown *after* the file is fully written (a known
+    # standalone-bpy quirk, already documented for this stage's own bpy
+    # smoke test) -- verify success via the output artifact instead.
+    subprocess.run(
+        [
+            sys.executable, "-c",
+            "from pipeline.progress_tracker import RunRecord\n"
+            "from pipeline.stages.stage_9_export import run\n"
+            f"run(RunRecord.load(r{str(tmp_path)!r}))\n",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    output_path = tmp_path / "output.blend"
+    assert output_path.exists()
+
+    import bpy
+
+    from pipeline.stages.stage_9_export import OBJECT_MESH_PREFIX, _OBJECT_FIRST_MOTION_BLENDER_FRAME
+
+    # A real save->reopen round trip (not just reading the live in-memory
+    # scene, which the subprocess above doesn't share with this process
+    # anyway) -- confirms the saved file itself, not just Blender's live
+    # state, is correct.
+    bpy.ops.wm.open_mainfile(filepath=str(output_path))
+
+    armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+    object_mesh = next(o for o in bpy.data.objects if o.type == "MESH" and o.name == OBJECT_MESH_PREFIX + object_kind)
+    wrist_bone = armature.pose.bones["right_wrist"]
+    scene = bpy.context.scene
+
+    assert abs(_lowest_foot_z(armature)) < 0.01
+    floor_offset = -_lowest_foot_z(armature)
+
+    def blender_frame(raw_frame: int) -> int:
+        return raw_frame + _OBJECT_FIRST_MOTION_BLENDER_FRAME
+
+    # `floor_offset` re-derived this way is near-zero (grounding is already
+    # correct post-reload), NOT the original, generally-nonzero value `run()`
+    # itself used internally when it keyframed the object -- re-deriving the
+    # true value isn't possible from the saved file alone. floor_offset only
+    # ever shifts Blender's own Z (see `_object_pose_to_blender_world`), so
+    # the checks below only compare the two axes it never touches: X and Y
+    # (same reasoning this test used before the constraint-based redesign).
+    expected_held, _ = _object_pose_to_blender_world(held_value, np.eye(3), pelvis_rest, floor_offset)
+
+    # Held, before the event.
+    scene.frame_set(blender_frame(0))
+    assert np.allclose(tuple(object_mesh.location)[:2], expected_held[:2], atol=1e-4)
+
+    # At the snap frame itself, the object's live (constrained) position
+    # exactly reproduces the raw reference measurement -- true by
+    # construction of how the constraint's own inverse_matrix is derived
+    # (see `_add_attachment_constraint`), a direct check that the derivation
+    # is wired correctly end to end, not just internally self-consistent.
+    scene.frame_set(blender_frame(event["snap_frame"]))
+    expected_snap_loc, _ = _object_pose_to_blender_world(
+        np.array(event["ref_center"]), np.array(event["ref_rotation"]), pelvis_rest, floor_offset,
+    )
+    assert np.allclose(tuple(object_mesh.matrix_world.translation)[:2], expected_snap_loc[:2], atol=1e-4)
+
+    # Attached: the object's own position relative to the wrist bone stays
+    # perfectly rigid across several frames within the event -- only
+    # possible if the constraint is live-tracking the bone's own real
+    # motion every frame (a frozen/baked value would only coincidentally
+    # match the bone's position at the one frame it was captured, not
+    # consistently across several different ones). This is also the
+    # concrete property that makes the object survive a retarget onto a
+    # different rig: the *relationship* to the bone is what's preserved,
+    # not an absolute recording.
+    def relative_offset(raw_frame: int) -> np.ndarray:
+        scene.frame_set(blender_frame(raw_frame))
+        bone_world = armature.matrix_world @ wrist_bone.matrix
+        return np.array(bone_world.inverted() @ object_mesh.matrix_world)
+
+    offsets = [relative_offset(f) for f in [21, 25, 30, 35, 40]]
+    for later in offsets[1:]:
+        assert np.allclose(later, offsets[0], atol=1e-4)
+
+    # Held again after the event -- back to the same flat value (proves the
+    # constraint's own influence actually turns back off, and the object's
+    # own base transform correctly resumes rather than staying wherever the
+    # constraint last left it).
+    scene.frame_set(blender_frame(event["end_frame"] + 1))
+    assert np.allclose(tuple(object_mesh.location)[:2], expected_held[:2], atol=1e-4)
+
+    assert np.allclose(tuple(object_mesh.dimensions), (0.1, 0.12, 0.08), atol=1e-4)

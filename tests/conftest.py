@@ -134,15 +134,21 @@ HAMER_CHECKPOINT = CHECKPOINTS_DIR / "hamer.safetensors"
 SMPLX_MODEL_PATH = TESTS_DIR.parent / "body_models" / "smplx" / "SMPLX_NEUTRAL.npz"
 
 
-@pytest.fixture(scope="session")
-def runRecord(tmp_path_factory) -> RunRecord:
-    run_dir = tmp_path_factory.mktemp("pipeline_test_run")
-    run_input = RunInput(
+def make_run_input(**overrides) -> RunInput:
+    return RunInput(
         video_path=str(TEST_VIDEO_PATH),
         human_prompt=HUMAN_PROMPT,
         object_prompt=OBJECT_PROMPT,
         focal_length_mm=FOCAL_LENGTH_MM,
         sensor_width_mm=SENSOR_WIDTH_MM,
+        **overrides,
+    )
+
+
+@pytest.fixture(scope="session")
+def runRecord(tmp_path_factory) -> RunRecord:
+    run_dir = tmp_path_factory.mktemp("pipeline_test_run")
+    run_input = make_run_input(
         render_mask_previews=True,
         render_motion_preview=True,
         render_depth_preview=True,
@@ -255,4 +261,18 @@ def stage_7_result(runRecord: RunRecord, stage_5_result: dict[str, str]) -> dict
 
     outputs = stage_7_annotate_contacts.run(runRecord)
     runRecord.mark_progress(StageName.STAGE_7_ANNOTATE_CONTACTS, StageStatus.COMPLETE, outputs=outputs)
+    return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_8_result(
+    runRecord: RunRecord, stage_6_result: dict[str, str], stage_7_result: dict[str, str]
+) -> dict[str, str]:
+    if not SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    from pipeline.stages import stage_8_optimize_hoi
+
+    outputs = stage_8_optimize_hoi.run(runRecord)
+    runRecord.mark_progress(StageName.STAGE_8_OPTIMIZE_HOI, StageStatus.COMPLETE, outputs=outputs)
     return outputs
