@@ -46,7 +46,7 @@ class StageName(enum.StrEnum):
     STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale", 6
     STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect contact points", 7
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize human-object interaction", 8
-    STAGE_9_EXPORT_FBX = "export_fbx", "stage 9: export animation", 9
+    STAGE_9_EXPORT = "export", "stage 9: export animation", 9
 
 
 class StageStatus(enum.StrEnum):
@@ -390,7 +390,7 @@ class StageRecord:
 
 @dataclass
 class RunOutputs:
-    final_fbx: str | None = None
+    final_blend: str | None = None
 
 
 @dataclass

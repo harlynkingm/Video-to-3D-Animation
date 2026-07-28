@@ -68,6 +68,25 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
         StageName.STAGE_1_MASK_AND_TRACK,
         StageName.STAGE_5_RETARGET_HANDS,
     ],
+    # optimize_hoi solves the tracked object's own per-frame pose: rigidly
+    # attached to a body joint during a qualifying contact event (needs
+    # annotate_contacts), against the object's fitted shape and the scale/
+    # translation that reconciles depth with the body (needs
+    # align_scene_scale). It never touches retarget_hands directly -- the
+    # body/hand motion is trusted as-is, not refined.
+    StageName.STAGE_8_OPTIMIZE_HOI: [
+        StageName.STAGE_6_ALIGN_SCENE_SCALE,
+        StageName.STAGE_7_ANNOTATE_CONTACTS,
+    ],
+    # export also reads retarget_hands' body motion (stage 5) and
+    # align_scene_scale's object shape (stage 6) directly, but doesn't list
+    # either here -- optimize_hoi (its only real dependency now, for the
+    # object's real per-frame pose) already transitively guarantees both are
+    # complete by the time it finishes: directly via align_scene_scale, and
+    # via annotate_contacts -> retarget_hands.
+    StageName.STAGE_9_EXPORT: [
+        StageName.STAGE_8_OPTIMIZE_HOI,
+    ],
 }
 
 

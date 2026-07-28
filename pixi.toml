@@ -7,22 +7,35 @@ version = "0.1.0"
 
 [tasks]
 
+# Runs the full suite across both environments -- most stages' tests live in
+# `main`, but stage 9's own tests (tests/test_stage_9_export.py) need bpy
+# and only run under `export`. Every other test module imports torch/cv2/
+# etc. at its own top level (unguarded), so `export` must target stage 9's
+# file specifically -- collecting the whole `tests/` dir under that env errors
+# out before running anything. Chained with `;`, not `&&`, so a failure in one
+# environment doesn't hide the other environment's results.
+[tasks.test]
+cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python -m pytest tests/test_stage_9_export.py"
+
 [dependencies]
 
-# fbx-export: the export_fbx pipeline stage. Isolated in its own environment
-# because bpy pins Python tightly to its own release, independent of the rest
-# of the ML stack. Sourced from the pozzettiandrea conda channel (not PyPI's
-# bpy package) because it's already proven working on Python 3.13 via
-# ComfyUI Desktop's own pixi-managed environments on this machine.
-[feature.fbx-export.dependencies]
+# export: the final export pipeline stage (writes output.blend). Isolated in
+# its own environment because bpy pins Python tightly to its own release,
+# independent of the rest of the ML stack. Sourced from the pozzettiandrea
+# conda channel (not PyPI's bpy package) because it's already proven working
+# on Python 3.13 via ComfyUI Desktop's own pixi-managed environments on this
+# machine.
+[feature.export.dependencies]
 python = "3.13.*"
+pytest = ">=7.0"
+scipy = "*"
 
-[feature.fbx-export.dependencies.bpy]
+[feature.export.dependencies.bpy]
 version = "*"
 channel = "pozzettiandrea"
 
-[environments.fbx-export]
-features = ["fbx-export"]
+[environments.export]
+features = ["export"]
 no-default-feature = true
 
 # main: the shared environment for most pipeline stages (GVHMR, SAM 3.1, etc.).

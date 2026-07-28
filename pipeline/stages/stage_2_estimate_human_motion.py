@@ -12,7 +12,7 @@ already-installed `jtesch/smplx_blender_addon`'s own "Add Animation" operator
 (`anim_format="AMASS"`) for visual verification against a real, correctly-shaped
 and -posed SMPL-X body, not just raw numbers. This is not a from-scratch export
 format: it's the exact input format that operator (and eventually this
-project's own FBX-export stage) already expects, so writing it here is a small
+project's own export stage) already expects, so writing it here is a small
 step, not new infrastructure.
 """
 

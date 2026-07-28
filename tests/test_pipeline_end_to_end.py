@@ -73,9 +73,9 @@ def test_full_pipeline_runs_end_to_end(tmp_path):
     this keeps up automatically as new stages ship (a hardcoded list here had
     already silently stopped at stage 6, missing stage 7 entirely).
 
-    Deliberately excludes `export_fbx`: it needs `bpy` from a separate pixi
+    Deliberately excludes `export`: it needs `bpy` from a separate pixi
     environment this test's `sys.executable` (the `main` env's own
-    interpreter) can't provide -- see `tests/test_stage_9_export_fbx.py` for
+    interpreter) can't provide -- see `tests/test_stage_9_export.py` for
     its own dedicated, appropriately-gated coverage.
     """
     run_dir = tmp_path / "run"
@@ -83,7 +83,7 @@ def test_full_pipeline_runs_end_to_end(tmp_path):
     assert created.returncode == 0, created.stderr
 
     for stage in ORDERED_STAGES:
-        if stage == StageName.STAGE_9_EXPORT_FBX:
+        if stage == StageName.STAGE_9_EXPORT:
             continue
         result = _run_stage(stage_module_name(stage), run_dir)
         assert result.returncode == 0, result.stderr

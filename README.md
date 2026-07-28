@@ -1,5 +1,5 @@
 # Video to 3D Motion Capture Animation
-Uses SAM3, GVHMR, DepthAnything, and 4DHOI to convert any video with a human and object to a 3D FBX file, generating human and object motion capture animation.
+Uses SAM3, GVHMR, DepthAnything, and 4DHOI to convert any video with a human and object to a Blender file, generating human and object motion capture animation.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Run any script from this project with `pixi run -e <environment> python ...`
 Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
 
 - `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
-- `fbx-export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
+- `export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
 </details>
 
 ## Setup
@@ -125,8 +125,8 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 5. Retarget hands | `stage_5_retarget_hands` | `motion/human_motion.pt` <br> `hands/hand_pose.npz` | `retarget/retargeted_motion.pt` <br> `retarget/retarget_preview.bvh` (optional) |
 | 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy` <br> `motion/human_motion.pt` <br> `masks/human.pt` <br> `masks/object.pt` (optional) | `scale/scene_scale.json` <br> `scale/object_shape.json` (if an object was tracked) <br> `scale/scene_preview.ply` (optional) |
 | 7. Annotate contacts | `stage_7_annotate_contacts` | `retarget/retargeted_motion.pt` <br> `masks/object.pt` | `contacts/contact_events.json` <br> `contacts/contacts_preview/*.jpg` (optional) |
-| 8. Optimize HOI *(not yet implemented)* | `stage_8_optimize_hoi` | contact points <br> object proxy shape | refined SMPL-X sequence <br> per-frame object 6DoF pose |
-| 9. Export FBX *(not yet implemented)* | `stage_9_export_fbx` | refined SMPL-X sequence <br> object pose | final `.fbx` |
+| 8. Optimize human-object interaction | `stage_8_optimize_hoi` | `contacts/contact_events.json` <br> `scale/object_shape.json` <br> `scale/scene_scale.json` <br> `retarget/retargeted_motion.pt` | `hoi/object_pose.pt` <br> `hoi/object_pose.npz` |
+| 9. Export animation | `stage_9_export` | `retarget/retargeted_motion.npz` <br> `scale/object_shape.json` (if an object was tracked) <br> `hoi/object_pose.npz` (if an object was tracked) | `output.blend` |
 
 </details>
 
@@ -291,9 +291,23 @@ Detects contact points between the body and object across 8 body regions. The ma
 Use `--render-contacts-preview` when creating the run to also have this stage write `runs/my_clip/contacts/contacts_preview/` This saves one JPEG per contact event named `{peak_confidence_frame:06d}_{regions-joined-by-plus}.jpg`. Each image is the source frame at that event's most-confident moment, with a circle drawn around the joint that triggered it.
 </details>
 
-### Stage 8, 9. Optimization, FBX export
+### Stage 8. Optimize human-object interaction
 
-Not yet implemented.
+```bash
+pixi run -e main python -m pipeline.stages.stage_8_optimize_hoi -o runs/my_clip
+```
+
+If an object was tracked, attach it to a body region if a hold was detected for a duration of time. Writes the object positional animation to `runs/my_clip/hoi/object_pose.npz`
+
+### Stage 9. Export
+
+```bash
+pixi run -e export python -m pipeline.stages.stage_9_export -o runs/my_clip
+```
+
+Combine the body+hands motion with the animated object into a single `runs/my_clip/output.blend` file.
+
+**Note:** This runs in a separate, `export` pixi environment (the main environment still executes it as a subprocess).
 
 ### Pausing and Resuming a Run
 
@@ -346,7 +360,14 @@ If you want to tune the amount of smoothing, edit these fields in the run's `pro
 `tests/` contains whole-stage regression tests, one file per implemented stage, plus a full end-to-end test. Tests are run against a small (20-frame) committed test clip (`tests/assets/tiny_tennis_clip.mp4`). Each test runs the real stage and checks that its outputs look correct.
 
 ```bash
+pixi run test
+```
+
+Stage 9's tests (`tests/test_stage_9_export.py`) need the `bpy` module and only run under the `export` environment. To run either environment's tests:
+
+```bash
 pixi run -e main python -m pytest tests/
+pixi run -e export python -m pytest tests/test_stage_9_export.py
 ```
 
 Stage tests require the real SAM 3.1/GVHMR checkpoints and a CUDA GPU (see [Setup](#setup)). If either are missing, tests are skipped, not failed.

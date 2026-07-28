@@ -54,14 +54,14 @@ def _fake_load_stage_run(calls: list[StageName]):
     return load
 
 
-def _fake_run_in_fbx_export_env(calls: list[StageName]):
-    """Stands in for the real `_run_in_fbx_export_env` (which shells out to a
+def _fake_run_in_export_env(calls: list[StageName]):
+    """Stands in for the real `_run_in_export_env` (which shells out to a
     separate pixi environment/subprocess) so plumbing-only tests don't need
     that environment installed. Marks the stage complete itself, mirroring
     what the real subprocess's own `cli_entrypoint`/`run_stage` would do."""
     def fake(runRecord: RunRecord) -> None:
-        calls.append(StageName.STAGE_9_EXPORT_FBX)
-        runRecord.mark_progress(StageName.STAGE_9_EXPORT_FBX, StageStatus.COMPLETE, outputs={})
+        calls.append(StageName.STAGE_9_EXPORT)
+        runRecord.mark_progress(StageName.STAGE_9_EXPORT, StageStatus.COMPLETE, outputs={})
     return fake
 
 
@@ -76,7 +76,7 @@ def test_run_pipeline_runs_every_stage_when_no_bound_given(tmp_path, monkeypatch
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
-    monkeypatch.setattr(run_pipeline_module, "_run_in_fbx_export_env", _fake_run_in_fbx_export_env(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_in_export_env", _fake_run_in_export_env(calls))
 
     run_pipeline_module.run_pipeline(runRecord)
 
@@ -100,7 +100,7 @@ def test_run_pipeline_clamps_a_stop_after_stage_beyond_what_is_implemented(tmp_p
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
     monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
-    monkeypatch.setattr(run_pipeline_module, "_run_in_fbx_export_env", _fake_run_in_fbx_export_env(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_in_export_env", _fake_run_in_export_env(calls))
 
     run_pipeline_module.run_pipeline(runRecord, stop_after_stage=99)
 
@@ -217,9 +217,9 @@ pytestmark_end_to_end = pytest.mark.skipif(
 
 @pytestmark_end_to_end
 def test_pipeline_run_end_to_end(tmp_path):
-    """Capped at stage 7 -- `export_fbx` needs `bpy` from a separate pixi
+    """Capped at stage 7 -- `export` needs `bpy` from a separate pixi
     environment this test's own `main`-env interpreter can't provide (see
-    `tests/test_stage_9_export_fbx.py` for its own dedicated coverage)."""
+    `tests/test_stage_9_export.py` for its own dedicated coverage)."""
     run_dir = tmp_path / "run"
     result = subprocess.run(
         [

@@ -112,7 +112,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     torch.save(merged, motion_path)
 
     # A plain-numpy companion to the .pt above -- not a preview, a real
-    # interchange format for the one downstream consumer (export_fbx) that
+    # interchange format for the one downstream consumer (export) that
     # runs in a separate environment with no torch installed at all.
     motion_npz_path = retarget_dir / RETARGET_MOTION_NPZ_FILENAME
     np.savez(motion_npz_path, **{key: value.numpy() for key, value in merged.items()})
