@@ -68,6 +68,23 @@ def stage_module_name(stage_name: StageName) -> str:
     return f"pipeline.stages.stage_{stage_name.stage_number}_{stage_name.value}"
 
 
+def _run_subprocess_tolerating_crash_after_success(
+    cmd: list[str], progress_dir: Path, stage_name: StageName,
+) -> None:
+    """Runs a stage's own CLI entrypoint and raises only if the stage didn't
+    actually complete. A subprocess can crash during its own interpreter
+    teardown *after* already saving its real output and marking the stage
+    complete in `progress.json` -- `bpy` in particular is known to sometimes
+    do this on exit, well after the export stage's own `run()` has already
+    returned successfully. Judging success by the subprocess's exit code
+    alone would treat that the same as a genuine mid-stage failure; checking
+    `progress.json`'s own recorded status instead tells the two apart.
+    """
+    result = subprocess.run(cmd, cwd=_REPO_ROOT)
+    if result.returncode != 0 and not RunRecord.load(progress_dir).is_complete(stage_name):
+        result.check_returncode()
+
+
 def _run_stage_subprocess(stage_name: StageName, progress_dir: Path, force: bool) -> None:
     """Runs one stage's own CLI entrypoint (`cli_entrypoint`/`run_stage`) as a
     fresh subprocess under this same `main`-env interpreter -- that
@@ -77,7 +94,7 @@ def _run_stage_subprocess(stage_name: StageName, progress_dir: Path, force: bool
     cmd = [sys.executable, "-m", stage_module_name(stage_name), "--output-dir", str(progress_dir)]
     if force:
         cmd.append("--force")
-    subprocess.run(cmd, check=True, cwd=_REPO_ROOT)
+    _run_subprocess_tolerating_crash_after_success(cmd, progress_dir, stage_name)
 
 
 def _run_export_subprocess(progress_dir: Path, force: bool) -> None:
@@ -93,7 +110,7 @@ def _run_export_subprocess(progress_dir: Path, force: bool) -> None:
            "--output-dir", str(progress_dir)]
     if force:
         cmd.append("--force")
-    subprocess.run(cmd, check=True, cwd=_REPO_ROOT)
+    _run_subprocess_tolerating_crash_after_success(cmd, progress_dir, StageName.STAGE_9_EXPORT)
 
 
 def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None, force_all: bool = False) -> None:

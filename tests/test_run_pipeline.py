@@ -124,6 +124,28 @@ def test_run_pipeline_passes_force_through_to_each_stage_subprocess(tmp_path, mo
     assert seen_force and all(seen_force)
 
 
+def test_run_stage_subprocess_tolerates_a_crash_after_the_stage_already_completed(tmp_path, monkeypatch):
+    """Regression test: a stage's own subprocess (`bpy` in particular is
+    known to do this) can crash during its own interpreter teardown *after*
+    already saving its real output and marking the stage complete in
+    `progress.json` -- that shouldn't be treated as a failure."""
+    runRecord = _make_runRecord(tmp_path)
+    runRecord.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs={"fake": "output"})
+    monkeypatch.setattr(
+        subprocess, "run", lambda cmd, **kwargs: subprocess.CompletedProcess(args=cmd, returncode=3221225477)
+    )
+
+    run_pipeline_module._run_stage_subprocess(StageName.STAGE_0_INGEST_VIDEO, runRecord.progress_dir, force=False)
+
+
+def test_run_stage_subprocess_still_raises_when_the_stage_never_completed(tmp_path, monkeypatch):
+    runRecord = _make_runRecord(tmp_path)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kwargs: subprocess.CompletedProcess(args=cmd, returncode=1))
+
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pipeline_module._run_stage_subprocess(StageName.STAGE_0_INGEST_VIDEO, runRecord.progress_dir, force=False)
+
+
 def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeypatch, capsys):
     progress_dir = tmp_path / "run"
     original = create_run(

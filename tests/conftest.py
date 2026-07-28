@@ -15,20 +15,43 @@ rather than failing when either is missing, so this suite still runs
 auto-downloads on first use (see depth_anything3_adapter.py), so its fixture
 only gates on a CUDA GPU, not on the checkpoint already being present.
 
-Each stage module is imported *inside* its own fixture, not at the top of this
-file, deliberately: every stage module imports its adapter at that module's own
-top level (e.g. `stage_3_estimate_depth` imports `depth_anything3_adapter`,
-which pulls in `depth_anything_3` and transitively `xformers`), and a plain
+Stages 1-4 (mask_and_track, estimate_human_motion, estimate_depth,
+estimate_hands) each load a separately-compiled native/CUDA model stack (SAM
+3.1, GVHMR, DepthAnything3, HaMeR respectively). Loading more than one of
+these into a single long-lived process -- which is what session-scoped
+fixtures calling each stage's `run()` directly would do, since later stages'
+fixtures depend on earlier ones already having run in this same pytest
+session -- has been observed to segfault deep inside torch (see
+`pipeline/run.py`'s own module docstring for the full story; the same crash
+class shows up there when `pipeline.run` calls stages in-process). Their
+fixtures below run the real stage through `pipeline.run`'s own
+`_run_stage_subprocess` instead, exactly the same per-stage subprocess
+dispatch a real user's `pipeline.run` invocation goes through, so this
+process itself only ever holds torch (for reading saved tensors back) and
+never any of those heavier stacks directly. Stages 5-8 don't load a heavy
+model of their own (light numpy/torch math against already-computed stage
+1-4 output), so they still run in-process.
+
+Each of those still-in-process stage modules (0, 5, 6, 7, 8) is imported
+*inside* its own fixture, not at the top of this file, deliberately: a plain
 CPU-only machine (no NVIDIA driver at all -- not just "no GPU", a genuinely
 different situation from a dev machine that always has a real driver present)
-turned out unable to even *import* one of those packages without crashing
-natively -- no Python exception, no traceback, just an instant, silent process
-death. Importing all six stage modules unconditionally at collection time (as
-this file used to) forced that crash on every CI run, before any test's own
-skip-gate on `torch.cuda.is_available()` ever got a chance to run. Deferring
-each import into its own fixture means a driver-less machine only ever imports
-`stage_0_ingest_video` (needs no heavy ML libraries) for real; every other
-stage's risky import happens only after that fixture's own GPU check passes.
+turned out unable to even *import* some of these adapters' transitive
+dependencies without crashing natively -- no Python exception, no traceback,
+just an instant, silent process death. Importing every stage module
+unconditionally at collection time (as this file used to) forced that crash
+on every CI run, before any test's own skip-gate on `torch.cuda.is_available()`
+ever got a chance to run. Deferring each import into its own fixture means a
+driver-less machine only ever imports `stage_0_ingest_video` (needs no heavy
+ML libraries) for real.
+
+`torch` itself is deferred the same way, for the same reason at one level up:
+`tests/test_stage_9_export.py` runs under the separate `export` pixi
+environment, which has no torch installed at all (kept minimal on purpose --
+see `pixi.toml`), but pytest loads this conftest.py regardless of which test
+file it's collecting. A missing torch only actually matters to the fixtures
+below that call `torch.cuda.is_available()`, none of which stage 9's own
+tests ever request.
 """
 
 from __future__ import annotations
@@ -36,11 +59,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import torch
 
 from pipeline.create_run import create_run
 from pipeline.progress_tracker import RunRecord, RunInput, StageName, StageStatus
-from pipeline.run import ORDERED_STAGES
+from pipeline.run import ORDERED_STAGES, _run_stage_subprocess
+
+try:
+    import torch
+except ImportError:  # e.g. the export env -- see module docstring
+    torch = None
 
 TESTS_DIR = Path(__file__).parent
 TEST_VIDEO_PATH = TESTS_DIR / "assets" / "tiny_tennis_clip.mp4"
@@ -59,6 +86,22 @@ def assert_stages_complete(progress_json: dict, through: StageName | None = None
     stages = ORDERED_STAGES if through is None else ORDERED_STAGES[:ORDERED_STAGES.index(through) + 1]
     for stage in stages:
         assert progress_json["stages"][stage.value]["status"] == "complete", f"{stage.value} did not complete"
+
+
+def _run_heavy_stage(runRecord: RunRecord, stage_name: StageName) -> dict[str, str]:
+    """Runs one of stages 1-4 the same way a real user's `pipeline.run` does
+    -- as its own subprocess -- rather than importing and calling `run()`
+    directly in this pytest process; see this file's own module docstring
+    for why. `runRecord` is mutated in place (not just returned) via
+    `__dict__.update` from the subprocess's own saved `progress.json`, since
+    every fixture/test downstream already holds a reference to this exact
+    session-scoped object, not just this function's own return value --
+    e.g. stage 1 setting `scene.anchor_frame_index` needs to reach them too.
+    """
+    _run_stage_subprocess(stage_name, runRecord.progress_dir, force=False)
+    reloaded = RunRecord.load(runRecord.progress_dir)
+    runRecord.__dict__.update(reloaded.__dict__)
+    return runRecord.stages[stage_name].outputs
 
 # The exact frame count and resolution of the committed test clip (frames
 # 73-92 of the reference tennis clip used throughout this project's own
@@ -126,11 +169,7 @@ def stage_1_result(runRecord: RunRecord, stage_0_result: dict[str, str]) -> dict
     if not SAM31_CHECKPOINT.exists():
         pytest.skip("needs the SAM 3.1 checkpoint (see README's Setup section)")
 
-    from pipeline.stages import stage_1_mask_and_track
-
-    outputs = stage_1_mask_and_track.run(runRecord)
-    runRecord.mark_progress(StageName.STAGE_1_MASK_AND_TRACK, StageStatus.COMPLETE, outputs=outputs)
-    return outputs
+    return _run_heavy_stage(runRecord, StageName.STAGE_1_MASK_AND_TRACK)
 
 
 @pytest.fixture(scope="session")
@@ -141,11 +180,7 @@ def stage_2_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict
     if missing:
         pytest.skip(f"needs the GVHMR checkpoints (missing: {missing}; see README's Setup section)")
 
-    from pipeline.stages import stage_2_estimate_human_motion
-
-    outputs = stage_2_estimate_human_motion.run(runRecord)
-    runRecord.mark_progress(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.COMPLETE, outputs=outputs)
-    return outputs
+    return _run_heavy_stage(runRecord, StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
 
 
 @pytest.fixture(scope="session")
@@ -153,11 +188,7 @@ def stage_3_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict
     if not torch.cuda.is_available():
         pytest.skip("needs a CUDA GPU")
 
-    from pipeline.stages import stage_3_estimate_depth
-
-    outputs = stage_3_estimate_depth.run(runRecord)
-    runRecord.mark_progress(StageName.STAGE_3_ESTIMATE_DEPTH, StageStatus.COMPLETE, outputs=outputs)
-    return outputs
+    return _run_heavy_stage(runRecord, StageName.STAGE_3_ESTIMATE_DEPTH)
 
 
 @pytest.fixture(scope="session")
@@ -177,11 +208,7 @@ def stage_4_result(
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
 
-    from pipeline.stages import stage_4_estimate_hands
-
-    outputs = stage_4_estimate_hands.run(runRecord)
-    runRecord.mark_progress(StageName.STAGE_4_ESTIMATE_HANDS, StageStatus.COMPLETE, outputs=outputs)
-    return outputs
+    return _run_heavy_stage(runRecord, StageName.STAGE_4_ESTIMATE_HANDS)
 
 
 @pytest.fixture(scope="session")
