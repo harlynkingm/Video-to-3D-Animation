@@ -22,11 +22,14 @@ from pipeline.stages.stage_7_annotate_contacts import (
     DEPTH_GAP_OCCLUSION_THRESHOLD_M,
     LOW_CONFIDENCE_THRESHOLD,
     OUTPUT_CONTACTS_PREVIEW,
+    SUSTAINED_CONTACT_DURATION_SECONDS,
     _LazyMaskLoader,
     _event_to_dict,
     _render_contacts_preview,
     _verify_events_with_depth,
 )
+
+FPS = 30.0
 
 
 def test_contact_events_output_is_plausible(stage_7_result):
@@ -41,9 +44,7 @@ def test_contact_events_output_is_plausible(stage_7_result):
         assert 0 <= event["start_frame"] <= event["peak_frame"] <= event["end_frame"]
         assert 0.0 <= event["mean_confidence"] <= 1.0
         assert isinstance(event["is_low_confidence"], bool)
-        # A gap over threshold means confidently-occlusion -- _verify_events_with_depth
-        # drops those outright, so nothing surviving into the output should have one.
-        assert event["depth_gap_m"] is None or 0.0 <= event["depth_gap_m"] <= DEPTH_GAP_OCCLUSION_THRESHOLD_M
+        assert event["depth_gap_m"] is None or event["depth_gap_m"] >= 0.0
 
     # conftest.py's shared `progress` fixture turns render_contacts_preview on,
     # so this real run should have written exactly one JPEG per event.
@@ -66,7 +67,7 @@ def test_render_contacts_preview_writes_one_labeled_jpeg_per_event(tmp_path):
     )
 
     out_dir = tmp_path / "preview"
-    _render_contacts_preview([event], joints, K, frames_dir, out_dir)
+    _render_contacts_preview([event], joints, K, frames_dir, out_dir, FPS)
 
     written = list(out_dir.iterdir())
     assert len(written) == 1
@@ -91,7 +92,7 @@ def test_render_contacts_preview_skips_an_event_with_no_source_frame(tmp_path):
     )
 
     out_dir = tmp_path / "preview"
-    _render_contacts_preview([event], joints, K, frames_dir, out_dir)
+    _render_contacts_preview([event], joints, K, frames_dir, out_dir, FPS)
 
     assert list(out_dir.iterdir()) == []
 
@@ -116,7 +117,7 @@ def test_render_contacts_preview_clears_stale_images_from_a_previous_run(tmp_pat
         regions=["left_arm"], joint="wrist", start_frame=1, end_frame=5, peak_frame=3, mean_confidence=0.9,
     )
 
-    _render_contacts_preview([event], joints, K, frames_dir, out_dir)
+    _render_contacts_preview([event], joints, K, frames_dir, out_dir, FPS)
 
     written = list(out_dir.iterdir())
     assert not stale_file.exists()
@@ -138,7 +139,7 @@ def test_render_contacts_preview_joins_a_consolidated_event_regions_for_the_file
     )
 
     out_dir = tmp_path / "preview"
-    _render_contacts_preview([event], joints, K, frames_dir, out_dir)
+    _render_contacts_preview([event], joints, K, frames_dir, out_dir, FPS)
 
     written = list(out_dir.iterdir())
     assert len(written) == 1
@@ -150,7 +151,7 @@ def test_event_to_dict_sets_is_low_confidence_below_threshold():
         regions=["left_hand"], joint="wrist", start_frame=0, end_frame=5, peak_frame=2,
         mean_confidence=LOW_CONFIDENCE_THRESHOLD - 0.01,
     )
-    assert _event_to_dict(event)["is_low_confidence"] is True
+    assert _event_to_dict(event, FPS)["is_low_confidence"] is True
 
 
 def test_event_to_dict_is_not_low_confidence_when_confident_and_depth_verified():
@@ -158,7 +159,7 @@ def test_event_to_dict_is_not_low_confidence_when_confident_and_depth_verified()
         regions=["left_hand"], joint="wrist", start_frame=0, end_frame=5, peak_frame=2,
         mean_confidence=1.0, depth_gap_m=0.01,
     )
-    assert _event_to_dict(event)["is_low_confidence"] is False
+    assert _event_to_dict(event, FPS)["is_low_confidence"] is False
 
 
 def test_event_to_dict_is_not_low_confidence_when_depth_confirms_contact_despite_weak_2d_confidence():
@@ -170,7 +171,32 @@ def test_event_to_dict_is_not_low_confidence_when_depth_confirms_contact_despite
         regions=["right_hand"], joint="index_tip", start_frame=309, end_frame=319, peak_frame=312,
         mean_confidence=0.49, depth_gap_m=0.01,
     )
-    assert _event_to_dict(event)["is_low_confidence"] is False
+    assert _event_to_dict(event, FPS)["is_low_confidence"] is False
+
+
+def test_event_to_dict_flags_a_large_depth_gap_even_with_high_2d_confidence():
+    """A short event can't lean on sustained duration to rule out incidental
+    occlusion, so a large depth gap still applies even at high 2D confidence."""
+    event = ContactEvent(
+        regions=["right_hand"], joint="middle_tip", start_frame=0, end_frame=2, peak_frame=1,
+        mean_confidence=1.0, depth_gap_m=DEPTH_GAP_OCCLUSION_THRESHOLD_M + 0.01,
+    )
+    assert _event_to_dict(event, FPS)["is_low_confidence"] is True
+
+
+def test_event_to_dict_trusts_a_long_sustained_confident_event_despite_a_large_depth_gap():
+    """Real case from the pick-up-put-down-mug clip that motivated this: a
+    full grip commonly has the touching joint wrapped around/behind the
+    object's own near-facing mask surface, which a single frame's monocular
+    depth can read as a large gap even during unambiguous, sustained
+    contact. Duration + sustained high 2D confidence alone already rule out
+    incidental occlusion here, so the depth gap shouldn't override it."""
+    duration_frames = round(SUSTAINED_CONTACT_DURATION_SECONDS * FPS) + 1
+    event = ContactEvent(
+        regions=["right_hand"], joint="middle_tip", start_frame=0, end_frame=duration_frames - 1,
+        peak_frame=5, mean_confidence=LOW_CONFIDENCE_THRESHOLD, depth_gap_m=0.4,
+    )
+    assert _event_to_dict(event, FPS)["is_low_confidence"] is False
 
 
 class _FakeDepthAdapter:
@@ -191,11 +217,12 @@ class _FakeDepthAdapter:
         return {KEY_DEPTH: self._depth}
 
 
-def test_verify_events_with_depth_drops_occlusion_keeps_real_contact(tmp_path, monkeypatch):
-    """Regression test for the actual coffee-mug bug: a chest/leg event whose
-    object mask merely overlapped the body in 2D, with no real proximity in
-    depth, must be dropped outright rather than kept around flagged as
-    uncertain -- while a real hand-grip event (small depth gap) survives."""
+def test_verify_events_with_depth_never_drops_events_only_records_the_gap(tmp_path, monkeypatch):
+    """`_verify_events_with_depth` used to drop a large-depth-gap event
+    outright; it no longer does (see this module's docstring for why a large
+    gap isn't reliable evidence of incidental occlusion on its own) -- both
+    events must survive, each carrying its own measured `depth_gap_m` for
+    `_is_low_confidence` to interpret later."""
     native_hw = (20, 20)
     depth = np.ones(native_hw, dtype=np.float32)
     depth[0:3, 0:3] = 1.0    # frame 0's object region
@@ -227,9 +254,9 @@ def test_verify_events_with_depth_drops_occlusion_keeps_real_contact(tmp_path, m
         tmp_path, native_hw,
     )
 
-    assert len(survivors) == 1
-    assert survivors[0].regions == ["left_hand"]
-    assert survivors[0].depth_gap_m is not None and survivors[0].depth_gap_m <= DEPTH_GAP_OCCLUSION_THRESHOLD_M
+    assert survivors == [real_contact, occlusion]
+    assert real_contact.depth_gap_m is not None and real_contact.depth_gap_m <= DEPTH_GAP_OCCLUSION_THRESHOLD_M
+    assert occlusion.depth_gap_m is not None and occlusion.depth_gap_m > DEPTH_GAP_OCCLUSION_THRESHOLD_M
 
 
 def test_verify_events_with_depth_keeps_an_event_it_cannot_verify(tmp_path, monkeypatch):

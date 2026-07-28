@@ -20,17 +20,22 @@ a per-clip one -- to catch the one thing pure 2D-proximity can't: a body part
 passing in front of or behind the object in the image, with no actual
 contact, still overlaps its mask exactly like a real touch would.
 
-Human-in-the-loop, per this project's own philosophy (machine-triggered
-prompts only, never an open-ended manual review pile): a large depth gap is
-not ambiguous -- it's DA3 confidently saying the object and body were never
-actually close -- so `_verify_events_with_depth` drops that event outright
-rather than keeping it around flagged as uncertain. Conversely, a small gap is
-strong positive evidence of contact and overrides a merely-noisy 2D
-confidence score, so `_event_to_dict` only sets `is_low_confidence` when the 2D
-confidence is low AND depth verification couldn't settle it either way (no
-mask that frame). If `RunInput.render_contacts_preview` is set, also writes
-one annotated JPEG per surviving event (see `_render_contacts_preview`) as a
-visual spot-check of the same signal.
+A large depth gap does NOT necessarily mean incidental occlusion, though: a
+real grip commonly wraps the touching joint around or behind the object's
+near-facing visible surface (the surface its own mask actually shows), which
+a single frame's monocular depth can read as a genuine multi-centimeter gap
+even during unambiguous, sustained contact. So `_verify_events_with_depth`
+never drops an event outright on a large gap -- it flags it
+`is_low_confidence` instead (same flag a low, unsettled 2D confidence score
+gets), leaving the actual accept/reject call to whatever consumes that flag,
+rather than silently discarding real interactions the depth check got wrong.
+A small gap remains strong positive evidence of contact and overrides a
+merely-noisy 2D confidence score. If `RunInput.render_contacts_preview` is
+set, also writes one annotated JPEG per event (see
+`_render_contacts_preview`), colored and labeled with its confidence
+percentage, as a visual spot-check of the same signal -- low-confidence
+events are still used exactly like any other event, this is purely for a
+human who chooses to go look.
 """
 
 from __future__ import annotations
@@ -80,9 +85,12 @@ CONTACTS_DIRNAME = f"stage{StageName.STAGE_7_ANNOTATE_CONTACTS.stage_number}_con
 CONTACT_EVENTS_FILENAME = "contact_events.json"
 CONTACTS_PREVIEW_DIRNAME = "contacts_preview"
 
-# Preview circle styling -- BGR (cv2's own channel order), a bright cyan/orange
-# that reads clearly against most skin tones and object colors alike.
+# Preview circle/text styling -- BGR (cv2's own channel order). A normal event
+# gets a bright cyan/orange that reads clearly against most skin tones and
+# object colors alike; a low-confidence one gets a distinct red so it stands
+# out as worth a second look while flipping through the preview folder.
 CONTACT_PREVIEW_CIRCLE_COLOR = (0, 220, 255)
+CONTACT_PREVIEW_CIRCLE_COLOR_LOW_CONFIDENCE = (0, 0, 255)
 CONTACT_PREVIEW_CIRCLE_RADIUS = 12
 CONTACT_PREVIEW_CIRCLE_THICKNESS = 3
 
@@ -91,19 +99,35 @@ OUTPUT_CONTACT_EVENTS = "contact_events"
 OUTPUT_CONTACTS_PREVIEW = "contacts_preview"
 
 # Below this mean confidence, an event is flagged as low-confidence rather than
-# trusted outright -- see this module's docstring for why there's no actual
-# interactive prompt here, just a passive data flag.
+# trusted outright -- purely a passive data flag (see this module's docstring),
+# not a gate on whether the event gets used.
 LOW_CONFIDENCE_THRESHOLD = 0.85
 
-# Beyond this metric depth gap (meters), a 2D-detected event is confidently
-# incidental occlusion, not real contact (see depth_gap_for_joint's own
-# docstring), and _verify_events_with_depth drops it outright -- DA3 has
-# already resolved the ambiguity, so there's nothing left to review. At or
-# below it, the gap is treated as confirming real contact, which overrides a
-# merely-noisy 2D confidence score in `_event_to_dict`. An initial estimate:
-# on real test data, genuine contact measured 0.01-0.05m and false-positive
-# occlusion measured 0.25-1.7m, a wide enough margin that this cutoff isn't
-# finely tuned -- revisit if a real clip ever lands in between.
+# An event whose 2D mask overlap stays at/above LOW_CONFIDENCE_THRESHOLD for at
+# least this long is trusted outright, without the depth gap able to override
+# it -- a person's body part briefly passing in front of/behind a stationary
+# object is implausible to hold that level of sustained overlap this long, so
+# duration + confidence alone already rule out the incidental-occlusion case
+# depth verification exists to catch (see this module's docstring for why the
+# depth gap itself is unreliable for a real full-grip contact). Well above
+# `stage_8_optimize_hoi.MIN_ATTACHMENT_DURATION_SECONDS` (which only filters
+# brief kicks/collisions, a different concern). An initial estimate, same
+# caveat as the other thresholds here: not yet calibrated against footage with
+# a real brief incidental occlusion to find where this should actually sit.
+SUSTAINED_CONTACT_DURATION_SECONDS = 1.0
+
+# Beyond this metric depth gap (meters), a 2D-detected event reads as
+# confidently incidental occlusion by depth alone (see depth_gap_for_joint's
+# own docstring) -- but a real grip's own near-side-of-object-vs-wrapped-
+# behind-it geometry can trigger this just as easily as an actual pass-through
+# occlusion can (see this module's docstring), so this only ever flags
+# `is_low_confidence`, never drops the event. At or below it, the gap is
+# treated as confirming real contact, which overrides a merely-noisy 2D
+# confidence score in `_event_to_dict`. An initial estimate: on real test
+# data, genuine contact measured 0.01-0.05m and false-positive occlusion
+# measured 0.25-1.7m -- but real full-grip contact on other footage has also
+# measured up to ~0.39m, overlapping that same "occlusion" range, so this
+# cutoff alone can't reliably separate the two on its own.
 DEPTH_GAP_OCCLUSION_THRESHOLD_M = 0.15
 
 
@@ -174,10 +198,24 @@ class _LazyMaskLoader:
         ).astype(bool)
 
 
-def _event_to_dict(event: ContactEvent) -> dict:
-    depth_confirms_contact = event.depth_gap_m is not None and event.depth_gap_m <= DEPTH_GAP_OCCLUSION_THRESHOLD_M
-    is_low_confidence = event.mean_confidence < LOW_CONFIDENCE_THRESHOLD and not depth_confirms_contact
-    return {**asdict(event), "is_low_confidence": is_low_confidence}
+def _is_low_confidence(event: ContactEvent, fps: float) -> bool:
+    """A large depth gap flags an event as low-confidence -- unless the
+    event's own sustained 2D confidence already rules out incidental
+    occlusion on its own (see `SUSTAINED_CONTACT_DURATION_SECONDS`), in which
+    case the depth gap is ignored entirely rather than overriding strong 2D
+    evidence with an unreliable single-frame reading. Absent a depth reading
+    (mask missing that frame), falls back to 2D confidence alone; a small gap
+    overrides a merely-noisy 2D score."""
+    duration_frames = event.end_frame - event.start_frame + 1
+    if event.mean_confidence >= LOW_CONFIDENCE_THRESHOLD and duration_frames >= SUSTAINED_CONTACT_DURATION_SECONDS * fps:
+        return False
+    if event.depth_gap_m is None:
+        return event.mean_confidence < LOW_CONFIDENCE_THRESHOLD
+    return event.depth_gap_m > DEPTH_GAP_OCCLUSION_THRESHOLD_M
+
+
+def _event_to_dict(event: ContactEvent, fps: float) -> dict:
+    return {**asdict(event), "is_low_confidence": _is_low_confidence(event, fps)}
 
 
 def _verify_events_with_depth(
@@ -189,15 +227,15 @@ def _verify_events_with_depth(
     (never the whole clip): at each event's own peak_frame, runs
     Depth-Anything-3 fresh on just that one frame and measures the metric gap
     between the object and the body surface at the contact joint's
-    projection (`contact_detection.depth_gap_for_joint`). Returns the events
-    that survive: a gap over `DEPTH_GAP_OCCLUSION_THRESHOLD_M` means the 2D
-    mask overlap that triggered detection was confidently incidental
-    occlusion, not real contact, so that event is dropped outright rather
-    than kept around flagged as uncertain -- DA3 already resolved it, there's
-    nothing left to flag. An event whose masks were missing that frame
-    (can't verify either way) is kept as-is, its `depth_gap_m` left None, so
-    `_event_to_dict` falls back to confidence alone. Loads the DA3 model once
-    for the whole batch of events, not once per event.
+    projection (`contact_detection.depth_gap_for_joint`), stashing it on the
+    event as `depth_gap_m` for `_event_to_dict`/`_is_low_confidence` to read
+    later. Never drops an event -- see this module's docstring for why a
+    large gap isn't reliable evidence of incidental occlusion on its own; the
+    accept/reject call belongs to whatever consumes `is_low_confidence`, not
+    here. An event whose masks were missing that frame (can't verify either
+    way) is left with `depth_gap_m` at None, so `_is_low_confidence` falls
+    back to 2D confidence alone. Loads the DA3 model once for the whole batch
+    of events, not once per event.
     """
     if not events:
         return events
@@ -206,13 +244,11 @@ def _verify_events_with_depth(
     adapter = DepthAnything3Adapter()
     adapter.load()
     try:
-        survivors = []
         for event in events:
             frame = event.peak_frame
             object_mask = object_masks[frame]
             human_mask = human_masks[frame]
             if object_mask is None or human_mask is None:
-                survivors.append(event)
                 continue
 
             frame_path = frames_dir / f"{frame:06d}.jpg"
@@ -225,16 +261,13 @@ def _verify_events_with_depth(
             joint_id = REGION_JOINTS[region][REGION_JOINT_NAMES[region].index(event.joint)]
             joint_pixel = project_to_pixels(joints[frame, joint_id:joint_id + 1], K)[0]
             event.depth_gap_m = depth_gap_for_joint(depth, object_mask, human_mask, joint_pixel)
-            if event.depth_gap_m is not None and event.depth_gap_m > DEPTH_GAP_OCCLUSION_THRESHOLD_M:
-                continue  # confidently occlusion, not contact -- drop
-            survivors.append(event)
     finally:
         adapter.unload()
-    return survivors
+    return events
 
 
 def _render_contacts_preview(
-    events: list[ContactEvent], joints: np.ndarray, K: np.ndarray, frames_dir: Path, out_dir: Path,
+    events: list[ContactEvent], joints: np.ndarray, K: np.ndarray, frames_dir: Path, out_dir: Path, fps: float,
 ) -> None:
     """One annotated JPEG per contact event, at that event's own peak-
     confidence frame -- a human-reviewable spot-check, since this stage has no
@@ -242,7 +275,11 @@ def _render_contacts_preview(
     Draws a circle around whichever candidate joint triggered the event,
     projected to its actual pixel location via the same intrinsics used for
     detection, on top of the real source frame (stage 0's own extracted
-    frames, not a mask or a rendered scene).
+    frames, not a mask or a rendered scene). Labeled with the event's own
+    mean confidence as a percentage, and colored/marked distinctly when
+    `is_low_confidence` -- purely a visual aid for a human who chooses to
+    look, not a gate on which events actually get used (see this module's
+    docstring).
 
     Clears out `out_dir` first: unlike this stage's other outputs, the number
     of preview images is data-dependent (one per surviving event), so a
@@ -261,12 +298,20 @@ def _render_contacts_preview(
         if image is None:
             continue
 
+        low_confidence = _is_low_confidence(event, fps)
+        color = CONTACT_PREVIEW_CIRCLE_COLOR_LOW_CONFIDENCE if low_confidence else CONTACT_PREVIEW_CIRCLE_COLOR
+
         center = (int(round(pixel[0])), int(round(pixel[1])))
-        cv2.circle(image, center, CONTACT_PREVIEW_CIRCLE_RADIUS, CONTACT_PREVIEW_CIRCLE_COLOR, CONTACT_PREVIEW_CIRCLE_THICKNESS)
+        cv2.circle(image, center, CONTACT_PREVIEW_CIRCLE_RADIUS, color, CONTACT_PREVIEW_CIRCLE_THICKNESS)
         label = f"{'+'.join(event.regions)} ({event.joint})"
+        confidence_label = f"confidence: {event.mean_confidence * 100:.0f}%"
+        if low_confidence:
+            confidence_label += " (LOW CONFIDENCE)"
+        text_origin = (center[0] + CONTACT_PREVIEW_CIRCLE_RADIUS + 4, center[1])
+        cv2.putText(image, label, text_origin, cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
         cv2.putText(
-            image, label, (center[0] + CONTACT_PREVIEW_CIRCLE_RADIUS + 4, center[1]),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.6, CONTACT_PREVIEW_CIRCLE_COLOR, 2, cv2.LINE_AA,
+            image, confidence_label, (text_origin[0], text_origin[1] + 22),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA,
         )
 
         out_path = out_dir / f"{event.peak_frame:06d}_{'+'.join(event.regions)}.jpg"
@@ -309,13 +354,13 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     contacts_dir = Path(runRecord.progress_dir) / CONTACTS_DIRNAME
     contacts_dir.mkdir(parents=True, exist_ok=True)
     events_path = contacts_dir / CONTACT_EVENTS_FILENAME
-    events_path.write_text(json.dumps([_event_to_dict(e) for e in events], indent=2))
+    events_path.write_text(json.dumps([_event_to_dict(e, runRecord.scene.fps) for e in events], indent=2))
 
     outputs = {OUTPUT_CONTACT_EVENTS: str(events_path)}
 
     if runRecord.input.render_contacts_preview and events and K is not None:
         preview_dir = contacts_dir / CONTACTS_PREVIEW_DIRNAME
-        _render_contacts_preview(events, joints, K, frames_dir, preview_dir)
+        _render_contacts_preview(events, joints, K, frames_dir, preview_dir, runRecord.scene.fps)
         outputs[OUTPUT_CONTACTS_PREVIEW] = str(preview_dir)
 
     return outputs
