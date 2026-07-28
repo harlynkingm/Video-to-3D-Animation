@@ -76,7 +76,7 @@ SMPLX_MODEL_TYPE = "smplx"
 SMPLX_GENDER = "neutral"
 SMPLX_NUM_BETAS = 10
 
-CONTACTS_DIRNAME = "contacts"
+CONTACTS_DIRNAME = f"stage{StageName.STAGE_7_ANNOTATE_CONTACTS.stage_number}_contacts"
 CONTACT_EVENTS_FILENAME = "contact_events.json"
 CONTACTS_PREVIEW_DIRNAME = "contacts_preview"
 

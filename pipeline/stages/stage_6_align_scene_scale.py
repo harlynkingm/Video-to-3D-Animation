@@ -60,7 +60,7 @@ POSE_AXIS_DIM = 3
 # stage_0_ingest_video.py's own output key, consumed here (only for the optional preview).
 FRAMES_DIR_OUTPUT_KEY = "frames_dir"
 
-SCALE_DIRNAME = "scale"
+SCALE_DIRNAME = f"stage{StageName.STAGE_6_ALIGN_SCENE_SCALE.stage_number}_scale"
 SCENE_SCALE_FILENAME = "scene_scale.json"
 OBJECT_SHAPE_FILENAME = "object_shape.json"
 SCENE_PREVIEW_FILENAME = "scene_preview.ply"

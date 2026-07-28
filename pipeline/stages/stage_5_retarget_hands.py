@@ -43,7 +43,7 @@ from ..stages.stage_4_estimate_hands import OUTPUT_HAND_POSE
 
 from ..helpers.progress_reporter import report_single_shot
 
-RETARGET_DIRNAME = "retarget"
+RETARGET_DIRNAME = f"stage{StageName.STAGE_5_RETARGET_HANDS.stage_number}_retarget"
 RETARGET_MOTION_FILENAME = "retargeted_motion.pt"
 RETARGET_MOTION_NPZ_FILENAME = "retargeted_motion.npz"
 RETARGET_PREVIEW_FILENAME = "retarget_preview.bvh"

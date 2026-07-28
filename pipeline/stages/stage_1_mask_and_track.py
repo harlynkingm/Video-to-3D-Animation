@@ -28,7 +28,7 @@ from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 
-MASKS_DIRNAME = "masks"
+MASKS_DIRNAME = f"stage{StageName.STAGE_1_MASK_AND_TRACK.stage_number}_masks"
 HUMAN_MASKS_FILENAME = "human.pt"
 OBJECT_MASKS_FILENAME = "object.pt"
 HUMAN_PREVIEW_DIRNAME = "preview_human"

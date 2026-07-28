@@ -38,7 +38,7 @@ from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 from .stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
 
-MOTION_DIRNAME = "motion"
+MOTION_DIRNAME = f"stage{StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.stage_number}_motion"
 HUMAN_MOTION_FILENAME = "human_motion.pt"
 MOTION_PREVIEW_FILENAME = "blender_preview.npz"
 

@@ -68,7 +68,7 @@ from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 # stage_0_ingest_video.py's own output key, consumed here.
 FRAMES_DIR_OUTPUT_KEY = "frames_dir"
 
-HANDS_DIRNAME = "hands"
+HANDS_DIRNAME = f"stage{StageName.STAGE_4_ESTIMATE_HANDS.stage_number}_hands"
 HAND_POSE_FILENAME = "hand_pose.npz"
 HANDS_PREVIEW_FILENAME = "hands_preview.bvh"
 

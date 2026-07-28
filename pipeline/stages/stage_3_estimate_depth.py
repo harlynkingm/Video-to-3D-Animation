@@ -26,7 +26,7 @@ from ..progress_tracker import RunRecord, StageName
 # stage_0_ingest_video.py's own output key, consumed here.
 FRAMES_DIR_OUTPUT_KEY = "frames_dir"
 
-DEPTH_DIRNAME = "depth"
+DEPTH_DIRNAME = f"stage{StageName.STAGE_3_ESTIMATE_DEPTH.stage_number}_depth"
 DEPTH_FILENAME = "anchor_depth.npy"
 POINTCLOUD_FILENAME = "anchor_pointcloud.ply"
 
