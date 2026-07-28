@@ -45,67 +45,83 @@ def _make_runRecord(tmp_path: Path) -> RunRecord:
     return create_run(tmp_path / "run", run_input, run_id="test")
 
 
-def _fake_load_stage_run(calls: list[StageName]):
-    def load(stage_name: StageName):
-        def fake_run(runRecord: RunRecord) -> dict[str, str]:
-            calls.append(stage_name)
-            return {}
-        return fake_run
-    return load
-
-
-def _fake_run_in_export_env(calls: list[StageName]):
-    """Stands in for the real `_run_in_export_env` (which shells out to a
-    separate pixi environment/subprocess) so plumbing-only tests don't need
-    that environment installed. Marks the stage complete itself, mirroring
-    what the real subprocess's own `cli_entrypoint`/`run_stage` would do."""
-    def fake(runRecord: RunRecord) -> None:
-        calls.append(StageName.STAGE_9_EXPORT)
-        runRecord.mark_progress(StageName.STAGE_9_EXPORT, StageStatus.COMPLETE, outputs={})
+def _fake_run_stage_subprocess(calls: list[StageName]):
+    """Stands in for the real `_run_stage_subprocess` (which shells out to a
+    real `python -m pipeline.stages...` subprocess) so plumbing-only tests
+    don't need any GPU/checkpoints. Marks the stage complete itself,
+    mirroring what the real subprocess's own `cli_entrypoint`/`run_stage`
+    would do -- reloading from disk first since that's genuinely a separate
+    process there, not the same `runRecord` object the test holds."""
+    def fake(stage_name: StageName, progress_dir: Path, force: bool) -> None:
+        calls.append(stage_name)
+        runRecord = RunRecord.load(progress_dir)
+        runRecord.mark_progress(stage_name, StageStatus.COMPLETE, outputs={})
     return fake
 
 
-def test_load_stage_run_resolves_the_real_stage_module():
-    from pipeline.stages import stage_0_ingest_video
-
-    run = run_pipeline_module._load_stage_run(StageName.STAGE_0_INGEST_VIDEO)
-    assert run is stage_0_ingest_video.run
+def _fake_run_export_subprocess(calls: list[StageName]):
+    """Same idea as `_fake_run_stage_subprocess`, for `_run_export_subprocess`
+    (the separate `pixi run -e export` dispatch stage 9 needs)."""
+    def fake(progress_dir: Path, force: bool) -> None:
+        calls.append(StageName.STAGE_9_EXPORT)
+        runRecord = RunRecord.load(progress_dir)
+        runRecord.mark_progress(StageName.STAGE_9_EXPORT, StageStatus.COMPLETE, outputs={})
+    return fake
 
 
 def test_run_pipeline_runs_every_stage_when_no_bound_given(tmp_path, monkeypatch):
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
-    monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
-    monkeypatch.setattr(run_pipeline_module, "_run_in_export_env", _fake_run_in_export_env(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_stage_subprocess", _fake_run_stage_subprocess(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_export_subprocess", _fake_run_export_subprocess(calls))
 
     run_pipeline_module.run_pipeline(runRecord)
 
     assert calls == run_pipeline_module.ORDERED_STAGES
-    assert all(runRecord.is_complete(s) for s in run_pipeline_module.ORDERED_STAGES)
+    reloaded = RunRecord.load(runRecord.progress_dir)
+    assert all(reloaded.is_complete(s) for s in run_pipeline_module.ORDERED_STAGES)
 
 
 def test_run_pipeline_stops_after_the_requested_stage(tmp_path, monkeypatch):
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
-    monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_stage_subprocess", _fake_run_stage_subprocess(calls))
 
     run_pipeline_module.run_pipeline(runRecord, stop_after_stage=1)
 
     assert calls == run_pipeline_module.ORDERED_STAGES[:2]
-    assert runRecord.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
-    assert not runRecord.is_complete(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
+    reloaded = RunRecord.load(runRecord.progress_dir)
+    assert reloaded.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
+    assert not reloaded.is_complete(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
 
 
 def test_run_pipeline_clamps_a_stop_after_stage_beyond_what_is_implemented(tmp_path, monkeypatch, capsys):
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
-    monkeypatch.setattr(run_pipeline_module, "_load_stage_run", _fake_load_stage_run(calls))
-    monkeypatch.setattr(run_pipeline_module, "_run_in_export_env", _fake_run_in_export_env(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_stage_subprocess", _fake_run_stage_subprocess(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_export_subprocess", _fake_run_export_subprocess(calls))
 
     run_pipeline_module.run_pipeline(runRecord, stop_after_stage=99)
 
     assert calls == run_pipeline_module.ORDERED_STAGES
     assert "Only stages 0-" in capsys.readouterr().out
+
+
+def test_run_pipeline_passes_force_through_to_each_stage_subprocess(tmp_path, monkeypatch):
+    runRecord = _make_runRecord(tmp_path)
+    seen_force: list[bool] = []
+    monkeypatch.setattr(
+        run_pipeline_module, "_run_stage_subprocess",
+        lambda stage_name, progress_dir, force: seen_force.append(force),
+    )
+    monkeypatch.setattr(
+        run_pipeline_module, "_run_export_subprocess",
+        lambda progress_dir, force: seen_force.append(force),
+    )
+
+    run_pipeline_module.run_pipeline(runRecord, force_all=True)
+
+    assert seen_force and all(seen_force)
 
 
 def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeypatch, capsys):
@@ -126,7 +142,9 @@ def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeyp
         raise AssertionError("create_run should not be called for an already-existing run")
 
     monkeypatch.setattr(run_pipeline_module, "create_run", fail_if_called)
-    monkeypatch.setattr(run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None: None)
+    monkeypatch.setattr(
+        run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None, force_all=False: None
+    )
     monkeypatch.setattr(
         sys, "argv",
         [
@@ -164,7 +182,9 @@ def test_main_resumes_without_requiring_run_input_flags(tmp_path, monkeypatch, c
         run_id="original-run-id",
     )
 
-    monkeypatch.setattr(run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None: None)
+    monkeypatch.setattr(
+        run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None, force_all=False: None
+    )
     monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir)])
 
     run_pipeline_module.main()  # would previously raise SystemExit from argparse
@@ -183,7 +203,9 @@ def test_main_applies_an_override_flag_when_resuming(tmp_path, monkeypatch, caps
         run_id="original-run-id",
     )
 
-    monkeypatch.setattr(run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None: None)
+    monkeypatch.setattr(
+        run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None, force_all=False: None
+    )
     monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir), "--render-mask-previews"])
 
     run_pipeline_module.main()

@@ -2,16 +2,26 @@
 --output-dir) and then executes every implemented stage in order, start to
 finish.
 
-Every stage except `export` runs in-process (each stage module's own
-`run(progress)`, not a subprocess per stage) via dynamic import keyed off the
-existing `stage_{number}_{StageName.value}` file-naming convention -- so as
-later stages get real files following that same convention, this loop picks
-them up automatically; the only thing that needs updating is
+Every stage runs as its own subprocess (`python -m
+pipeline.stages.stage_{number}_{name} --output-dir ...`), dynamically named
+off the existing `stage_{number}_{StageName.value}` file-naming convention --
+so as later stages get real files following that same convention, this loop
+picks them up automatically; the only thing that needs updating is
 `create_run.STAGE_DEPENDS_ON`, which is already the existing convention for
-registering a new stage. `export` is the one exception: it needs `bpy`,
-which lives only in a separate pixi environment that can't be imported into
-this process, so it's dispatched as its own subprocess instead (see
-`_run_in_export_env`).
+registering a new stage.
+
+Stages are deliberately NOT called in-process one after another. Some of the
+heavier models here (SAM 3.1, GVHMR, HAMER) are separately-compiled
+native/CUDA stacks, and loading one after another inside a single process has
+been observed to segfault deep inside torch, even though each stage's own
+adapter correctly `del`s its model and calls `torch.cuda.empty_cache()` on
+unload -- the corruption is at the native/CUDA level, not a Python-visible
+leak, and gets more likely to actually trigger the more frames/GPU memory
+churn a stage does. Running each stage as its own process sidesteps that
+class of bug entirely, at the cost of a per-stage process-startup/checkpoint-
+reload overhead. `export` already worked this way (it needs `bpy`, which
+lives only in a separate pixi environment), so this just extends the same
+mechanism to every stage.
 
 Resumable exactly like the per-stage manual workflow: if `progress.json`
 already exists at --output-dir, this skips `create_run` and just resumes
@@ -26,12 +36,11 @@ works equally well tacked onto a resumed run as a fresh one.
 from __future__ import annotations
 
 import argparse
-import importlib
 import subprocess
+import sys
 from pathlib import Path
 
 from .create_run import STAGE_DEPENDS_ON, create_run
-from .pipeline_stage_base import run_stage
 from .progress_tracker import (
     PROGRESS_JSON_NAME,
     NewRunID,
@@ -45,46 +54,49 @@ from .progress_tracker import (
 
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 
-# repo root is 1 level up from this file (pipeline/ -> root) -- needed so the
-# export subprocess below finds pixi.toml regardless of the caller's cwd.
+# repo root is 1 level up from this file (pipeline/ -> root) -- needed so
+# subprocess stages find pixi.toml regardless of the caller's cwd.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def stage_module_name(stage_name: StageName) -> str:
     """The `stage_{number}_{StageName.value}` naming convention every stage
-    module follows, as an importable dotted path -- pulled out of
-    `_load_stage_run` so tests (which need to invoke the same modules as
-    real subprocesses) can reuse this exact convention instead of
-    re-deriving it by hand.
+    module follows, as an importable dotted path -- pulled out so tests
+    (which need to invoke the same modules as real subprocesses) can reuse
+    this exact convention instead of re-deriving it by hand.
     """
     return f"pipeline.stages.stage_{stage_name.stage_number}_{stage_name.value}"
 
 
-def _load_stage_run(stage_name: StageName):
-    module = importlib.import_module(stage_module_name(stage_name))
-    return module.run
+def _run_stage_subprocess(stage_name: StageName, progress_dir: Path, force: bool) -> None:
+    """Runs one stage's own CLI entrypoint (`cli_entrypoint`/`run_stage`) as a
+    fresh subprocess under this same `main`-env interpreter -- that
+    entrypoint already does the right dependency/skip/mark-progress
+    bookkeeping against `progress.json`, so nothing is duplicated here.
+    """
+    cmd = [sys.executable, "-m", stage_module_name(stage_name), "--output-dir", str(progress_dir)]
+    if force:
+        cmd.append("--force")
+    subprocess.run(cmd, check=True, cwd=_REPO_ROOT)
 
 
-def _run_in_export_env(runRecord: RunRecord) -> None:
+def _run_export_subprocess(progress_dir: Path, force: bool) -> None:
     """`export` needs `bpy`, which lives only in the separate `export` pixi
     environment (kept separate from `main` since bpy pins hard to its own
-    Python release) -- it can't be dynamically imported into this process
-    the way every other stage is. Shells out via `pixi run` itself, rather
+    Python release), so unlike every other stage it can't run under this
+    process's own `sys.executable`. Shells out via `pixi run` itself, rather
     than hand-deriving the environment's own python.exe path, so the
     subprocess resolves the right interpreter the same way a person would
-    run it manually. The subprocess's own `cli_entrypoint`/`run_stage`
-    already does the right dependency/skip/mark-progress bookkeeping against
-    `progress.json`, so nothing is duplicated here.
+    run it manually.
     """
-    module_name = stage_module_name(StageName.STAGE_9_EXPORT)
-    subprocess.run(
-        ["pixi", "run", "-e", "export", "python", "-m", module_name,
-         "--output-dir", str(runRecord.progress_dir)],
-        check=True, cwd=_REPO_ROOT,
-    )
+    cmd = ["pixi", "run", "-e", "export", "python", "-m", stage_module_name(StageName.STAGE_9_EXPORT),
+           "--output-dir", str(progress_dir)]
+    if force:
+        cmd.append("--force")
+    subprocess.run(cmd, check=True, cwd=_REPO_ROOT)
 
 
-def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None) -> None:
+def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None, force_all: bool = False) -> None:
     max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
     if stop_after_stage is None:
         last_stage_number = max_stage_number
@@ -100,10 +112,9 @@ def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None) -> N
         if stage_name.stage_number > last_stage_number:
             break
         if stage_name == StageName.STAGE_9_EXPORT:
-            _run_in_export_env(runRecord)
-            runRecord = RunRecord.load(runRecord.progress_dir)
-            continue
-        run_stage(runRecord, _load_stage_run(stage_name), stage_name)
+            _run_export_subprocess(runRecord.progress_dir, force_all)
+        else:
+            _run_stage_subprocess(stage_name, runRecord.progress_dir, force_all)
 
 
 def main() -> None:
@@ -130,6 +141,11 @@ def main() -> None:
         help="Run only through this stage number, inclusive (e.g. 5 runs stages 0-5, skipping 6+). "
              "Omit to run every implemented stage.",
     )
+    parser.add_argument(
+        "--force-all",
+        action="store_true",
+        help="Force all stages to re-run. The equivalent of passing `--force` to each stage individually.",
+    )
     add_run_input_arguments(parser, required=not resuming)
     args = parser.parse_args()
 
@@ -147,7 +163,7 @@ def main() -> None:
         runRecord = create_run(progress_dir, run_input, run_id=args.run_id)
         print(f"Created run {runRecord.run_id!r} at {progress_dir}")
 
-    run_pipeline(runRecord, stop_after_stage=args.stop_after_stage)
+    run_pipeline(runRecord, stop_after_stage=args.stop_after_stage, force_all=args.force_all)
 
 
 if __name__ == "__main__":
