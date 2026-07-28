@@ -14,8 +14,16 @@ version = "0.1.0"
 # file specifically -- collecting the whole `tests/` dir under that env errors
 # out before running anything. Chained with `;`, not `&&`, so a failure in one
 # environment doesn't hide the other environment's results.
+#
+# The export half goes through scripts/run_export_tests.py, not a direct
+# `pytest` invocation: bpy has a reproducible access-violation crash during
+# its own interpreter teardown on Windows, well after every test has already
+# finished and passed -- a raw `pytest` call here would make that benign
+# crash look like the whole suite failed (segfault, nonzero exit) even when
+# every test genuinely passed. The wrapper isolates that crash to a child
+# process and reports the real result from its junit report instead.
 [tasks.test]
-cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python -m pytest tests/test_stage_9_export.py"
+cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python scripts/run_export_tests.py"
 
 [dependencies]
 

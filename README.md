@@ -168,7 +168,7 @@ SAM 3.1 tracks the human (and object, if `--object-prompt` was given). Also reso
 <details>
 <summary><strong>Optional: JPEG Mask Output</strong></summary>
 
-Use `--render-mask-previews` when creating the run to also have this stage write `runs/my_clip/masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white mask images at the video's native resolution. You can scroll through these images on disk to confirm SAM 3.1 tracked the right thing.
+Use `--render-mask-previews` when creating the run to also have this stage write `runs/my_clip/stage1_masks/preview_human/000000.jpg`, `000001.jpg`, ... (and `preview_object/` if an object was tracked). These are plain black-and-white mask images at the video's native resolution. You can scroll through these images on disk to confirm SAM 3.1 tracked the right thing.
 </details>
 
 ### Stage 2. Estimate human motion
@@ -186,7 +186,7 @@ If you want to tune the smoothing method yourself, edit `body_smoothing_window` 
 <details>
 <summary><strong>Optional: 3D Motion Preview Output</strong></summary>
 
-Use `--render-motion-preview` when creating the run to also have this stage write `runs/my_clip/motion/blender_preview.npz` This NPZ is importable in Blender via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) if the addon is installed (see [Setup](#setup)). **For accurate preview,** when the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
+Use `--render-motion-preview` when creating the run to also have this stage write `runs/my_clip/stage2_motion/blender_preview.npz` This NPZ is importable in Blender via the SMPL-X addon's own **Add Animation** operator (`Object > SMPL-X > Add Animation`) if the addon is installed (see [Setup](#setup)). **For accurate preview,** when the import dialog appears, **set "Format" to `SMPL-X`, not `AMASS`** to view the 3D animation at the correct orientation.
 </details>
 
 ### Stage 3. Estimate depth
@@ -200,7 +200,7 @@ Depth-Anything-3 (`DA3METRIC-LARGE`) runs once on a single anchor frame, not the
 <details>
 <summary><strong>Optional: PLY Point Cloud Output</strong></summary>
 
-Use `--render-depth-preview` when creating the run to also have this stage write `runs/my_clip/depth/anchor_pointcloud.ply`, a colored point cloud estimating the depth in the image. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)**
+Use `--render-depth-preview` when creating the run to also have this stage write `runs/my_clip/stage3_depth/anchor_pointcloud.ply`, a colored point cloud estimating the depth in the image. Blender can import this `.ply` file natively via **File > Import > Stanford (.ply)**
 </details>
 
 **Note:** The imported .ply may appear all-black in Blender by default.
@@ -241,7 +241,7 @@ This stage requires the MANO body model and the SMPL-X model file (see [Setup](#
 <details>
 <summary><strong>Optional: Hand Skeleton Preview</strong></summary>
 
-Use `--render-hands-preview` when creating the run to also have this stage write `runs/my_clip/hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
+Use `--render-hands-preview` when creating the run to also have this stage write `runs/my_clip/stage4_hands/hands_preview.bvh`, a bone-only animation of both hands. This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**. Each hand is shown in isolation, side by side, so you can confirm the finger articulation looks right before it's attached to a body. This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 </details>
 
 ### Stage 5. Retarget hands
@@ -250,14 +250,14 @@ Use `--render-hands-preview` when creating the run to also have this stage write
 pixi run -e main python -m pipeline.stages.stage_5_retarget_hands -o runs/my_clip
 ```
 
-Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/retarget/retargeted_motion.pt`. A hand never detected anywhere in the clip keeps GVHMR's own wrist and flat fingers throughout. Any hand detected at least once gets every frame filled with that detected pose.
+Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/stage5_retarget/retargeted_motion.pt`. A hand never detected anywhere in the clip keeps GVHMR's own wrist and flat fingers throughout. Any hand detected at least once gets every frame filled with that detected pose.
 
 This stage requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 
 <details>
 <summary><strong>Optional: Full Body and Hands Preview</strong></summary>
 
-Use `--render-retarget-preview` when creating the run to also have this stage write `runs/my_clip/retarget/retarget_preview.bvh`, a bone-only animation of the whole body with the stage 4 hands attached, including the body's real motion (walking, sitting down, etc.). This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**
+Use `--render-retarget-preview` when creating the run to also have this stage write `runs/my_clip/stage5_retarget/retarget_preview.bvh`, a bone-only animation of the whole body with the stage 4 hands attached, including the body's real motion (walking, sitting down, etc.). This .bvh is importable in Blender via **File > Import > Motion Capture (.bvh)**
 
 This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 </details>
@@ -268,14 +268,14 @@ This preview requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 pixi run -e main python -m pipeline.stages.stage_6_align_scene_scale -o runs/my_clip
 ```
 
-The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage 2](#stage-2-estimate-human-motion)) are both represented in real-world meters, but disagree on scale. This stage reconciles them at the anchor frame by matching the SMPL-X body pose against depth values within the SAM-3 human mask. The result is written to `runs/my_clip/scale/scene_scale.json`
+The depth map ([stage 3](#stage-3-estimate-depth)) and SMPL-X human body ([stage 2](#stage-2-estimate-human-motion)) are both represented in real-world meters, but disagree on scale. This stage reconciles them at the anchor frame by matching the SMPL-X body pose against depth values within the SAM-3 human mask. The result is written to `runs/my_clip/stage6_scale/scene_scale.json`
 
-If an object was tracked, this stage also fits a shape to it (a box, ellipsoid, or cylinder chosen via `--object-shape-hint`, or 'auto' which automatically chooses the shape of best fit), written to `runs/my_clip/scale/object_shape.json`.
+If an object was tracked, this stage also fits a shape to it (a box, ellipsoid, or cylinder chosen via `--object-shape-hint`, or 'auto' which automatically chooses the shape of best fit), written to `runs/my_clip/stage6_scale/object_shape.json`.
 
 <details>
 <summary><strong>Optional: Aligned Scene Preview</strong></summary>
 
-Use `--render-scene-preview` when creating the run to also have this stage write `runs/my_clip/scale/scene_preview.ply`, a single point cloud that puts every element in the human's metric space, color-coded so you can confirm the fit: green for the SMPL-X body, red for the tracked object's depth points, and (if an object was tracked) a yellow wireframe of its fitted primitive shape. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
+Use `--render-scene-preview` when creating the run to also have this stage write `runs/my_clip/stage6_scale/scene_preview.ply`, a single point cloud that puts every element in the human's metric space, color-coded so you can confirm the fit: green for the SMPL-X body, red for the tracked object's depth points, and (if an object was tracked) a yellow wireframe of its fitted primitive shape. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
 </details>
 
 ### Stage 7. Detect human-object contact points
@@ -284,12 +284,12 @@ Use `--render-scene-preview` when creating the run to also have this stage write
 pixi run -e main python -m pipeline.stages.stage_7_annotate_contacts -o runs/my_clip
 ```
 
-Detects contact points between the body and object across 8 body regions. The mask + depth inferred by Depth-Anything-3 are used to determine where the body and object interact. Interaction events written to `runs/my_clip/contacts/contact_events.json`
+Detects contact points between the body and object across 8 body regions. The mask + depth inferred by Depth-Anything-3 are used to determine where the body and object interact. Interaction events written to `runs/my_clip/stage7_contacts/contact_events.json`
 
 <details>
 <summary><strong>Optional: Contact Points Preview</strong></summary>
 
-Use `--render-contacts-preview` when creating the run to also have this stage write `runs/my_clip/contacts/contacts_preview/` This saves one JPEG per contact event named `{peak_confidence_frame:06d}_{regions-joined-by-plus}.jpg`. Each image is the source frame at that event's most-confident moment, with a circle drawn around the joint that triggered it.
+Use `--render-contacts-preview` when creating the run to also have this stage write `runs/my_clip/stage7_contacts/contacts_preview/` This saves one JPEG per contact event named `{peak_confidence_frame:06d}_{regions-joined-by-plus}.jpg`. Each image is the source frame at that event's most-confident moment, with a circle drawn around the joint that triggered it.
 </details>
 
 ### Stage 8. Optimize human-object interaction
@@ -298,7 +298,7 @@ Use `--render-contacts-preview` when creating the run to also have this stage wr
 pixi run -e main python -m pipeline.stages.stage_8_optimize_hoi -o runs/my_clip
 ```
 
-If an object was tracked, attach it to a body region if a hold was detected for a duration of time. Writes the object positional animation to `runs/my_clip/hoi/object_pose.npz`
+If an object was tracked, attach it to a body region if a hold was detected for a duration of time. Writes the object positional animation to `runs/my_clip/stage8_interaction/object_pose.npz`
 
 ### Stage 9. Export
 
@@ -368,7 +368,7 @@ Stage 9's tests (`tests/test_stage_9_export.py`) need the `bpy` module and only 
 
 ```bash
 pixi run -e main python -m pytest tests/
-pixi run -e export python -m pytest tests/test_stage_9_export.py
+pixi run -e export python scripts/run_export_tests.py
 ```
 
 Stage tests require the real SAM 3.1/GVHMR checkpoints and a CUDA GPU (see [Setup](#setup)). If either are missing, tests are skipped, not failed.
