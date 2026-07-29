@@ -44,7 +44,7 @@ class StageName(enum.StrEnum):
     STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion", 4
     STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body", 5
     STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale", 6
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect contact points", 7
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect human-object interaction points", 7
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize human-object interaction", 8
     STAGE_9_EXPORT = "export", "stage 9: export animation", 9
 

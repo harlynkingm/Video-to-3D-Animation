@@ -98,7 +98,7 @@ def _run_heavy_stage(runRecord: RunRecord, stage_name: StageName) -> dict[str, s
     session-scoped object, not just this function's own return value --
     e.g. stage 1 setting `scene.anchor_frame_index` needs to reach them too.
     """
-    _run_stage_subprocess(stage_name, runRecord.progress_dir, force=False)
+    _run_stage_subprocess(stage_name, Path(runRecord.progress_dir), force=False)
     reloaded = RunRecord.load(runRecord.progress_dir)
     runRecord.__dict__.update(reloaded.__dict__)
     return runRecord.stages[stage_name].outputs
@@ -250,10 +250,16 @@ def stage_6_result(
 
 
 @pytest.fixture(scope="session")
-def stage_7_result(runRecord: RunRecord, stage_5_result: dict[str, str]) -> dict[str, str]:
-    # Only needs stage 5's retargeted motion + stage 1's object mask -- see
+def stage_7_result(
+    runRecord: RunRecord, stage_2_result: dict[str, str], stage_5_result: dict[str, str]
+) -> dict[str, str]:
+    # Needs stage 5's retargeted motion + stage 1's object mask, plus (now)
+    # stage 2's own pre-foot-lock translation directly -- see
+    # stage_7_annotate_contacts.py's own module docstring for why, and
     # create_run.STAGE_DEPENDS_ON's comment for why this deliberately doesn't
-    # wait on align_scene_scale (stage 6).
+    # wait on align_scene_scale (stage 6). `stage_2_result` is listed
+    # explicitly even though `stage_5_result` already depends on it
+    # transitively, since stage 7 now genuinely reads stage 2's own output.
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
 

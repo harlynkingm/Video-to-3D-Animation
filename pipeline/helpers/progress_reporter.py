@@ -42,4 +42,7 @@ def report_single_shot(label: str) -> Iterator[None]:
         yield
     finally:
         minutes, seconds = divmod(int(time.perf_counter() - start), 60)
-        print(f"[{label}] done in {minutes:02d}:{seconds:02d}")
+        if minutes == 0 and seconds == 0:
+            print(f"[{label}] done")
+        else:
+            print(f"[{label}] done in {minutes:02d}:{seconds:02d}")

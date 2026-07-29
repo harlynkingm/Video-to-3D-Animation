@@ -113,7 +113,10 @@ def _run_export_subprocess(progress_dir: Path, force: bool) -> None:
     _run_subprocess_tolerating_crash_after_success(cmd, progress_dir, StageName.STAGE_9_EXPORT)
 
 
-def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None, force_all: bool = False) -> None:
+def run_pipeline(runRecord: RunRecord, start_on_stage: int | None = None, stop_after_stage: int | None = None, force_all: bool = False) -> None:
+    first_stage_number = 0
+    if start_on_stage is not None:
+        first_stage_number = start_on_stage
     max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
     if stop_after_stage is None:
         last_stage_number = max_stage_number
@@ -126,12 +129,14 @@ def run_pipeline(runRecord: RunRecord, stop_after_stage: int | None = None, forc
     # (true today) so a number exceeding the bound can short-circuit the
     # rest via `break` instead of scanning every remaining stage.
     for stage_name in ORDERED_STAGES:
+        if stage_name.stage_number < first_stage_number:
+            continue
         if stage_name.stage_number > last_stage_number:
             break
         if stage_name == StageName.STAGE_9_EXPORT:
-            _run_export_subprocess(runRecord.progress_dir, force_all)
+            _run_export_subprocess(Path(runRecord.progress_dir), force_all)
         else:
-            _run_stage_subprocess(stage_name, runRecord.progress_dir, force_all)
+            _run_stage_subprocess(stage_name, Path(runRecord.progress_dir), force_all)
 
 
 def main() -> None:
@@ -152,6 +157,12 @@ def main() -> None:
     )
     add_dataclass_cli_arguments(parser, NewRunID)
     parser.add_argument(
+        "--start-on-stage",
+        type=int,
+        default=None,
+        help="Start the run on this stage number",
+    )
+    parser.add_argument(
         "--stop-after-stage",
         type=int,
         default=None,
@@ -166,8 +177,19 @@ def main() -> None:
     add_run_input_arguments(parser, required=not resuming)
     args = parser.parse_args()
 
-    if args.stop_after_stage is not None and args.stop_after_stage < 0:
-        parser.error("--stop-after-stage must be >= 0")
+    max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
+    if args.start_on_stage is not None:
+        if args.start_on_stage < 0:
+            parser.error("--start-on-stage must be >= 0")
+        elif args.start_on_stage > max_stage_number:
+            parser.error(f"--start-on-stage must be <= {max_stage_number}")
+    if args.stop_after_stage is not None:
+        if args.stop_after_stage < 0:
+            parser.error("--stop-after-stage must be >= 0")
+        elif args.stop_after_stage > max_stage_number:
+            parser.error(f"--stop-after-stage must be <= {max_stage_number}")
+        elif args.start_on_stage is not None and args.stop_after_stage < args.start_on_stage:
+            parser.error("--stop-after-stage must be >= --start-on-stage")
 
     progress_dir = args.progress_dir
     if resuming:
@@ -180,7 +202,8 @@ def main() -> None:
         runRecord = create_run(progress_dir, run_input, run_id=args.run_id)
         print(f"Created run {runRecord.run_id!r} at {progress_dir}")
 
-    run_pipeline(runRecord, stop_after_stage=args.stop_after_stage, force_all=args.force_all)
+    run_pipeline(runRecord, start_on_stage=args.start_on_stage, stop_after_stage=args.stop_after_stage, force_all=args.force_all)
+
 
 
 if __name__ == "__main__":

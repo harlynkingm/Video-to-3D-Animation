@@ -76,6 +76,20 @@ def test_run_pipeline_runs_every_stage_when_no_bound_given(tmp_path, monkeypatch
     assert all(reloaded.is_complete(s) for s in run_pipeline_module.ORDERED_STAGES)
 
 
+def test_run_pipeline_starts_on_the_requested_stage(tmp_path, monkeypatch):
+    runRecord = _make_runRecord(tmp_path)
+    calls: list[StageName] = []
+    monkeypatch.setattr(run_pipeline_module, "_run_stage_subprocess", _fake_run_stage_subprocess(calls))
+    monkeypatch.setattr(run_pipeline_module, "_run_export_subprocess", _fake_run_export_subprocess(calls))
+
+    run_pipeline_module.run_pipeline(runRecord, start_on_stage=2)
+
+    assert calls == run_pipeline_module.ORDERED_STAGES[2:]
+    reloaded = RunRecord.load(runRecord.progress_dir)
+    assert not reloaded.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
+    assert all(reloaded.is_complete(s) for s in run_pipeline_module.ORDERED_STAGES[2:])
+
+
 def test_run_pipeline_stops_after_the_requested_stage(tmp_path, monkeypatch):
     runRecord = _make_runRecord(tmp_path)
     calls: list[StageName] = []
@@ -87,6 +101,18 @@ def test_run_pipeline_stops_after_the_requested_stage(tmp_path, monkeypatch):
     reloaded = RunRecord.load(runRecord.progress_dir)
     assert reloaded.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
     assert not reloaded.is_complete(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
+
+def test_run_pipeline_starts_on_and_stops_after_the_requested_stages(tmp_path, monkeypatch):
+    runRecord = _make_runRecord(tmp_path)
+    calls: list[StageName] = []
+    monkeypatch.setattr(run_pipeline_module, "_run_stage_subprocess", _fake_run_stage_subprocess(calls))
+
+    run_pipeline_module.run_pipeline(runRecord, start_on_stage=2, stop_after_stage=3)
+
+    assert calls == run_pipeline_module.ORDERED_STAGES[2:4]
+    reloaded = RunRecord.load(runRecord.progress_dir)
+    assert not reloaded.is_complete(StageName.STAGE_1_MASK_AND_TRACK)
+    assert reloaded.is_complete(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION)
 
 
 def test_run_pipeline_clamps_a_stop_after_stage_beyond_what_is_implemented(tmp_path, monkeypatch, capsys):
@@ -129,7 +155,7 @@ def test_run_stage_subprocess_tolerates_a_crash_after_the_stage_already_complete
         subprocess, "run", lambda cmd, **kwargs: subprocess.CompletedProcess(args=cmd, returncode=3221225477)
     )
 
-    run_pipeline_module._run_stage_subprocess(StageName.STAGE_0_INGEST_VIDEO, runRecord.progress_dir, force=False)
+    run_pipeline_module._run_stage_subprocess(StageName.STAGE_0_INGEST_VIDEO, Path(runRecord.progress_dir), force=False)
 
 
 def test_run_stage_subprocess_still_raises_when_the_stage_never_completed(tmp_path, monkeypatch):
@@ -137,7 +163,7 @@ def test_run_stage_subprocess_still_raises_when_the_stage_never_completed(tmp_pa
     monkeypatch.setattr(subprocess, "run", lambda cmd, **kwargs: subprocess.CompletedProcess(args=cmd, returncode=1))
 
     with pytest.raises(subprocess.CalledProcessError):
-        run_pipeline_module._run_stage_subprocess(StageName.STAGE_0_INGEST_VIDEO, runRecord.progress_dir, force=False)
+        run_pipeline_module._run_stage_subprocess(StageName.STAGE_0_INGEST_VIDEO, Path(runRecord.progress_dir), force=False)
 
 
 def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeypatch, capsys):

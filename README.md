@@ -95,7 +95,8 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--object-prompt` | No | none | Text description of the object to track, e.g. `"a teddy bear"`. Omit if there's no object to track. |
 | `--object-shape-hint` | No | `auto` | Forces the tracked object's proxy shape to `box`, `ellipsoid`, or `cylinder` instead of letting stage 6 auto-fit whichever shape better matches the object. |
 | `--anchor-frame-override` | No | auto-selected | Forces a specific frame index as the "anchor" frame instead of letting stage 1 pick the frame with the clearest view of the object. |
-| `--stop-after-stage` | No | runs every implemented stage | Stops after the given stage number, inclusive -- e.g. `5` runs stages 0-5 and stops before stage 6. |
+| `--start-on-stage` | No | runs every implemented stage | Starts the run on the given stage number, inclusive -- e.g. `4` starts the run on stage 4. |
+| `--stop-after-stage` | No | runs every implemented stage | Stops after the given stage number, inclusive -- e.g. `5` runs stages 0-5 and stops before stage 6. Can be combined with `--start-on-stage` to only run a range, and can be combined with `--force-all` to force-rerun a range. |
 | `--render-previews` | No | off | Enables every `--render-*-preview` flag below at once. |
 | `--render-mask-previews` | No | off | Stage 1 also writes black/white JPEG mask previews for visual spot-checking. See [stage 1](#stage-1-mask-and-track) below. |
 | `--render-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#stage-2-estimate-human-motion) below. |
@@ -179,7 +180,7 @@ pixi run -e main python -m pipeline.stages.stage_2_estimate_human_motion -o runs
 
 GVHMR turns the human mask into a 3D SMPL-X body pose animation. Works at any source video resolution, however larger frames mean more disk space and slightly slower per-frame I/O.
 
-The body motion is temporally smoothed before saving to remove residual per-frame jitter.
+Stage 2 also performs a foot/wrist drift-lock pass on wrists, ankles, and feet to prevent sliding. Then, the body motion is temporally smoothed to remove residual per-frame jitter.
 
 If you want to tune the smoothing method yourself, edit `body_smoothing_window` (affecting rotation) or `body_translation_cutoff` (affecting root position) in the run's `progress.json` before running this stage. See [Motion smoothing](#motion-smoothing) below.
 
@@ -278,7 +279,7 @@ If an object was tracked, this stage also fits a shape to it (a box, ellipsoid, 
 Use `--render-scene-preview` when creating the run to also have this stage write `runs/my_clip/stage6_scale/scene_preview.ply`, a single point cloud that puts every element in the human's metric space, color-coded so you can confirm the fit: green for the SMPL-X body, red for the tracked object's depth points, and (if an object was tracked) a yellow wireframe of its fitted primitive shape. Import in Blender and enable vertex colors the same way as [stage 3](#stage-3-estimate-depth).
 </details>
 
-### Stage 7. Detect human-object contact points
+### Stage 7. Detect human-object interaction points
 
 ```bash
 pixi run -e main python -m pipeline.stages.stage_7_annotate_contacts -o runs/my_clip
