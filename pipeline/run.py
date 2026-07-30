@@ -51,6 +51,7 @@ from .progress_tracker import (
     apply_run_input_overrides,
     run_input_from_args,
     validate_camera_input,
+    validate_video_input,
 )
 
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
@@ -203,6 +204,9 @@ def main() -> None:
         camera_error = validate_camera_input(run_input)
         if camera_error:
             parser.error(camera_error)
+        video_error = validate_video_input(run_input)
+        if video_error:
+            parser.error(video_error)
         runRecord = create_run(progress_dir, run_input, run_id=args.run_id)
         print(f"Created run {runRecord.run_id!r} at {progress_dir}")
 

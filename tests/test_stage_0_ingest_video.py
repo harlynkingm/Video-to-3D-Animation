@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytest
 
 from conftest import FOCAL_LENGTH_MM, SENSOR_WIDTH_MM, TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_FPS, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH, make_run_input
@@ -55,6 +56,160 @@ def test_intrinsics_k_bypasses_the_computed_matrix_when_given(tmp_path):
     stage_0_ingest_video.run(runRecord)
 
     assert runRecord.scene.intrinsics_K == raw_k
+
+
+def _write_solid_frame(path: Path, value: int, size: tuple[int, int] = (12, 16)) -> None:
+    """A tiny single-color image, distinct per `value` -- lets a test verify
+    which source image ended up at which output frame index."""
+    height, width = size
+    frame = np.full((height, width, 3), value, dtype=np.uint8)
+    cv2.imwrite(str(path), frame)
+
+
+def test_ingests_an_image_folder_instead_of_a_video(tmp_path):
+    image_dir = tmp_path / "frames"
+    image_dir.mkdir()
+    for i in range(3):
+        _write_solid_frame(image_dir / f"{i:06d}.jpg", value=i * 50)
+
+    run_input = make_run_input(video_path=str(image_dir), source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+
+    outputs = stage_0_ingest_video.run(runRecord)
+
+    frames_dir = Path(outputs["frames_dir"])
+    frame_paths = sorted(frames_dir.glob("*.jpg"))
+    assert len(frame_paths) == 3
+    assert runRecord.scene.frame_count == 3
+    assert runRecord.scene.fps == 24.0
+    assert runRecord.scene.width == 16
+    assert runRecord.scene.height == 12
+
+
+def test_image_folder_frames_are_written_in_filename_sorted_order(tmp_path):
+    """Regression against accidental directory-iteration order (not
+    guaranteed by `Path.iterdir()`) -- output frame index must follow the
+    source filenames' own sort order, not creation/insertion order."""
+    image_dir = tmp_path / "frames"
+    image_dir.mkdir()
+    # Written out of order on purpose.
+    _write_solid_frame(image_dir / "000002.jpg", value=200)
+    _write_solid_frame(image_dir / "000000.jpg", value=0)
+    _write_solid_frame(image_dir / "000001.jpg", value=100)
+
+    run_input = make_run_input(video_path=str(image_dir), source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+    outputs = stage_0_ingest_video.run(runRecord)
+
+    frame_paths = sorted(Path(outputs["frames_dir"]).glob("*.jpg"))
+    values = [int(cv2.imread(str(p))[0, 0, 0]) for p in frame_paths]
+    assert values == [0, 100, 200]
+
+
+def test_image_folder_skips_rewriting_a_frame_when_the_source_is_frames_dir_itself(tmp_path, monkeypatch):
+    """Re-ingesting a run's own already-extracted input_frames/ folder in
+    place (video_path pointed directly at frames_dir, already using the exact
+    zero-padded naming) should read but not rewrite each frame -- confirmed
+    here via a patched cv2.imwrite that fails the test if called at all."""
+    run_input = make_run_input(video_path="placeholder", source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+    frames_dir = tmp_path / "run" / stage_0_ingest_video.INPUT_FRAMES_DIRNAME
+    frames_dir.mkdir(parents=True)
+    _write_solid_frame(frames_dir / "000000.jpg", value=10)
+    _write_solid_frame(frames_dir / "000001.jpg", value=20)
+    runRecord.input.video_path = str(frames_dir)
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("cv2.imwrite should not be called when the source image IS the target frame path")
+
+    monkeypatch.setattr(stage_0_ingest_video.cv2, "imwrite", _fail_if_called)
+
+    outputs = stage_0_ingest_video.run(runRecord)
+
+    assert runRecord.scene.frame_count == 2
+    assert Path(outputs["frames_dir"]) == frames_dir
+
+
+def test_image_folder_overwrites_stale_frames_from_a_different_source(tmp_path):
+    """A --force-all-style rerun pointed at a genuinely different source
+    folder must actually regenerate frames_dir's own contents, even when a
+    same-named stale frame is already sitting there from a prior run --
+    silently keeping it would defeat --force-all's whole point."""
+    run_input = make_run_input(video_path="placeholder", source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+    frames_dir = tmp_path / "run" / stage_0_ingest_video.INPUT_FRAMES_DIRNAME
+    frames_dir.mkdir(parents=True)
+    _write_solid_frame(frames_dir / "000000.jpg", value=99)  # stale, from a prior ingest
+
+    new_source_dir = tmp_path / "new_frames"
+    new_source_dir.mkdir()
+    _write_solid_frame(new_source_dir / "000000.jpg", value=42)
+    runRecord.input.video_path = str(new_source_dir)
+
+    stage_0_ingest_video.run(runRecord)
+
+    written = cv2.imread(str(frames_dir / "000000.jpg"))
+    assert int(written[0, 0, 0]) == 42
+
+
+def test_image_folder_accepts_a_mix_of_jpeg_and_png(tmp_path):
+    image_dir = tmp_path / "frames"
+    image_dir.mkdir()
+    _write_solid_frame(image_dir / "000000.jpg", value=10)
+    _write_solid_frame(image_dir / "000001.png", value=20)
+
+    run_input = make_run_input(video_path=str(image_dir), source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+
+    outputs = stage_0_ingest_video.run(runRecord)
+
+    assert runRecord.scene.frame_count == 2
+    assert len(list(Path(outputs["frames_dir"]).glob("*.jpg"))) == 2
+
+
+def test_image_folder_raises_without_source_fps(tmp_path):
+    image_dir = tmp_path / "frames"
+    image_dir.mkdir()
+    _write_solid_frame(image_dir / "000000.jpg", value=10)
+
+    run_input = make_run_input(video_path=str(image_dir), source_fps=None)
+    runRecord = create_run(tmp_path / "run", run_input)
+
+    with pytest.raises(RuntimeError, match="--source-fps"):
+        stage_0_ingest_video.run(runRecord)
+
+
+def test_image_folder_raises_when_empty(tmp_path):
+    image_dir = tmp_path / "frames"
+    image_dir.mkdir()
+
+    run_input = make_run_input(video_path=str(image_dir), source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+
+    with pytest.raises(RuntimeError, match="No JPEG/PNG images found"):
+        stage_0_ingest_video.run(runRecord)
+
+
+def test_image_folder_intrinsics_use_output_width_as_the_sensor_width(tmp_path):
+    """No separate pre-rotation sensor dimension exists for a plain image
+    folder (unlike a phone video, see _resolve_rotation) -- raw_width and
+    width are the same value, so the focal length in px should come out as
+    a simple focal_length_mm * (width / sensor_width_mm), no rotation-aware
+    adjustment involved."""
+    image_dir = tmp_path / "frames"
+    image_dir.mkdir()
+    _write_solid_frame(image_dir / "000000.jpg", value=10, size=(12, 16))
+
+    run_input = make_run_input(video_path=str(image_dir), source_fps=24.0)
+    runRecord = create_run(tmp_path / "run", run_input)
+
+    stage_0_ingest_video.run(runRecord)
+
+    K = runRecord.scene.intrinsics_K
+    expected_focal_px = FOCAL_LENGTH_MM * (16 / SENSOR_WIDTH_MM)
+    assert K[0][0] == pytest.approx(expected_focal_px)
+    assert K[0][2] == pytest.approx(16 / 2)
+    assert K[1][2] == pytest.approx(12 / 2)
 
 
 def test_resolve_rotation_is_a_noop_for_unrotated_video():

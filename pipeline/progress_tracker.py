@@ -110,7 +110,9 @@ def cli_field(
 class RunInput:
     video_path: str = cli_field(
         flag="--input-video", metavar="INPUT_VIDEO", required=True,
-        help="Path to the source video file (MP4, MOV, MPEG, FLV, or WMV)",
+        help="Path to the source video file (MP4, MOV, MPEG, FLV, or WMV), or a directory of "
+             "already-extracted JPEG/PNG frames (sorted by filename) -- "
+             "--source-fps is required for the directory case.",
     )
     human_prompt: str = cli_field(flag="--human-prompt", required=True, help='e.g. "a person"')
     object_prompt: str | None = cli_field(
@@ -135,6 +137,17 @@ class RunInput:
         flag="--intrinsics-k", default=None, value_type=json.loads,
         help='Raw 3x3 intrinsics matrix as JSON, e.g. \'[[fx,0,cx],[0,fy,cy],[0,0,1]]\' -- '
              "an alternative to --focal-length-mm/--sensor-width-mm for real calibration data.",
+    )
+    # Only meaningful when video_path (above) is a directory of images rather
+    # than a real video file: a frame sequence has no embedded frame rate the
+    # way a video container does, so this is the only way stage 0 can know
+    # it. Ignored for a real video file (its own container fps is used
+    # instead). Enforced required-when-a-directory-is-given by
+    # validate_video_input, not argparse itself -- same shape as the camera-
+    # intrinsics fields above and their own validate_camera_input.
+    source_fps: float | None = cli_field(
+        flag="--source-fps", default=None, value_type=float,
+        help="Frame rate for an --input-video image-sequence directory. This is required in that case, but ignored otherwise.",
     )
     anchor_frame_override: int | None = cli_field(flag="--anchor-frame-override", default=None, value_type=int)
     render_mask_previews: bool = cli_field(
@@ -353,6 +366,22 @@ def validate_camera_input(run_input: RunInput) -> str | None:
         return "--intrinsics-k cannot be combined with --focal-length-mm/--sensor-width-mm - provide exactly one"
     if not has_k and not has_focal:
         return "camera intrinsics required: either --intrinsics-k, or both --focal-length-mm and --sensor-width-mm"
+    return None
+
+
+def validate_video_input(run_input: RunInput) -> str | None:
+    """Returns an error message if `run_input.video_path` is a directory
+    (an image-sequence input, see that field's own comment) without a usable
+    `--source-fps`, else `None`. A real video file's own container fps makes
+    `source_fps` unnecessary, so this only fires for the directory case --
+    stage 0 can't derive a frame rate from a folder of otherwise-unordered-
+    in-time still images. Same shape as validate_camera_input: only meaningful
+    for a *fresh* run, shared by create_run.py and pipeline.run.py's own
+    main()s."""
+    if not Path(run_input.video_path).is_dir():
+        return None
+    if run_input.source_fps is None or run_input.source_fps <= 0:
+        return "--source-fps is required when --input-video is a directory of images"
     return None
 
 

@@ -86,7 +86,8 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 
 | Option | Required | Default | Description |
 |---|---|---|---|
-| `--input-video` | **Yes** | | Path to the source video file (MP4, MOV, MPEG, FLV, or WMV). |
+| `--input-video` | **Yes** | | Path to the source video file (MP4, MOV, MPEG, FLV, or WMV), or a directory of already-extracted JPEG/PNG frames sorted by filename |
+| `--source-fps` | No, unless `--input-video` is a directory | | Frame rate for an image-sequence `--input-video` directory |
 | `--output-dir` (`-o`) | **Yes** | | Directory to create for this run's state and outputs. |
 | `--human-prompt` | **Yes** | | Text description of the person to track, e.g. `"a tennis player"`. |
 | `--focal-length-mm` | **Yes** (unless using `--intrinsics-k`) | | Camera focal length in mm, used to build the intrinsics matrix stage 0 requires. |
@@ -120,7 +121,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 
 | Stage | Script | Input | Output |
 |---|---|---|---|
-| 0. Ingest video | `stage_0_ingest_video` | source video file | `frames/*.jpg` <br> camera intrinsics in `progress.json` |
+| 0. Ingest video | `stage_0_ingest_video` | source video file, or a directory of JPEG/PNG frames | `frames/*.jpg` <br> camera intrinsics in `progress.json` |
 | 1. Mask and track | `stage_1_mask_and_track` | `frames/*.jpg` | `masks/human.pt` <br> `masks/object.pt` <br> anchor frame index in `progress.json` <br> `masks/preview_human/*.jpg` (optional) <br> `masks/preview_object/*.jpg` (optional) |
 | 2. Estimate human motion | `stage_2_estimate_human_motion` | `frames/*.jpg` <br> `masks/human.pt` | `motion/human_motion.pt` <br> `motion/blender_preview.npz` (optional) |
 | 3. Estimate depth | `stage_3_estimate_depth` | `frames/*.jpg` <br> anchor frame index in `progress.json` | `depth/anchor_depth.npy` <br> `depth/anchor_pointcloud.ply` (optional) |
@@ -158,6 +159,8 @@ pixi run -e main python -m pipeline.stages.stage_0_ingest_video -o runs/my_clip
 ```
 
 Extracts every frame to disk as JPEG (to `runs/my_clip/frames/`), and resolves the camera intrinsics matrix computed from `--focal-length-mm`/`--sensor-width-mm` and the video's resolution (or used directly from `--intrinsics-k` if provided).
+
+If `--input-video` is a directory of images instead of a video file, each is re-encoded as JPEG in filename order (if needed) and `--source-fps` provides the frame rate.
 
 ### Stage 1. Mask and track
 
@@ -286,7 +289,7 @@ Use `--render-scene-preview` when creating the run to also have this stage write
 pixi run -e main python -m pipeline.stages.stage_7_annotate_contacts -o runs/my_clip
 ```
 
-Detects contact points between the body and object across 8 body regions. The mask + depth inferred by Depth-Anything-3 are used to determine where the body and object interact. Interaction events written to `runs/my_clip/stage7_contacts/contact_events.json`
+Detects contact points between the body and object across 9 body regions. The mask + depth inferred by Depth-Anything-3 are used to determine where the body and object interact. Interaction events written to `runs/my_clip/stage7_contacts/contact_events.json`
 
 <details>
 <summary><strong>Optional: Contact Points Preview</strong></summary>

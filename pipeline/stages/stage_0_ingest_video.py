@@ -1,4 +1,5 @@
-"""ingest: reads the input video, extracts frames to disk, and computes camera intrinsics.
+"""ingest: reads the input video (or a pre-extracted image-sequence folder),
+extracts frames to disk, and computes camera intrinsics.
 
 The only stage with no dependencies -- everything else in the pipeline builds
 on the frames and scene info this produces.
@@ -21,6 +22,10 @@ INPUT_FRAMES_DIRNAME = "input_frames"
 # depth estimation) are themselves trained on JPEG-compressed web imagery, so the
 # accuracy cost is negligible, and it's a fraction of the disk space/write time.
 JPEG_QUALITY = 95
+
+# `--input-video` accepts a directory of these instead of a video file -- see
+# `_ingest_image_folder`. Case-insensitive (`Path.suffix` preserves case).
+IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png"})
 
 # Phones tag "vertical" recordings with rotation metadata rather than
 # re-encoding pixels -- the sensor itself always captures landscape.
@@ -55,8 +60,10 @@ def _resolve_rotation(orientation_meta: float, raw_width: int, raw_height: int) 
     return rotate_code, raw_width, raw_height
 
 
-def run(runRecord: RunRecord) -> dict[str, str]:
-    video_path = runRecord.input.video_path
+def _ingest_video(video_path: str, frames_dir: Path) -> tuple[float, int, int, int, int]:
+    """`(fps, raw_width, width, height, frame_count)` -- `raw_width` is the
+    sensor's own pre-rotation width, needed separately by
+    `compute_intrinsics_matrix`'s own focal-length ratio."""
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         raise RuntimeError(f"Could not open video: {video_path}")
@@ -68,9 +75,6 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     rotate_code, width, height = _resolve_rotation(
         capture.get(cv2.CAP_PROP_ORIENTATION_META), raw_width, raw_height
     )
-
-    frames_dir = Path(runRecord.progress_dir) / INPUT_FRAMES_DIRNAME
-    frames_dir.mkdir(parents=True, exist_ok=True)
 
     frame_count = 0
     with frame_progress(None, total=total_frames, label=StageName.STAGE_0_INGEST_VIDEO.label) as progress_update:
@@ -91,6 +95,56 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     if frame_count == 0:
         raise RuntimeError(f"No frames could be read from video: {video_path}")
+    return fps, raw_width, width, height, frame_count
+
+
+def _ingest_image_folder(folder: Path, fps: float, frames_dir: Path) -> tuple[float, int, int, int, int]:
+    """`(fps, raw_width, width, height, frame_count)` -- `fps` is just
+    `RunInput.source_fps` passed back through (an image sequence has no
+    embedded frame rate the way a video container does; `validate_video_input`
+    enforces it's set before this stage ever runs). No rotation handling:
+    unlike a phone video, these are already-extracted or individually
+    authored images with no comparable sensor-orientation metadata to correct
+    for. `raw_width` equals `width` here -- there's no separate pre-rotation
+    sensor dimension to track."""
+    image_paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
+    if not image_paths:
+        raise RuntimeError(f"No JPEG/PNG images found in {folder}")
+
+    width = height = 0
+    frame_count = 0
+    for frame_count, image_path in enumerate(
+        frame_progress(image_paths, total=len(image_paths), label=StageName.STAGE_0_INGEST_VIDEO.label)
+    ):
+        frame = cv2.imread(str(image_path))
+        if frame is None:
+            raise RuntimeError(f"Could not read image: {image_path}")
+        if frame_count == 0:
+            height, width = frame.shape[:2]
+        frame_path = frames_dir / f"{frame_count:06d}.jpg"
+        if image_path.resolve() == frame_path.resolve():
+            continue
+        cv2.imwrite(str(frame_path), frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    return fps, width, width, height, frame_count + 1
+
+
+def run(runRecord: RunRecord) -> dict[str, str]:
+    video_path = runRecord.input.video_path
+    frames_dir = Path(runRecord.progress_dir) / INPUT_FRAMES_DIRNAME
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    if Path(video_path).is_dir():
+        if runRecord.input.source_fps is None or runRecord.input.source_fps <= 0:
+            # Normally caught earlier by validate_video_input (create_run.py/
+            # pipeline.run.py's own main()s) -- this is a defensive backstop
+            # for direct run() calls (tests, a resumed run whose progress.json
+            # predates that validator) that skip the CLI validation path.
+            raise RuntimeError("--source-fps is required when --input-video is a directory of images")
+        fps, raw_width, width, height, frame_count = _ingest_image_folder(
+            Path(video_path), runRecord.input.source_fps, frames_dir
+        )
+    else:
+        fps, raw_width, width, height, frame_count = _ingest_video(video_path, frames_dir)
 
     runRecord.scene.fps = fps
     runRecord.scene.width = width
