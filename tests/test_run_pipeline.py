@@ -185,7 +185,8 @@ def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeyp
 
     monkeypatch.setattr(run_pipeline_module, "create_run", fail_if_called)
     monkeypatch.setattr(
-        run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None, force_all=False: None
+        run_pipeline_module, "run_pipeline",
+        lambda progress, start_on_stage=None, stop_after_stage=None, force_all=False: None,
     )
     monkeypatch.setattr(
         sys, "argv",
@@ -225,7 +226,8 @@ def test_main_resumes_without_requiring_run_input_flags(tmp_path, monkeypatch, c
     )
 
     monkeypatch.setattr(
-        run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None, force_all=False: None
+        run_pipeline_module, "run_pipeline",
+        lambda progress, start_on_stage=None, stop_after_stage=None, force_all=False: None,
     )
     monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir)])
 
@@ -246,7 +248,8 @@ def test_main_applies_an_override_flag_when_resuming(tmp_path, monkeypatch, caps
     )
 
     monkeypatch.setattr(
-        run_pipeline_module, "run_pipeline", lambda progress, stop_after_stage=None, force_all=False: None
+        run_pipeline_module, "run_pipeline",
+        lambda progress, start_on_stage=None, stop_after_stage=None, force_all=False: None,
     )
     monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir), "--render-mask-previews"])
 

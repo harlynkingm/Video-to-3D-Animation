@@ -135,14 +135,18 @@ SMPLX_MODEL_PATH = TESTS_DIR.parent / "body_models" / "smplx" / "SMPLX_NEUTRAL.n
 
 
 def make_run_input(**overrides) -> RunInput:
-    return RunInput(
+    # A plain merge (not literal duplicate kwargs) so a caller can override
+    # any of these defaults too, e.g. zeroing focal_length_mm/sensor_width_mm
+    # to test the --intrinsics-k alternative camera-input path.
+    defaults = dict(
         video_path=str(TEST_VIDEO_PATH),
         human_prompt=HUMAN_PROMPT,
         object_prompt=OBJECT_PROMPT,
         focal_length_mm=FOCAL_LENGTH_MM,
         sensor_width_mm=SENSOR_WIDTH_MM,
-        **overrides,
     )
+    defaults.update(overrides)
+    return RunInput(**defaults)
 
 
 @pytest.fixture(scope="session")

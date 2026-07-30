@@ -96,13 +96,20 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     runRecord.scene.width = width
     runRecord.scene.height = height
     runRecord.scene.frame_count = frame_count
-    runRecord.scene.intrinsics_K = compute_intrinsics_matrix(
-        focal_length_mm=runRecord.input.focal_length_mm,
-        sensor_width_mm=runRecord.input.sensor_width_mm,
-        sensor_width_px=raw_width,
-        image_width_px=width,
-        image_height_px=height,
-    )
+    if runRecord.input.intrinsics_k is not None:
+        # Real calibration data, given as-is -- see RunInput.intrinsics_k's
+        # own comment for why this is preferred over the lens-spec path when
+        # both are available (a real K's principal point isn't necessarily
+        # centered the way compute_intrinsics_matrix has to assume).
+        runRecord.scene.intrinsics_K = runRecord.input.intrinsics_k
+    else:
+        runRecord.scene.intrinsics_K = compute_intrinsics_matrix(
+            focal_length_mm=runRecord.input.focal_length_mm,
+            sensor_width_mm=runRecord.input.sensor_width_mm,
+            sensor_width_px=raw_width,
+            image_width_px=width,
+            image_height_px=height,
+        )
 
     return {"frames_dir": str(frames_dir)}
 

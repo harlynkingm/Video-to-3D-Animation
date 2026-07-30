@@ -89,8 +89,9 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--input-video` | **Yes** | | Path to the source video file (MP4, MOV, MPEG, FLV, or WMV). |
 | `--output-dir` (`-o`) | **Yes** | | Directory to create for this run's state and outputs. |
 | `--human-prompt` | **Yes** | | Text description of the person to track, e.g. `"a tennis player"`. |
-| `--focal-length-mm` | **Yes** | | Camera focal length in mm, used to build the intrinsics matrix stage 0 requires. |
-| `--sensor-width-mm` | **Yes** | | Camera sensor width in mm, used alongside focal length to build the intrinsics matrix. |
+| `--focal-length-mm` | **Yes** (unless using `--intrinsics-k`) | | Camera focal length in mm, used to build the intrinsics matrix stage 0 requires. |
+| `--sensor-width-mm` | **Yes** (unless using `--intrinsics-k`) | | Camera sensor width in mm, used alongside focal length to build the intrinsics matrix. |
+| `--intrinsics-k` | Alternative to the 2 above | | Raw 3x3 camera intrinsics matrix as JSON, e.g. `'[[fx,0,cx],[0,fy,cy],[0,0,1]]'` for real calibration data. More accurate than the lens-spec path even when both are available, since that path has to assume a perfectly centered principal point and this doesn't. If you provide this, focal length and sensor width cannot also be used. |
 | `--run-id` | No | `--output-dir`'s own folder name | A human-readable label for the run. Doesn't affect anything on disk. |
 | `--object-prompt` | No | none | Text description of the object to track, e.g. `"a teddy bear"`. Omit if there's no object to track. |
 | `--object-shape-hint` | No | `auto` | Forces the tracked object's proxy shape to `box`, `ellipsoid`, or `cylinder` instead of letting stage 6 auto-fit whichever shape better matches the object. |
@@ -156,7 +157,7 @@ pixi run -e main python -m pipeline.create_run \
 pixi run -e main python -m pipeline.stages.stage_0_ingest_video -o runs/my_clip
 ```
 
-Extracts every frame to disk as JPEG (to `runs/my_clip/frames/`), and computes the camera intrinsics matrix from `--focal-length-mm`/`--sensor-width-mm` and the video's actual resolution.
+Extracts every frame to disk as JPEG (to `runs/my_clip/frames/`), and resolves the camera intrinsics matrix computed from `--focal-length-mm`/`--sensor-width-mm` and the video's resolution (or used directly from `--intrinsics-k` if provided).
 
 ### Stage 1. Mask and track
 

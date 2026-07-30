@@ -18,6 +18,7 @@ from .progress_tracker import (
     add_dataclass_cli_arguments,
     add_run_input_arguments,
     run_input_from_args,
+    validate_camera_input,
 )
 
 # The pipeline's dependency DAG. Stages not yet implemented are included here too
@@ -116,6 +117,9 @@ def main() -> None:
     args = parser.parse_args()
 
     run_input = run_input_from_args(args)
+    camera_error = validate_camera_input(run_input)
+    if camera_error:
+        parser.error(camera_error)
     runRecord = create_run(args.progress_dir, run_input, run_id=args.run_id)
     print(f"Created run {runRecord.run_id!r} at {args.progress_dir}")
 

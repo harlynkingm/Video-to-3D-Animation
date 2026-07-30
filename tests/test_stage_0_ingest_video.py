@@ -10,7 +10,9 @@ from pathlib import Path
 import cv2
 import pytest
 
-from conftest import FOCAL_LENGTH_MM, SENSOR_WIDTH_MM, TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_FPS, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH
+from conftest import FOCAL_LENGTH_MM, SENSOR_WIDTH_MM, TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_FPS, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH, make_run_input
+from pipeline.create_run import create_run
+from pipeline.stages import stage_0_ingest_video
 from pipeline.stages.stage_0_ingest_video import _resolve_rotation
 
 
@@ -40,6 +42,19 @@ def test_intrinsics_matrix_is_built_from_the_given_lens_info(runRecord, stage_0_
     assert K[0][2] == pytest.approx(TEST_VIDEO_WIDTH / 2)
     assert K[1][2] == pytest.approx(TEST_VIDEO_HEIGHT / 2)
     assert K[2][2] == 1.0
+
+
+def test_intrinsics_k_bypasses_the_computed_matrix_when_given(tmp_path):
+    """A one-off RunRecord (not the shared session-scoped `runRecord` fixture,
+    since this needs its own distinct RunInput) with a raw K given should use
+    it as-is, ignoring focal_length_mm/sensor_width_mm entirely."""
+    raw_k = [[123.0, 0.0, 45.0], [0.0, 123.0, 67.0], [0.0, 0.0, 1.0]]
+    run_input = make_run_input(focal_length_mm=0.0, sensor_width_mm=0.0, intrinsics_k=raw_k)
+    runRecord = create_run(tmp_path, run_input)
+
+    stage_0_ingest_video.run(runRecord)
+
+    assert runRecord.scene.intrinsics_K == raw_k
 
 
 def test_resolve_rotation_is_a_noop_for_unrotated_video():

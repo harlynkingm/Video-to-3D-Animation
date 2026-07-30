@@ -120,8 +120,22 @@ class RunInput:
         flag="--object-shape-hint", default=ObjectShapeHint.AUTO, parse=ObjectShapeHint,
         choices=[hint.value for hint in ObjectShapeHint],
     )
-    focal_length_mm: float = cli_field(flag="--focal-length-mm", default=0.0, required=True, value_type=float)
-    sensor_width_mm: float = cli_field(flag="--sensor-width-mm", default=0.0, required=True, value_type=float)
+    # Camera intrinsics: either lens/sensor specs (the common case -- a real
+    # phone/camera shoot, no calibration available) or a raw K matrix (real
+    # calibration data, e.g. a research dataset's own published intrinsics --
+    # also strictly more accurate than the lens-spec path even when both are
+    # available, since compute_intrinsics_matrix assumes a perfectly centered
+    # principal point, which a raw K doesn't have to). Exactly one path must
+    # be given -- see validate_camera_input, called by both create_run.py and
+    # pipeline.run.py's own main()s (the two places a fresh RunInput gets
+    # built from CLI args).
+    focal_length_mm: float = cli_field(flag="--focal-length-mm", default=0.0, required=False, value_type=float)
+    sensor_width_mm: float = cli_field(flag="--sensor-width-mm", default=0.0, required=False, value_type=float)
+    intrinsics_k: list[list[float]] | None = cli_field(
+        flag="--intrinsics-k", default=None, value_type=json.loads,
+        help='Raw 3x3 intrinsics matrix as JSON, e.g. \'[[fx,0,cx],[0,fy,cy],[0,0,1]]\' -- '
+             "an alternative to --focal-length-mm/--sensor-width-mm for real calibration data.",
+    )
     anchor_frame_override: int | None = cli_field(flag="--anchor-frame-override", default=None, value_type=int)
     render_mask_previews: bool = cli_field(
         flag="--render-mask-previews", default=False, bool_flag=True,
@@ -319,6 +333,27 @@ def run_input_from_args(args: argparse.Namespace) -> RunInput:
             if cli and cli["bool_flag"]:
                 setattr(run_input, f.name, True)
     return run_input
+
+
+def validate_camera_input(run_input: RunInput) -> str | None:
+    """Returns an error message if `run_input`'s camera intrinsics aren't
+    resolvable -- neither path given, or both given at once (ambiguous which
+    should win) -- else `None`. `focal_length_mm`/`sensor_width_mm` are
+    otherwise-required-looking fields that are no longer enforced by argparse
+    itself (see their own `cli_field` comment in `RunInput`), so this is the
+    one place that actually enforces a fresh run has SOME usable camera
+    input. Only meaningful for a *fresh* run: `apply_run_input_overrides`'s
+    resume/update path already only touches fields the caller explicitly
+    passed, so an existing run's own already-valid camera input is never at
+    risk there. Shared by create_run.py and pipeline.run.py's own main()s,
+    the two places a fresh RunInput gets built from CLI args."""
+    has_k = run_input.intrinsics_k is not None
+    has_focal = run_input.focal_length_mm > 0 and run_input.sensor_width_mm > 0
+    if has_k and has_focal:
+        return "--intrinsics-k cannot be combined with --focal-length-mm/--sensor-width-mm - provide exactly one"
+    if not has_k and not has_focal:
+        return "camera intrinsics required: either --intrinsics-k, or both --focal-length-mm and --sensor-width-mm"
+    return None
 
 
 def apply_run_input_overrides(existing: RunInput, args: argparse.Namespace) -> RunInput:
