@@ -7,6 +7,7 @@ info). Every stage script expects this file to already exist (see
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 
 from .progress_tracker import (
@@ -106,6 +107,7 @@ def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = Non
             stage.value: StageRecord(depends_on=[dep.value for dep in deps])
             for stage, deps in STAGE_DEPENDS_ON.items()
         },
+        created_at=time.time(),
     )
     runRecord.save()
     return runRecord

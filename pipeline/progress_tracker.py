@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import enum
 import json
+import time
 from dataclasses import MISSING, asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -466,12 +467,22 @@ class RunRecord:
     stages: dict[str, StageRecord] = field(default_factory=dict)
     outputs: RunOutputs = field(default_factory=RunOutputs)
     schema_version: int = SCHEMA_VERSION
+    # Unix timestamps (seconds). created_at is stamped once, by create_run();
+    # updated_at is refreshed on every save() below, regardless of call site,
+    # so it always reflects when this run last actually progressed. A run
+    # directory from before this field existed loads with both at 0.0 (the
+    # dataclass default) rather than failing -- there's no real "created"
+    # timestamp to recover for those, and 0.0 reads unambiguously as "unknown"
+    # rather than a plausible-looking but fabricated date.
+    created_at: float = 0.0
+    updated_at: float = 0.0
 
     @property
     def path(self) -> Path:
         return Path(self.progress_dir) / PROGRESS_JSON_NAME
 
     def save(self) -> None:
+        self.updated_at = time.time()
         data = asdict(self)
         tmp_path = self.path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2))
