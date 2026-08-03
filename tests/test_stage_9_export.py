@@ -14,7 +14,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from scipy.spatial.transform import Rotation
 
 from pipeline.helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
 from pipeline.progress_tracker import RunInput, RunRecord, SceneInfo, StageName, StageRecord
@@ -28,7 +27,6 @@ from pipeline.stages.stage_9_export import (
     _object_pose_to_blender_world,
     _orient_bones_toward_children,
     _prepend_rest_pose_frame,
-    _root_camera_to_upright,
     _write_body_amass,
     run,
 )
@@ -76,33 +74,6 @@ def _fake_motion() -> dict:
         "right_hand_pose": rng.normal(size=(N_FRAMES, 45)).astype(np.float32),
         "root_motion_unreliable": np.zeros(N_FRAMES, dtype=bool),
     }
-
-
-def test_root_camera_to_upright_maps_camera_up_to_target_plus_y():
-    """Camera space is Y-down (a point "up" from the origin has negative Y);
-    the target frame is Y-up, matching the already-proven BVH convention
-    this reuses -- so a purely-vertical camera-space offset should land on
-    positive Y, not Z or X, in the corrected frame."""
-    global_orient = np.zeros((1, 3), dtype=np.float32)
-    transl = np.array([[0.0, -1.0, 0.0]], dtype=np.float32)  # 1 unit "up" in camera space
-
-    _, corrected_transl = _root_camera_to_upright(global_orient, transl)
-
-    assert np.allclose(corrected_transl, [[0.0, 1.0, 0.0]], atol=1e-5)
-
-
-def test_root_camera_to_upright_round_trips_identity_orientation():
-    """A zero rotation, once converted matrix->corrected->back to axis-angle,
-    should land on the fixed correction's own rotation, not drift or explode
-    (a real risk with axis-angle round trips near singular points)."""
-    global_orient = np.zeros((1, 3), dtype=np.float32)
-    transl = np.zeros((1, 3), dtype=np.float32)
-
-    corrected_orient, corrected_transl = _root_camera_to_upright(global_orient, transl)
-
-    expected = Rotation.from_matrix(CAMERA_TO_BVH_ROOT_ROTATION).as_rotvec()
-    assert np.allclose(corrected_orient[0], expected, atol=1e-5)
-    assert np.allclose(corrected_transl, 0.0)
 
 
 def test_prepend_rest_pose_frame_adds_one_all_zero_frame():

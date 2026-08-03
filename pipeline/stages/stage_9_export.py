@@ -13,7 +13,7 @@ stage 8's own docstring for the attached/held design). Human-only runs
 export body-only.
 
 Retargeted motion is GVHMR's own incam frame, reoriented upright for the
-addon's import path (`_root_camera_to_upright`); floor height
+addon's import path (`bvh_export.root_camera_to_upright`); floor height
 (`_lowest_foot_z`) and a prepended rest-pose frame
 (`_prepend_rest_pose_frame`) cover what incam has no reference for.
 Frames flagged unreliable (stage 2) get pelvis keyframes deleted, not
@@ -26,7 +26,6 @@ import math
 from pathlib import Path
 
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 # Deliberately never imports gvhmr_adapter/hamer_adapter, even just for their
 # KEY_* string constants -- both pull in torch at module load time, and the
@@ -34,7 +33,7 @@ from scipy.spatial.transform import Rotation
 # (object_extent_fit is plain numpy underneath, safe to import directly).
 from ..algorithms.object_extent_fit import KEY_KIND, KIND_BOX, KIND_CYLINDER, KIND_ELLIPSOID
 from ..helpers.amass_export_helper import write_amass_npz
-from ..helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
+from ..helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION, root_camera_to_upright
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 
@@ -124,20 +123,6 @@ _ADDON_ANIM_FORMAT = "SMPL-X"
 # calling it actually validates), so this always explicitly enables the
 # addon rather than checking first.
 _ADDON_MODULE_NAME = "bl_ext.user_default.smplx_blender_addon"
-
-
-def _root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Reorients the root from camera space into the addon's expected
-    upright frame -- the same change of basis already proven for the BVH
-    previews, left-multiplied onto the root's own rotation matrix (not the
-    other joints, whose rotations are relative to their parent already) and
-    applied to the root translation the same way a direction vector would
-    need (see `smplx_bvh_preview.py`'s identical pattern)."""
-    root_matrix = Rotation.from_rotvec(global_orient).as_matrix()
-    root_matrix = CAMERA_TO_BVH_ROOT_ROTATION @ root_matrix
-    corrected_orient = Rotation.from_matrix(root_matrix).as_rotvec()
-    corrected_transl = transl @ CAMERA_TO_BVH_ROOT_ROTATION.T
-    return corrected_orient, corrected_transl
 
 
 # Maps the AMASS-file convention `_write_body_amass` writes (X, Y-up, Z) into
@@ -423,7 +408,7 @@ def _add_attachment_constraint(
 
 # The rest frame's own root orientation is the identity SMPL-X pose *plus*
 # this yaw, not literal zero. Zero, written directly into this function's
-# already-upright AMASS space (it bypasses _root_camera_to_upright entirely,
+# already-upright AMASS space (it bypasses root_camera_to_upright entirely,
 # unlike every real frame), renders as a fixed "-Y facing" in Blender's own
 # world space -- a mismatch against where the real motion's own first frame
 # actually faces (+X, the direction CAMERA_TO_BVH_ROOT_ROTATION's own
@@ -481,7 +466,7 @@ def _write_body_amass(motion: dict, fps: float, out_path: Path, *, floor_offset:
     environment, not just `export`.
 
     `floor_offset` shifts the root's own up-axis translation by a constant
-    (added post-rotation, in the same upright frame `_root_camera_to_upright`
+    (added post-rotation, in the same upright frame `root_camera_to_upright`
     already produces) -- incam space has no inherent floor reference, so
     without this the character's absolute height is wherever GVHMR's raw
     numbers happened to put it (confirmed on a real clip: ~1.7m underground).
@@ -489,7 +474,7 @@ def _write_body_amass(motion: dict, fps: float, out_path: Path, *, floor_offset:
     from the source data alone) and passes it in; callers that don't care
     about floor placement can omit it.
     """
-    global_orient, transl = _root_camera_to_upright(motion[_KEY_GLOBAL_ORIENT], motion[_KEY_TRANSL])
+    global_orient, transl = root_camera_to_upright(motion[_KEY_GLOBAL_ORIENT], motion[_KEY_TRANSL])
     transl = transl.copy()
     transl[:, 1] += floor_offset  # AMASS's own up axis
 

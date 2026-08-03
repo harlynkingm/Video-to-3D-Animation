@@ -6,14 +6,17 @@ Depends on stage 1's human mask (for the per-frame bbox GVHMR needs), not
 just stage 0's frames -- see `gvhmr_adapter.py`'s module docstring for why no
 mask-to-video conversion is needed anywhere in this step.
 
-If `RunInput.render_motion_preview` is set, also writes an AMASS-format `.npz` of
-the world-grounded ("global") motion -- importable into Blender via the
+If `RunInput.render_motion_preview` is set, also writes an AMASS-format `.npz`
+of the incam motion, reoriented upright the same way stage 9's own export
+does (`bvh_export.root_camera_to_upright`) -- importable into Blender via the
 already-installed `jtesch/smplx_blender_addon`'s own "Add Animation" operator
 (`anim_format="AMASS"`) for visual verification against a real, correctly-shaped
-and -posed SMPL-X body, not just raw numbers. This is not a from-scratch export
-format: it's the exact input format that operator (and eventually this
-project's own export stage) already expects, so writing it here is a small
-step, not new infrastructure.
+and -posed SMPL-X body, not just raw numbers. incam, not the vestigial
+"global" frame, since every stage past this one (and the real export) reads
+incam exclusively -- this preview should show what will actually ship. This
+is not a from-scratch export format: it's the exact input format that
+operator (and this project's own export stage) already expects, so writing
+it here is a small step, not new infrastructure.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.motion_smoothing import smooth_rotation_sequence, smooth_translation_sequence
 from ..helpers.amass_export_helper import write_amass_npz
+from ..helpers.bvh_export import root_camera_to_upright
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 from .stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
@@ -84,8 +88,9 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     finally:
         adapter.unload()
 
-    # Smooth both coordinate frames (incam feeds stage 5/6, global feeds the
-    # eventual export + this stage's Blender preview) before anything reads them.
+    # Smooth both coordinate frames (incam feeds stage 5/6, the real export,
+    # and this stage's own Blender preview; global is otherwise vestigial but
+    # still smoothed the same way for consistency) before anything reads them.
     window = runRecord.input.body_smoothing_window
     cutoff = runRecord.input.body_translation_cutoff
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
@@ -109,18 +114,18 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     if runRecord.input.render_motion_preview:
         preview_path = motion_dir / MOTION_PREVIEW_FILENAME
-        # *global* (world-grounded) pose, not *incam* -- this artifact is for
-        # standing a character up in Blender's own world space, which is what
-        # GVHMR's "global" frame is for; `incam` is for this project's own
-        # later depth/scale alignment, a different consumer with a different
-        # need. No hand pose yet at this point in the pipeline (left/right
-        # default to flat/neutral).
-        global_params = result[KEY_PRED_SMPL_PARAMS_GLOBAL]
+        # incam, reoriented upright -- see module docstring for why incam,
+        # not the vestigial "global" frame. No hand pose yet at this point
+        # in the pipeline (left/right default to flat/neutral).
+        incam_params = result[KEY_PRED_SMPL_PARAMS_INCAM]
+        preview_orient, preview_transl = root_camera_to_upright(
+            incam_params[KEY_GLOBAL_ORIENT].numpy(), incam_params[KEY_TRANSL].numpy()
+        )
         write_amass_npz(
-            global_orient=global_params[KEY_GLOBAL_ORIENT].numpy(),
-            body_pose=global_params[KEY_BODY_POSE].numpy(),
-            betas=global_params[KEY_BETAS][0].numpy(),
-            transl=global_params[KEY_TRANSL].numpy(),
+            global_orient=preview_orient,
+            body_pose=incam_params[KEY_BODY_POSE].numpy(),
+            betas=incam_params[KEY_BETAS][0].numpy(),
+            transl=preview_transl,
             fps=runRecord.scene.fps,
             out_path=preview_path,
         )

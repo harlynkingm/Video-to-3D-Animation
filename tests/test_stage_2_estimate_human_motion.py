@@ -23,6 +23,7 @@ from pipeline.adapters.gvhmr.gvhmr_adapter import (
     KEY_TRANSL,
     KEY_TRANSL_INCAM_RAW,
 )
+from pipeline.helpers.bvh_export import root_camera_to_upright
 from conftest import TEST_VIDEO_FRAME_COUNT
 
 MAX_PLAUSIBLE_JOINT_ROTATION_RAD = 3.15  # any single axis-angle rotation maxes out at pi radians
@@ -105,3 +106,21 @@ def test_motion_preview_npz_is_a_valid_amass_file(stage_2_result):
         assert data["poses"].shape == (TEST_VIDEO_FRAME_COUNT, 165)
         assert str(data["gender"]) == "neutral"
         assert not np.isnan(data["poses"]).any()
+
+
+def test_motion_preview_uses_incam_reoriented_upright(stage_2_result):
+    # The preview must show what actually ships (incam, per stage 9's own
+    # export), not the vestigial "global" frame -- reoriented the identical
+    # way stage 9 reorients it, not a separately-derived transform.
+    result = _load_motion(stage_2_result)
+    incam = result[KEY_PRED_SMPL_PARAMS_INCAM]
+    expected_orient, expected_transl = root_camera_to_upright(
+        incam[KEY_GLOBAL_ORIENT].numpy(), incam[KEY_TRANSL].numpy()
+    )
+
+    with np.load(stage_2_result["motion_preview"]) as data:
+        assert np.allclose(data["trans"], expected_transl, atol=1e-5)
+        assert np.allclose(data["poses"][:, :3], expected_orient, atol=1e-5)
+        # body_pose (poses[:, 3:66]) also comes from incam, shared with global
+        # via process_ik -- but confirm against incam specifically, not assumed.
+        assert np.allclose(data["poses"][:, 3:66], incam[KEY_BODY_POSE].numpy(), atol=1e-5)

@@ -9,9 +9,10 @@ Reuses `write_bvh` and SMPL-X's own rest skeleton (which loads with plain numpy,
 no chumpy). Body joints are driven by the merged `global_orient`/`body_pose`,
 fingers by `left_hand_pose`/`right_hand_pose`, and the root's own position by
 `transl` -- GVHMR's own root translation, given the same camera-space -> BVH
-change of basis as the root's rotation (`CAMERA_TO_BVH_ROOT_ROTATION`), since a
-position vector needs the same reorientation a direction does. This is the only
-BVH preview in the pipeline with real root motion; stage 4's hands-only preview
+change of basis as the root's rotation (`bvh_export.camera_to_upright_
+rotation_matrix`/`camera_to_upright_translation`), since a position vector
+needs the same reorientation a direction does. This is the only BVH preview
+in the pipeline with real root motion; stage 4's hands-only preview
 (`hamer_bvh_preview.py`) stays root-locked on purpose -- it shows both hands in
 isolation, side by side, where a moving root would only get in the way.
 """
@@ -24,7 +25,7 @@ import numpy as np
 import torch
 from scipy.spatial.transform import Rotation
 
-from .bvh_export import CAMERA_TO_BVH_ROOT_ROTATION, write_bvh
+from .bvh_export import camera_to_upright_rotation_matrix, camera_to_upright_translation, write_bvh
 
 # Repo root is 2 levels up (helpers/ -> pipeline/ -> root).
 SMPLX_MODEL_PATH = Path(__file__).resolve().parents[2] / "body_models" / "smplx" / "SMPLX_NEUTRAL.npz"
@@ -112,11 +113,9 @@ def render_body_hands_bvh(
         for out_i, smplx_idx in enumerate(INCLUDED_JOINTS):
             rotations[frame, out_i] = Rotation.from_rotvec(axis_angle_for(smplx_idx, frame)).as_matrix()
     # Reorient the whole skeleton from camera space into BVH's Y-up convention
-    # by left-multiplying only the root (Pelvis, out_i 0)'s own rotation.
-    rotations[:, 0] = CAMERA_TO_BVH_ROOT_ROTATION @ rotations[:, 0]
-    # A position vector needs the same reorientation a direction does -- applied
-    # here as a per-frame matrix-vector product, not a left-multiply of a
-    # rotation, since translation isn't a rotation to compose.
-    root_translation = transl @ CAMERA_TO_BVH_ROOT_ROTATION.T
+    # -- only the root (Pelvis, out_i 0)'s own rotation/translation, see
+    # bvh_export.py's own docstrings for why.
+    rotations[:, 0] = camera_to_upright_rotation_matrix(rotations[:, 0])
+    root_translation = camera_to_upright_translation(transl)
 
     write_bvh(out_path, names, parents, offsets, rotations, fps, root_translation=root_translation)

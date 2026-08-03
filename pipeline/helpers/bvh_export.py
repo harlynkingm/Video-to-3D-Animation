@@ -51,6 +51,37 @@ _EULER_ORDER = "ZXY"  # matches _ROT_CHANNELS; scipy intrinsic convention
 CAMERA_TO_BVH_ROOT_ROTATION = np.array([[0, 0, -1], [0, -1, 0], [-1, 0, 0]], dtype=float)
 
 
+def camera_to_upright_rotation_matrix(root_matrix: np.ndarray) -> np.ndarray:
+    """Left-multiplies a root joint's own (..., 3, 3) rotation matrix by
+    `CAMERA_TO_BVH_ROOT_ROTATION` -- not the other joints, whose rotations
+    are relative to their parent already. The one actual reorientation step
+    every consumer below shares; `root_camera_to_upright` wraps it for a
+    caller working in axis-angle (SMPL-X's own convention) instead of
+    matrices directly."""
+    return CAMERA_TO_BVH_ROOT_ROTATION @ root_matrix
+
+
+def camera_to_upright_translation(transl: np.ndarray) -> np.ndarray:
+    """A position vector needs the same reorientation a direction does --
+    applied as a per-frame matrix-vector product, not a left-multiply of a
+    rotation, since translation isn't a rotation to compose."""
+    return transl @ CAMERA_TO_BVH_ROOT_ROTATION.T
+
+
+def root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Reorients a root joint from camera space into the upright frame above,
+    given as axis-angle (SMPL-X's own convention) rather than a matrix --
+    see `camera_to_upright_rotation_matrix`/`camera_to_upright_translation`
+    for the actual reorientation math this composes. Shared by every
+    consumer that has to hand GVHMR's own incam root to something expecting
+    an upright/gravity-aligned one -- stage 9's own export and stage 2's
+    `--render-motion-preview` both need this exact correction."""
+    root_matrix = camera_to_upright_rotation_matrix(Rotation.from_rotvec(global_orient).as_matrix())
+    corrected_orient = Rotation.from_matrix(root_matrix).as_rotvec()
+    corrected_transl = camera_to_upright_translation(transl)
+    return corrected_orient, corrected_transl
+
+
 def _children_of(parents: list[int]) -> dict[int, list[int]]:
     children: dict[int, list[int]] = {i: [] for i in range(len(parents))}
     for j, p in enumerate(parents):
