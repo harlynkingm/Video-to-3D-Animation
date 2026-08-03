@@ -55,7 +55,6 @@ class StageStatus(enum.StrEnum):
     RUNNING = "running"
     COMPLETE = "complete"
     FAILED = "failed"
-    SKIPPED = "skipped"
 
 
 class ObjectShapeHint(enum.StrEnum):

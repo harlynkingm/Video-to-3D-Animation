@@ -292,14 +292,6 @@ class PositionEmbeddingSine2(nn.Module):
         self.temperature = 10000.0
         self.scale = 2 * math.pi
 
-    def _encode_xy(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        dim_t = self.temperature ** (2 * (torch.arange(self.half_dim, dtype=torch.float32, device=x.device) // 2) / self.half_dim)
-        pos_x = x[:, None] * self.scale / dim_t
-        pos_y = y[:, None] * self.scale / dim_t
-        pos_x = torch.stack((pos_x[:, 0::2].sin(), pos_x[:, 1::2].cos()), dim=2).flatten(1)
-        pos_y = torch.stack((pos_y[:, 0::2].sin(), pos_y[:, 1::2].cos()), dim=2).flatten(1)
-        return pos_x, pos_y
-
 
 class GeometryEncoder(nn.Module):
     """Only the unconditional cls-token path is actually run by this project (see module
