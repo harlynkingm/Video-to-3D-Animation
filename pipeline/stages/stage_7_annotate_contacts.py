@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 from ..adapters.depth_anything3_adapter import KEY_DEPTH, DepthAnything3Adapter
-from ..adapters.gvhmr.gvhmr_adapter import KEY_BETAS, KEY_BODY_POSE, KEY_GLOBAL_ORIENT, KEY_TRANSL
+from ..adapters.gvhmr.gvhmr_adapter import KEY_BETAS, KEY_BODY_POSE, KEY_GLOBAL_ORIENT, KEY_TRANSL, KEY_TRANSL_INCAM_RAW
 from ..adapters.hamer.hamer_adapter import KEY_LEFT_HAND_POSE, KEY_RIGHT_HAND_POSE
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.contact_detection import (
@@ -41,6 +41,7 @@ from ..algorithms.contact_detection import (
     REGION_JOINTS,
     REGION_NAMES,
     ContactEvent,
+    bridge_short_gaps,
     consolidate_overlapping_events,
     depth_gap_for_joint,
     detect_contact_events,
@@ -207,14 +208,28 @@ def _is_low_confidence(event: ContactEvent, fps: float) -> bool:
     occlusion on its own (see `SUSTAINED_CONTACT_DURATION_SECONDS`), in which
     case the depth gap is ignored entirely rather than overriding strong 2D
     evidence with an unreliable single-frame reading. Absent a depth reading
-    (mask missing that frame), falls back to 2D confidence alone; a small gap
-    overrides a merely-noisy 2D score."""
+    (mask missing that frame), falls back to 2D confidence alone.
+
+    A *small* gap overriding a merely-noisy 2D score is only trusted for
+    `GRIP_CAPABLE_REGIONS` (see that constant's own comment) -- real
+    evidence motivating this override was a hand grip specifically (0.01m
+    gap, 0.49 mean confidence, on a real coffee-mug clip). Elsewhere, a small
+    depth gap is common even without contact (e.g. an object resting on the
+    floor near a passing foot is genuinely close in both image space and
+    real depth without ever being touched, confirmed on another real clip:
+    0.043m gap, 0.55 mean confidence, a foot that never actually touched the
+    object) -- so a region outside that set falls back to the plain 2D-
+    confidence read instead of being rescued by depth."""
     duration_frames = event.end_frame - event.start_frame + 1
     if event.mean_confidence >= LOW_CONFIDENCE_THRESHOLD and duration_frames >= SUSTAINED_CONTACT_DURATION_SECONDS * fps:
         return False
     if event.depth_gap_m is None:
         return event.mean_confidence < LOW_CONFIDENCE_THRESHOLD
-    return event.depth_gap_m > DEPTH_GAP_OCCLUSION_THRESHOLD_M
+    if event.depth_gap_m > DEPTH_GAP_OCCLUSION_THRESHOLD_M:
+        return True
+    if event.regions[0] not in GRIP_CAPABLE_REGIONS:
+        return event.mean_confidence < LOW_CONFIDENCE_THRESHOLD
+    return False
 
 
 def _event_to_dict(event: ContactEvent, fps: float) -> dict:
@@ -360,6 +375,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             ))
 
         events = consolidate_overlapping_events(events)
+        events = bridge_short_gaps(events, runRecord.scene.fps)
         events = _verify_events_with_depth(events, joints, K, object_masks, human_masks, frames_dir, native_hw)
 
     contacts_dir = Path(runRecord.progress_dir) / CONTACTS_DIRNAME

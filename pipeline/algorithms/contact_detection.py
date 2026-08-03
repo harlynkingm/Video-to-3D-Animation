@@ -367,6 +367,56 @@ def consolidate_overlapping_events(events: list[ContactEvent]) -> list[ContactEv
     return consolidated
 
 
+# Regions a gap is allowed to bridge across -- deliberately scoped to the one
+# case real footage has actually validated (a hand-to-hand pass, or a single
+# hand's own brief tracking dropout mid-grip), not every region: bridging a
+# leg or head event into a hand event would assume a physically nonsensical
+# transfer this project has no evidence for. Extend this set only once a real
+# clip demonstrates a need for it (e.g. a hand-to-head placement).
+BRIDGEABLE_REGIONS = frozenset({"left_hand", "right_hand", "left_arm", "right_arm"})
+
+# Max gap (seconds) between two otherwise-separate events, within
+# BRIDGEABLE_REGIONS, that gets closed rather than left as a frozen "held"
+# stretch in the final animation -- covers a single joint's own brief
+# tracking dropout mid-grip, and a fast hand-to-hand pass (the object is
+# never actually let go, just briefly ambiguous which hand is holding it
+# while both are close together). An initial estimate, same caveat as every
+# other threshold here: calibrated against one real clip's own observed gaps
+# (14 frames at ~30fps ≈ 0.47s), not a systematic multi-clip calibration.
+BRIDGE_GAP_MAX_SECONDS = 0.5
+
+
+def bridge_short_gaps(events: list[ContactEvent], fps: float) -> list[ContactEvent]:
+    """Closes a short gap between two temporally-adjacent (not overlapping --
+    `consolidate_overlapping_events` already handles overlap), non-consolidated
+    events by extending each to meet at their shared midpoint, when both
+    regions are in `BRIDGEABLE_REGIONS` and the gap is within
+    `BRIDGE_GAP_MAX_SECONDS`. Deliberately does NOT merge the two into one
+    event, unlike `consolidate_overlapping_events`: a hand-to-hand pass is two
+    genuinely different holding joints, and stage 8 rigidly attaches the
+    object to one joint per event, so collapsing them into a single event
+    would rigidly (and wrongly) attach the object to whichever joint "won"
+    for the entire bridged span, including the frames it had already actually
+    passed to the other hand. Two separate, abutting events instead keep each
+    joint's own rigid attachment correct on its own side of the hand-off, with
+    no frozen gap where the object would otherwise sit motionless mid-pass.
+    Mutates and returns the input list's own events in place (same convention
+    as `_verify_events_with_depth`'s `depth_gap_m` mutation)."""
+    if len(events) < 2:
+        return events
+    max_gap_frames = round(BRIDGE_GAP_MAX_SECONDS * fps)
+    ordered = sorted(events, key=lambda e: e.start_frame)
+    for prev, nxt in zip(ordered, ordered[1:]):
+        if prev.regions[0] not in BRIDGEABLE_REGIONS or nxt.regions[0] not in BRIDGEABLE_REGIONS:
+            continue
+        gap = nxt.start_frame - prev.end_frame - 1
+        if 0 < gap <= max_gap_frames:
+            midpoint = (prev.end_frame + nxt.start_frame) // 2
+            prev.end_frame = midpoint
+            nxt.start_frame = midpoint + 1
+    return ordered
+
+
 def _nearest_depth(depth: np.ndarray, mask: np.ndarray, pixel: np.ndarray) -> float | None:
     """DA3's own depth value at `mask`'s own pixel nearest to `pixel` -- not a
     literal same-pixel lookup, since `pixel` (a joint's 2D projection) can

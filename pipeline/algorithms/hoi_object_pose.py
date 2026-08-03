@@ -29,7 +29,7 @@ import torch
 from scipy.spatial.transform import Rotation
 
 from ..adapters.gvhmr.gvhmr_forward_kinematics import forward_kinematics
-from .contact_detection import REGION_JOINTS
+from .contact_detection import attachment_joint_index
 
 # SMPL-X pelvis + 21 body joints -- SmplxSkeleton's own scope (see that
 # module's docstring); every real REGION_JOINTS attachment joint (wrist,
@@ -333,7 +333,7 @@ def compute_object_pose_sequence(
 
     for i, event in enumerate(events_sorted):
         start, end = event["start_frame"], event["end_frame"]
-        joint_idx = REGION_JOINTS[event["region"]][-1]
+        joint_idx = attachment_joint_index(event["region"])
 
         found = _find_snap_measurement(start, end, object_position_fn)
         if found is None:

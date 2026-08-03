@@ -16,15 +16,17 @@ import torch
 
 from pipeline.adapters.depth_anything3_adapter import KEY_DEPTH
 from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks
-from pipeline.algorithms.contact_detection import REGION_NAMES, ContactEvent
+from pipeline.algorithms.contact_detection import HEAD_JOINT, HEAD_TOP_JOINT_INDEX, REGION_NAMES, ContactEvent
 from pipeline.stages.stage_0_ingest_video import INPUT_FRAMES_DIRNAME
 from pipeline.stages import stage_7_annotate_contacts
 from pipeline.stages.stage_7_annotate_contacts import (
     DEPTH_GAP_OCCLUSION_THRESHOLD_M,
     LOW_CONFIDENCE_THRESHOLD,
     OUTPUT_CONTACTS_PREVIEW,
+    SMPLX_MODEL_PATH,
     SUSTAINED_CONTACT_DURATION_SECONDS,
     _LazyMaskLoader,
+    _all_frame_joints,
     _event_to_dict,
     _render_contacts_preview,
     _verify_events_with_depth,
@@ -227,6 +229,24 @@ def test_event_to_dict_trusts_a_long_sustained_confident_event_despite_a_large_d
         peak_frame=5, mean_confidence=LOW_CONFIDENCE_THRESHOLD, depth_gap_m=0.4,
     )
     assert _event_to_dict(event, FPS)["is_low_confidence"] is False
+
+
+def test_event_to_dict_flags_a_small_depth_gap_for_a_non_grip_region():
+    """Real case from `testCoffeeMug` that motivated this: a mug resting on
+    the floor happened to sit right next to a passing foot -- weak 2D
+    confidence (0.55), and, since the object and foot really are close in
+    real space (both near the floor), also a small depth gap (0.043m), even
+    though the foot never touched it. A hand grip gets the benefit of the
+    doubt here (see the test above) because a real grip's own wrap-around
+    geometry is a known, validated reason for a small gap to under-represent
+    confidence -- there's no equivalent reason for a leg, so a small gap
+    alone shouldn't rescue a weak score for a non-`GRIP_CAPABLE_REGIONS`
+    region the way it does for a hand/arm."""
+    event = ContactEvent(
+        regions=["left_leg"], joint="ankle", start_frame=565, end_frame=580, peak_frame=570,
+        mean_confidence=0.55, depth_gap_m=0.043,
+    )
+    assert _event_to_dict(event, FPS)["is_low_confidence"] is True
 
 
 class _FakeDepthAdapter:

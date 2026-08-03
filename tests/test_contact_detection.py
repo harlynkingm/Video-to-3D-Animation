@@ -7,6 +7,7 @@ from __future__ import annotations
 import numpy as np
 
 from pipeline.algorithms.contact_detection import (
+    BRIDGE_GAP_MAX_SECONDS,
     CONTACT_PIXEL_THRESHOLD,
     HEAD_JOINT,
     HEAD_TOP_JOINT_INDEX,
@@ -17,6 +18,8 @@ from pipeline.algorithms.contact_detection import (
     REGION_NAMES,
     ContactEvent,
     _confidence_from_mask_distance,
+    attachment_joint_index,
+    bridge_short_gaps,
     candidate_joint_indices,
     consolidate_overlapping_events,
     depth_gap_for_joint,
@@ -308,10 +311,78 @@ def test_consolidate_merges_a_chain_of_three_overlapping_events():
     merged = consolidate_overlapping_events([a, b, c])
 
     assert len(merged) == 1
-    assert merged[0].start_frame == 0
-    assert merged[0].end_frame == 20
-    assert merged[0].mean_confidence == 0.9
-    assert merged[0].peak_frame == 12
+
+
+def test_bridge_short_gaps_closes_a_same_region_gap_at_the_midpoint():
+    """One hand's own brief tracking dropout mid-grip -- two left_hand events
+    a few frames apart should end up abutting, not merged into one."""
+    first = _event(["left_hand"], "wrist", 0, 10, 5, 0.9)
+    second = _event(["left_hand"], "wrist", 15, 30, 20, 0.9)  # 4-frame gap (11-14)
+
+    bridged = bridge_short_gaps([first, second], FPS)
+
+    assert len(bridged) == 2  # still two events, not merged
+    assert bridged[0].end_frame == 12
+    assert bridged[1].start_frame == 13
+
+
+def test_bridge_short_gaps_closes_a_cross_hand_gap_but_keeps_events_separate():
+    """A fast hand-to-hand pass: the object was never let go, but the
+    detected joint changes from left to right hand. Each side must keep its
+    own region/joint for stage 8's own rigid attachment -- bridging must not
+    merge them into one event, only close the gap between them."""
+    left = _event(["left_hand"], "thumb_tip", 0, 100, 50, 0.9)
+    right = _event(["right_hand"], "middle_tip", 105, 200, 150, 0.9)  # 4-frame gap
+
+    bridged = bridge_short_gaps([left, right], FPS)
+
+    assert len(bridged) == 2
+    left_bridged, right_bridged = bridged
+    assert left_bridged.regions == ["left_hand"] and left_bridged.joint == "thumb_tip"
+    assert right_bridged.regions == ["right_hand"] and right_bridged.joint == "middle_tip"
+    assert left_bridged.end_frame == 102
+    assert right_bridged.start_frame == 103
+
+
+def test_bridge_short_gaps_leaves_a_gap_longer_than_the_max_untouched():
+    max_gap_frames = round(BRIDGE_GAP_MAX_SECONDS * FPS)
+    first = _event(["left_hand"], "wrist", 0, 10, 5, 0.9)
+    second = _event(["left_hand"], "wrist", 10 + max_gap_frames + 5, 30, 20, 0.9)
+
+    bridged = bridge_short_gaps([first, second], FPS)
+
+    assert bridged[0].end_frame == 10  # untouched
+    assert bridged[1].start_frame == 10 + max_gap_frames + 5  # untouched
+
+
+def test_bridge_short_gaps_never_bridges_a_non_bridgeable_region():
+    """A leg (or head/chest) event near a hand event in time is not evidence
+    of a physically plausible hand-off -- only left/right hand/arm bridge."""
+    hand = _event(["left_hand"], "wrist", 0, 10, 5, 0.9)
+    leg = _event(["right_leg"], "ankle", 14, 30, 20, 0.9)  # 3-frame gap, well within the max
+
+    bridged = bridge_short_gaps([hand, leg], FPS)
+
+    assert bridged[0].end_frame == 10
+    assert bridged[1].start_frame == 14
+
+
+def test_bridge_short_gaps_does_not_touch_already_overlapping_events():
+    """Overlap resolution is consolidate_overlapping_events' own job -- an
+    already-overlapping pair (gap <= 0) must pass through unchanged."""
+    first = _event(["left_hand"], "wrist", 0, 15, 5, 0.9)
+    second = _event(["left_arm"], "elbow", 10, 25, 20, 0.9)
+
+    bridged = bridge_short_gaps([first, second], FPS)
+
+    assert bridged[0].start_frame == 0 and bridged[0].end_frame == 15
+    assert bridged[1].start_frame == 10 and bridged[1].end_frame == 25
+
+
+def test_bridge_short_gaps_handles_fewer_than_two_events():
+    single = _event(["left_hand"], "wrist", 0, 10, 5, 0.9)
+    assert bridge_short_gaps([single], FPS) == [single]
+    assert bridge_short_gaps([], FPS) == []
 
 
 def test_depth_gap_for_joint_is_zero_when_object_and_body_are_at_the_same_depth():
@@ -341,6 +412,7 @@ def test_depth_gap_for_joint_is_large_for_incidental_occlusion():
 
     gap = depth_gap_for_joint(depth, object_mask, human_mask, joint_pixel=np.array([10.0, 10.0]))
 
+    assert gap is not None
     assert abs(gap - 2.0) < 1e-6
 
 

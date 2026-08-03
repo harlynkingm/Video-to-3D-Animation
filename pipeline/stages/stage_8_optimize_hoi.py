@@ -29,6 +29,7 @@ import torch
 from ..adapters.depth_anything3_adapter import KEY_DEPTH, DepthAnything3Adapter
 from ..adapters.gvhmr.gvhmr_adapter import KEY_BETAS, KEY_BODY_POSE, KEY_GLOBAL_ORIENT, KEY_TRANSL
 from ..adapters.gvhmr.gvhmr_smplx_skeleton import SmplxSkeleton
+from ..algorithms.contact_detection import GRIP_CAPABLE_REGIONS, ContactEvent, bridge_short_gaps
 from ..algorithms.depth_unprojection import unproject_depth_to_points
 from ..algorithms.hoi_object_pose import compute_object_pose_sequence
 from ..algorithms.object_extent_fit import fit_position_and_orientation
@@ -107,11 +108,58 @@ def _resolve_overlapping_events(events: list[dict]) -> list[dict]:
     return resolved
 
 
+def _bridge_resolved_events(resolved: list[dict], fps: float) -> list[dict]:
+    """`_resolve_overlapping_events`'s own confidence-first claiming can eat
+    into a gap `contact_detection.bridge_short_gaps` already closed upstream,
+    in stage 7's own `contact_events.json` -- a lower-confidence event losing
+    part of its own range to a higher-confidence *overlapping* one (e.g. a
+    hand event and an arm event both firing near the same frames) can leave a
+    short gap behind at that boundary, even though stage 7 had none there.
+    Reuses that exact same function (not a reimplementation, and not a second
+    threshold to keep in sync) on this stage's own final resolved list, so
+    the very last step -- the one that actually drives the animation --
+    still honors the same bridging decision stage 7 already made, rather
+    than trusting it to survive this stage's own independent reclaiming
+    untouched. `ContactEvent.joint`/`peak_frame` are unused by
+    `bridge_short_gaps` -- filled with harmless placeholders here purely to
+    satisfy the dataclass, since `_qualifying_attachment_events`'s own
+    candidate dicts never carried either field to begin with (dropped when
+    `contact_events.json`'s richer events were first reduced to
+    region/start/end/confidence, above).
+    """
+    as_events = [
+        ContactEvent(
+            regions=[r["region"]], joint="", start_frame=r["start_frame"],
+            end_frame=r["end_frame"], peak_frame=r["start_frame"], mean_confidence=r["mean_confidence"],
+        )
+        for r in resolved
+    ]
+    bridged = bridge_short_gaps(as_events, fps)
+    return [
+        {"region": e.regions[0], "start_frame": e.start_frame, "end_frame": e.end_frame, "mean_confidence": e.mean_confidence}
+        for e in bridged
+    ]
+
+
 def _qualifying_attachment_events(contact_events: list[dict], fps: float) -> list[dict]:
     """Filters `contact_events.json`'s own events down to genuine sustained
     holds (any region -- a hat on the head uses the same mechanism as a mug
     in a hand, just a different attachment joint; see `hoi_object_pose`'s own
-    docstring), then resolves any remaining cross-joint overlap."""
+    docstring), resolves any remaining cross-joint overlap, then re-bridges
+    any short gap that resolution reopened (see `_bridge_resolved_events`).
+
+    A region outside `GRIP_CAPABLE_REGIONS` also has to clear stage 7's own
+    `is_low_confidence` flag to qualify at all -- confirmed on a real clip:
+    a tracked object resting on the floor near a passing foot produced a
+    16-frame `left_leg` event (0.55 mean confidence, a 0.043m depth gap)
+    that cleared the duration bar here despite the foot never touching it.
+    A hand/arm region's own low-confidence events still qualify regardless
+    (unchanged) -- the real evidence for trusting a weak hand/arm signal
+    despite the flag (a full grip commonly wraps around/behind the object,
+    depressing both signals for reasons unrelated to whether contact is
+    real) doesn't extend to other regions; see `GRIP_CAPABLE_REGIONS`'s own
+    comment.
+    """
     min_frames = _min_attachment_duration_frames(fps)
     candidates = [
         {
@@ -122,8 +170,10 @@ def _qualifying_attachment_events(contact_events: list[dict], fps: float) -> lis
         }
         for event in contact_events
         if event["end_frame"] - event["start_frame"] + 1 >= min_frames
+        and (event["regions"][0] in GRIP_CAPABLE_REGIONS or not event.get("is_low_confidence", False))
     ]
-    return _resolve_overlapping_events(candidates)
+    resolved = _resolve_overlapping_events(candidates)
+    return _bridge_resolved_events(resolved, fps)
 
 
 def run(runRecord: RunRecord) -> dict[str, str]:
