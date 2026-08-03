@@ -87,6 +87,12 @@ the root's own translation (see `_lowest_foot_z`/`floor_offset`). Separately,
 retargeting this onto another rig has no bind/reference pose to work from, so
 `_prepend_rest_pose_frame` always adds one neutral SMPL-X rest-stance frame
 before the real motion.
+
+Where stage 2's own `pp_bridge_low_confidence_root_motion` judged the root's
+tracked motion unreliable (2D keypoint tracking genuinely lost), this stage
+deletes the pelvis bone's own keyframes at those frames instead of exporting
+its bridged/interpolated numbers as real keyframes -- see
+`_delete_unreliable_root_keyframes`'s own docstring for why.
 """
 
 from __future__ import annotations
@@ -160,10 +166,11 @@ _FIRST_MOTION_BLENDER_FRAME = 2
 
 # Matches retarget_hands.OUTPUT_RETARGET_MOTION_NPZ and its own npz key names
 # exactly (the latter same strings as gvhmr_adapter.KEY_GLOBAL_ORIENT/
-# KEY_BODY_POSE/KEY_BETAS/KEY_TRANSL and hamer_adapter.KEY_LEFT_HAND_POSE/
-# KEY_RIGHT_HAND_POSE) -- defined locally, not imported, since importing
-# `stage_5_retarget_hands` (or the adapter modules) transitively pulls in
-# torch at module load time (see module docstring).
+# KEY_BODY_POSE/KEY_BETAS/KEY_TRANSL/KEY_ROOT_MOTION_UNRELIABLE and
+# hamer_adapter.KEY_LEFT_HAND_POSE/KEY_RIGHT_HAND_POSE) -- defined locally,
+# not imported, since importing `stage_5_retarget_hands` (or the adapter
+# modules) transitively pulls in torch at module load time (see module
+# docstring).
 _RETARGET_MOTION_NPZ_OUTPUT_KEY = "retarget_motion_npz"
 _KEY_GLOBAL_ORIENT = "global_orient"
 _KEY_BODY_POSE = "body_pose"
@@ -171,11 +178,12 @@ _KEY_BETAS = "betas"
 _KEY_TRANSL = "transl"
 _KEY_LEFT_HAND_POSE = "left_hand_pose"
 _KEY_RIGHT_HAND_POSE = "right_hand_pose"
+_KEY_ROOT_MOTION_UNRELIABLE = "root_motion_unreliable"
 
 # The addon's own AMASS-import operator over-rotates 90 degrees for this
 # installed addon/Blender version specifically when told anim_format="AMASS"
 # -- the file itself stays real AMASS-formatted, only this operator argument
-# differs (see docs/ARCHITECTURE.md's stage 2 addon-quirk note).
+# differs.
 _ADDON_ANIM_FORMAT = "SMPL-X"
 
 # Installed via Blender 4.2+'s Extensions system (not the legacy addons

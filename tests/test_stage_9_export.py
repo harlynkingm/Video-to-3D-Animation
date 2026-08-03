@@ -73,6 +73,7 @@ def _fake_motion() -> dict:
         "transl": rng.normal(size=(N_FRAMES, 3)).astype(np.float32),
         "left_hand_pose": rng.normal(size=(N_FRAMES, 45)).astype(np.float32),
         "right_hand_pose": rng.normal(size=(N_FRAMES, 45)).astype(np.float32),
+        "root_motion_unreliable": np.zeros(N_FRAMES, dtype=bool),
     }
 
 
@@ -300,6 +301,7 @@ def test_run_grounds_the_lowest_foot_position_near_zero(tmp_path):
         "transl": rng.normal(size=(n_frames, 3)).astype(np.float32),
         "left_hand_pose": rng.normal(size=(n_frames, 45)).astype(np.float32),
         "right_hand_pose": rng.normal(size=(n_frames, 45)).astype(np.float32),
+        "root_motion_unreliable": np.zeros(n_frames, dtype=bool),
     }
     motion_npz_path = tmp_path / "retargeted_motion.npz"
     np.savez(motion_npz_path, **long_motion)
@@ -313,6 +315,110 @@ def test_run_grounds_the_lowest_foot_position_near_zero(tmp_path):
     # save->reopen round trip.
     armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
     assert abs(_lowest_foot_z(armature)) < 0.01
+
+
+def _bone_keyframed_frames(action, bone_name: str) -> set[int]:
+    frames: set[int] = set()
+    for fcurve in _iter_action_fcurves(action):
+        if fcurve.data_path.startswith(f'pose.bones["{bone_name}"]'):
+            frames.update(int(round(kp.co.x)) for kp in fcurve.keyframe_points)
+    return frames
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_run_deletes_pelvis_keyframes_at_unreliable_root_motion_frames(tmp_path):
+    """The user's own explicit request: rather than exporting stage 2's
+    bridged/interpolated root numbers as real keyframes, delete the pelvis
+    bone's own keyframes at those frames entirely, so Blender's own curve
+    interpolation bridges the resulting gap live -- exactly mirroring how
+    the user had already fixed an earlier export by hand (deleting the
+    pelvis bone's keyframes in Blender and letting it interpolate). Every
+    other bone must be completely unaffected."""
+    import bpy
+
+    n_frames = 10
+    rng = np.random.default_rng(3)
+    root_motion_unreliable = np.array([False, False, False, True, True, True, False, False, False, False])
+    motion = {
+        "global_orient": rng.normal(size=(n_frames, 3)).astype(np.float32) * 0.1,
+        "body_pose": rng.normal(size=(n_frames, 63)).astype(np.float32) * 0.1,
+        "betas": np.tile(rng.normal(size=(1, 10)).astype(np.float32), (n_frames, 1)),
+        "transl": rng.normal(size=(n_frames, 3)).astype(np.float32) * 0.1,
+        "left_hand_pose": np.zeros((n_frames, 45), dtype=np.float32),
+        "right_hand_pose": np.zeros((n_frames, 45), dtype=np.float32),
+        "root_motion_unreliable": root_motion_unreliable,
+    }
+    motion_npz_path = tmp_path / "retargeted_motion.npz"
+    np.savez(motion_npz_path, **motion)
+    runRecord = _make_runRecord(tmp_path, motion_npz_path)
+
+    run(runRecord)
+
+    armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
+    action = armature.animation_data.action
+    pelvis_frames = _bone_keyframed_frames(action, "pelvis")
+    other_frames = _bone_keyframed_frames(action, "spine1")  # any non-root bone
+
+    for source_idx in range(n_frames):
+        blender_frame = source_idx + _FIRST_MOTION_BLENDER_FRAME
+        if root_motion_unreliable[source_idx]:
+            assert blender_frame not in pelvis_frames
+        else:
+            assert blender_frame in pelvis_frames
+        # A completely different bone is untouched -- every frame still keyframed.
+        assert blender_frame in other_frames
+    assert 1 in pelvis_frames  # the prepended rest-pose frame itself, never flagged
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_fix_pelvis_rotation_hemisphere_continuity_flips_opposite_sign_keyframe():
+    """Regression test for a real bug found on a real export: deleting a run
+    of pelvis keyframes can leave two surviving keyframes far enough apart
+    in time that Blender's own naive per-component quaternion interpolation
+    -- not hemisphere-aware -- spins the long way around between them if
+    they land on opposite sides of the q/-q double-cover, even though both
+    represent the identical rotation. Directly constructs that exact
+    scenario (two keyframes, same real rotation, numerically opposite sign)
+    and confirms the fix flips the second one back onto the first's own
+    hemisphere."""
+    import math
+
+    import bpy
+    from mathutils import Quaternion, Vector
+
+    arm_data = bpy.data.armatures.new("test_armature")
+    arm_obj = bpy.data.objects.new("test_armature_obj", arm_data)
+    bpy.context.scene.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm_data.edit_bones.new("pelvis")
+    eb.head, eb.tail = (0.0, 0.0, 0.0), (0.0, 0.0, 0.1)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    pelvis = arm_obj.pose.bones["pelvis"]
+    pelvis.rotation_mode = "QUATERNION"
+
+    axis = Vector((0.3, 0.7, 0.2)).normalized()
+    quat_a = Quaternion(axis, math.radians(40))
+    quat_a_negated = Quaternion((-quat_a.w, -quat_a.x, -quat_a.y, -quat_a.z))
+    assert quat_a.dot(quat_a_negated) < 0  # confirms the two are on opposite hemispheres
+
+    scene = bpy.context.scene
+    scene.frame_set(1)
+    pelvis.rotation_quaternion = quat_a
+    pelvis.keyframe_insert(data_path="rotation_quaternion", frame=1)
+
+    scene.frame_set(5)
+    pelvis.rotation_quaternion = quat_a_negated  # same real rotation, opposite numeric sign
+    pelvis.keyframe_insert(data_path="rotation_quaternion", frame=5)
+
+    _fix_pelvis_rotation_hemisphere_continuity(bpy, arm_obj)
+
+    scene.frame_set(5)
+    fixed = arm_obj.pose.bones["pelvis"].rotation_quaternion
+    assert fixed.dot(quat_a) > 0  # now on the same hemisphere as frame 1
+    assert tuple(fixed) == pytest.approx(tuple(quat_a), abs=1e-6)
 
 
 @pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
@@ -357,6 +463,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
         "transl": rng.normal(size=(n_frames, 3)).astype(np.float32),
         "left_hand_pose": np.zeros((n_frames, 45), dtype=np.float32),
         "right_hand_pose": np.zeros((n_frames, 45), dtype=np.float32),
+        "root_motion_unreliable": np.zeros(n_frames, dtype=bool),
     }
     motion_npz_path = tmp_path / "retargeted_motion.npz"
     np.savez(motion_npz_path, **motion)

@@ -277,8 +277,10 @@ def per_frame_region_confidence(
     return result
 
 
-def _contiguous_true_runs(mask: np.ndarray) -> list[tuple[int, int]]:
-    """(start, end) inclusive index pairs for each contiguous True run."""
+def contiguous_true_runs(mask: np.ndarray) -> list[tuple[int, int]]:
+    """(start, end) inclusive index pairs for each contiguous True run. Public
+    -- shared with gvhmr_postprocess.py's own hysteresis lock/release logic,
+    the same run-finding need for a different (per-joint) confidence signal."""
     runs = []
     n, i = len(mask), 0
     while i < n:
@@ -305,7 +307,7 @@ def detect_contact_events(
     seed = confidence > CONTACT_SEED_CONFIDENCE
 
     events = []
-    for start, end in _contiguous_true_runs(elevated):
+    for start, end in contiguous_true_runs(elevated):
         if not seed[start:end + 1].any():
             continue
         peak_offset = int(np.argmax(confidence[start:end + 1]))

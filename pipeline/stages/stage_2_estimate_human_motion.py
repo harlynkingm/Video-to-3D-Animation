@@ -29,6 +29,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
     KEY_PRED_SMPL_PARAMS_GLOBAL,
     KEY_PRED_SMPL_PARAMS_INCAM,
     KEY_TRANSL,
+    KEY_TRANSL_INCAM_RAW,
     GVHMRAdapter,
 )
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
@@ -89,6 +90,16 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     cutoff = runRecord.input.body_translation_cutoff
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_GLOBAL], window, cutoff)
+
+    # Same translation smoothing as the corrected incam transl above (just not
+    # the foot-lock drift correction, which this value is deliberately kept
+    # free of -- see gvhmr_adapter.KEY_TRANSL_INCAM_RAW's own comment) so
+    # stage 7 sees a signal that's smoothed the same way it always has been,
+    # not a differently-conditioned one.
+    raw_transl = result[KEY_TRANSL_INCAM_RAW]
+    result[KEY_TRANSL_INCAM_RAW] = torch.from_numpy(
+        smooth_translation_sequence(raw_transl.detach().cpu().numpy(), cutoff)
+    ).to(raw_transl.dtype)
 
     motion_dir = Path(runRecord.progress_dir) / MOTION_DIRNAME
     motion_dir.mkdir(parents=True, exist_ok=True)

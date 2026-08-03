@@ -13,7 +13,7 @@ import pytest
 import torch
 from scipy.spatial.transform import Rotation
 
-from pipeline.algorithms.contact_detection import REGION_JOINTS
+from pipeline.algorithms.contact_detection import REGION_JOINTS, attachment_joint_index
 from pipeline.algorithms.hoi_object_pose import (
     MAX_SNAP_SEARCH_FRAMES,
     _INCAM_UP,

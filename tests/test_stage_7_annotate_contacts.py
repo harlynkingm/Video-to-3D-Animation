@@ -11,6 +11,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 import torch
 
 from pipeline.adapters.depth_anything3_adapter import KEY_DEPTH

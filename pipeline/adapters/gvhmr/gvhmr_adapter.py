@@ -8,9 +8,11 @@ intrinsics, produce a full-clip SMPL-X body pose in both camera-space
 Per-frame: mask -> bbox (`extract_bbox_from_numpy_mask`) -> crop -> ViTPose
 keypoints + HMR2 image feature. Whole-clip: those sequences feed
 `GVHMRTemporalTransformer` once, decoded by `EnDecoder`, then
-`pp_static_joint_cam`/`process_ik` clean up the "global" result -- mirrors
-`comfyui-motioncapture/nodes/gvhmr/model.py`'s `Pipeline.forward` /
-`DemoPL.predict` call sequence.
+`pp_static_joint_cam`/`process_ik` clean up the "global" result, and
+`pp_static_joint_incam`/`pp_bridge_low_confidence_root_motion` clean up "incam" -- the
+first three mirror `comfyui-motioncapture/nodes/gvhmr/model.py`'s
+`Pipeline.forward`/`DemoPL.predict` call sequence; the incam-side passes are
+this project's own addition (see `gvhmr_postprocess.py`'s module docstring).
 
 **Static-camera-only scope simplification.** This project only ever records a
 tripod-mounted, non-moving camera (see this repo's locked scope decisions), so
@@ -48,12 +50,17 @@ from pipeline.progress_tracker import StageName
 from .gvhmr_camera_math import compute_bbox_info_bedlam, compute_transl_full_cam, normalize_kp2d
 from .gvhmr_endecoder import EnDecoder
 from .gvhmr_hmr2 import GVHMRHMR2
-from .gvhmr_postprocess import pp_static_joint_cam, process_ik
+from .gvhmr_postprocess import (
+    pp_bridge_low_confidence_root_motion,
+    pp_static_joint_cam,
+    pp_static_joint_incam,
+    process_ik,
+)
 from .gvhmr_preprocess import bbox_xywh_to_xys, crop_and_normalize
 from .gvhmr_rotation_math import axis_angle_to_matrix, matrix_to_axis_angle
 from .gvhmr_transformer import GVHMRTemporalTransformer
 from .gvhmr_translation_math import get_tgtcoord_rootparam, rollout_local_transl_vel
-from .gvhmr_vitpose import GVHMRViTPoseModel, estimate_keypoints
+from .gvhmr_vitpose import BODY_KEYPOINT_INDICES, GVHMRViTPoseModel, estimate_keypoints
 
 from ...helpers.progress_reporter import frame_progress
 
@@ -95,6 +102,18 @@ KEY_TRANSL = "transl"
 # infer()'s top-level output dict keys.
 KEY_PRED_SMPL_PARAMS_INCAM = "pred_smpl_params_incam"
 KEY_PRED_SMPL_PARAMS_GLOBAL = "pred_smpl_params_global"
+# incam's own translation *before* pp_static_joint_incam's drift-lock correction
+# -- kept only for stage 7's own contact detection (see that stage's module
+# docstring for why 2D/depth contact matching wants the network's raw estimate,
+# not a temporally-corrected one); every other consumer of incam motion uses
+# the corrected `pred_smpl_params_incam[KEY_TRANSL]` as normal.
+KEY_TRANSL_INCAM_RAW = "transl_incam_raw"
+# (N,) bool -- True where pp_bridge_low_confidence_root_motion judged the
+# root's own tracked motion unreliable and bridged it. Stage 9's export uses
+# this to delete the pelvis bone's real Blender keyframes at these frames
+# (see that function's own docstring for why); every stage in between still
+# uses the bridged transl/global_orient values above as normal.
+KEY_ROOT_MOTION_UNRELIABLE = "root_motion_unreliable"
 
 
 def _load_direct_state(path: Path) -> dict[str, torch.Tensor]:
@@ -221,7 +240,9 @@ class GVHMRAdapter:
 
         Returns {"pred_smpl_params_incam": {...}, "pred_smpl_params_global": {...}},
         each a dict of (N, ...) tensors: body_pose (63), betas (10),
-        global_orient (3), transl (3).
+        global_orient (3), transl (3) -- plus top-level KEY_TRANSL_INCAM_RAW
+        (N, 3) and KEY_ROOT_MOTION_UNRELIABLE (N,) bool, see their own
+        comments above.
         """
         N = len(frame_paths)
         assert masks.shape[0] == N
@@ -260,6 +281,10 @@ class GVHMRAdapter:
 
         bbx_xys_seq = torch.stack(bbx_xys_list).unsqueeze(0)  # (1, N, 3)
         kp2d_seq = torch.stack(kp2d_list).unsqueeze(0).float()  # (1, N, 17, 3)
+        # Per-frame body-pose reliability signal for pp_hold_low_confidence_pose,
+        # below -- ViTPose already computes this confidence to decode kp2d's own
+        # (x, y); only the 3rd channel is otherwise unused past this point.
+        pose_confidence = kp2d_seq[..., BODY_KEYPOINT_INDICES, 2].mean(dim=-1)  # (1, N)
         f_imgseq_seq = torch.stack(f_imgseq_list).unsqueeze(0)  # (1, N, 1024)
         K_fullimg_seq = K_fullimg.view(1, 1, 3, 3).expand(1, N, 3, 3).float()
 
@@ -312,7 +337,35 @@ class GVHMRAdapter:
         outputs[KEY_PRED_SMPL_PARAMS_GLOBAL][KEY_BODY_POSE] = body_pose_ik
         outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BODY_POSE] = body_pose_ik
 
+        # incam is what every stage past this one actually consumes (see
+        # stage_9_export.py's own module docstring) -- pp_static_joint_cam's
+        # correction above only ever reaches the vestigial `global` frame, so
+        # incam's own translation needs its own equivalent fix. The
+        # pre-correction value is kept separately (KEY_TRANSL_INCAM_RAW) for
+        # stage 7 -- see that key's own comment above for why.
+        transl_incam_raw = outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL]
+        outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL] = pp_static_joint_incam(outputs, self.endecoder)
+
+        # Last correction: where the 2D detector itself lost track (fast/blurred
+        # motion, or a pose unusual enough it can't be tracked at all), bridge
+        # the pelvis's own root motion (global_orient/transl) across the bad
+        # stretch instead of showing GVHMR's erratic result there -- the other
+        # joints (body_pose) are left alone; see the function's own docstring
+        # for why. Deliberately applied after every correction above, not
+        # before -- a bridged frame substitutes an already-post-processed root
+        # transform, so there's no benefit to (and some risk from) feeding bad
+        # frames through the drift-lock/IK passes first. incam only, same scope
+        # as pp_static_joint_incam -- see that function's own docstring for why
+        # `global` doesn't need the equivalent fix. transl_incam_raw (above) is
+        # captured before this point deliberately -- stage 7 wants the network's
+        # true raw estimate, not this bridged one; see that key's own comment.
+        outputs[KEY_PRED_SMPL_PARAMS_INCAM], root_motion_unreliable = pp_bridge_low_confidence_root_motion(
+            outputs[KEY_PRED_SMPL_PARAMS_INCAM], pose_confidence
+        )
+
         return {
             KEY_PRED_SMPL_PARAMS_INCAM: {k: v[0] for k, v in outputs[KEY_PRED_SMPL_PARAMS_INCAM].items()},
             KEY_PRED_SMPL_PARAMS_GLOBAL: {k: v[0] for k, v in outputs[KEY_PRED_SMPL_PARAMS_GLOBAL].items()},
+            KEY_TRANSL_INCAM_RAW: transl_incam_raw[0],
+            KEY_ROOT_MOTION_UNRELIABLE: root_motion_unreliable[0],
         }

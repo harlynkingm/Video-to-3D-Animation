@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 import torch
 
-from pipeline.adapters.gvhmr.gvhmr_adapter import KEY_BODY_POSE, KEY_GLOBAL_ORIENT
+from pipeline.adapters.gvhmr.gvhmr_adapter import KEY_BODY_POSE, KEY_GLOBAL_ORIENT, KEY_ROOT_MOTION_UNRELIABLE
 from pipeline.adapters.gvhmr.gvhmr_rotation_math import axis_angle_to_matrix
 from pipeline.adapters.hamer.hamer_adapter import (
     KEY_LEFT_HAND_POSE,
@@ -351,7 +351,11 @@ def test_retargeted_motion_shapes_and_no_nan(stage_5_result):
     assert merged[KEY_BODY_POSE].shape == (TEST_VIDEO_FRAME_COUNT, 63)
     for hand_key in (KEY_LEFT_HAND_POSE, KEY_RIGHT_HAND_POSE):
         assert merged[hand_key].shape == (TEST_VIDEO_FRAME_COUNT, 45)
-    for value in merged.values():
+    assert merged[KEY_ROOT_MOTION_UNRELIABLE].shape == (TEST_VIDEO_FRAME_COUNT,)
+    assert merged[KEY_ROOT_MOTION_UNRELIABLE].dtype == torch.bool
+    for key, value in merged.items():
+        if key == KEY_ROOT_MOTION_UNRELIABLE:
+            continue  # bool mask, not a motion field -- isnan doesn't apply to bool tensors
         assert not torch.isnan(value).any()
 
 

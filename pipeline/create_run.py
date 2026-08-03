@@ -66,9 +66,14 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     # real-world depth, since GVHMR's own Z estimate is measurably unreliable
     # for a reaching/foreshortened arm and an animation only needs the hand and
     # object to agree with each other in their own shared space, not with
-    # absolute ground truth (see contact_detection.py's module docstring).
+    # absolute ground truth (see contact_detection.py's module docstring). Also
+    # reads stage 2 directly (not just transitively via stage 5) for its own
+    # pre-foot-lock incam translation -- see stage_7_annotate_contacts.py's own
+    # module docstring for why contact detection wants that instead of stage
+    # 5's (foot-lock-corrected) translation.
     StageName.STAGE_7_ANNOTATE_CONTACTS: [
         StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
         StageName.STAGE_5_RETARGET_HANDS,
     ],
     # optimize_hoi solves the tracked object's own per-frame pose: rigidly

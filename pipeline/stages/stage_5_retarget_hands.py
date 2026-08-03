@@ -22,6 +22,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
     KEY_BODY_POSE,
     KEY_GLOBAL_ORIENT,
     KEY_PRED_SMPL_PARAMS_INCAM,
+    KEY_ROOT_MOTION_UNRELIABLE,
     KEY_TRANSL,
 )
 from ..adapters.gvhmr.gvhmr_smplx_skeleton import SmplxSkeleton
@@ -74,6 +75,9 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     body_pose = _as_f32_tensor(incam[KEY_BODY_POSE])  # (F, 63)
     betas = _as_f32_tensor(incam[KEY_BETAS])
     transl = _as_f32_tensor(incam[KEY_TRANSL])
+    # Pure passthrough -- unrelated to hand retargeting, but export (stage 9)
+    # needs it and reads this stage's own npz output, not stage 2's directly.
+    root_motion_unreliable = motion[KEY_ROOT_MOTION_UNRELIABLE]  # (F,) bool
 
     hands = np.load(runRecord.stages[StageName.STAGE_4_ESTIMATE_HANDS].outputs[OUTPUT_HAND_POSE])
     if hands[KEY_LEFT_VALID].shape[0] != global_orient.shape[0]:
@@ -104,6 +108,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         KEY_TRANSL: transl,
         KEY_LEFT_HAND_POSE: left_hand_pose,
         KEY_RIGHT_HAND_POSE: right_hand_pose,
+        KEY_ROOT_MOTION_UNRELIABLE: root_motion_unreliable,
     }
 
     retarget_dir = Path(runRecord.progress_dir) / RETARGET_DIRNAME

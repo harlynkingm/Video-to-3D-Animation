@@ -54,6 +54,8 @@ from ..adapters.gvhmr.gvhmr_adapter import KEY_BETAS, KEY_BODY_POSE, KEY_GLOBAL_
 from ..adapters.hamer.hamer_adapter import KEY_LEFT_HAND_POSE, KEY_RIGHT_HAND_POSE
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.contact_detection import (
+    GRIP_CAPABLE_REGIONS,
+    HEAD_TOP_JOINT_INDEX,
     REGION_JOINT_NAMES,
     REGION_JOINTS,
     REGION_NAMES,
@@ -68,6 +70,7 @@ from ..helpers.progress_reporter import frame_progress
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS, OUTPUT_OBJECT_MASKS
+from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 from ..stages.stage_5_retarget_hands import OUTPUT_RETARGET_MOTION
 
 # stage_0_ingest_video.py's own output key, consumed here (same convention
@@ -338,9 +341,17 @@ def _render_contacts_preview(
 
 
 def run(runRecord: RunRecord) -> dict[str, str]:
-    motion = torch.load(
+    motion = dict(torch.load(
         runRecord.stages[StageName.STAGE_5_RETARGET_HANDS].outputs[OUTPUT_RETARGET_MOTION], weights_only=False,
+    ))
+    # Swap in stage 2's pre-foot-lock translation for this stage's own joint
+    # projections -- see this module's own docstring for why. body_pose/
+    # global_orient/betas/hand poses are untouched by that correction already,
+    # so only the translation needs substituting.
+    human_motion = torch.load(
+        runRecord.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION], weights_only=False,
     )
+    motion[KEY_TRANSL] = human_motion[KEY_TRANSL_INCAM_RAW]
     joints = _all_frame_joints(motion)
     n_frames = joints.shape[0]
     frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])

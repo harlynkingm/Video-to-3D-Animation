@@ -77,14 +77,16 @@ def fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return filled
 
 
-def _hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | None) -> np.ndarray:
+def hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | None) -> np.ndarray:
     """One joint's (T, 3) axis-angle sequence -> (T, 4) xyzw quaternions, sign
     -continuity enforced across *detected* frames (a unit quaternion and its
     negation are the same rotation, so each is flipped to share a hemisphere
     with the previous real one -- otherwise interpolation/filtering treats a
     sign flip as a huge jump), then gap-filled per `fill_invalid` if `valid` is
-    given. Shared by both rotation-smoothing functions below so the fiddly
-    continuity/gap-fill logic exists in exactly one place."""
+    given. Shared by both rotation-smoothing functions below (and by
+    `gvhmr_postprocess.pp_bridge_low_confidence_root_motion`, which needs the
+    identical gap-bridging behavior for the pelvis's own root orientation) so
+    the fiddly continuity/gap-fill logic exists in exactly one place."""
     quats = Rotation.from_rotvec(joint_axis_angle).as_quat()  # (T, 4) xyzw
     n_frames = quats.shape[0]
     last = None
@@ -138,7 +140,7 @@ def smooth_rotation_sequence(
 
     out = np.zeros_like(joints)
     for j in range(n_joints):
-        quats = _hemisphere_aligned_quats(joints[:, j, :], valid)
+        quats = hemisphere_aligned_quats(joints[:, j, :], valid)
         smoothed = savgol_filter(quats, w, poly, axis=0)
         norms = np.linalg.norm(smoothed, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
@@ -241,7 +243,7 @@ def one_euro_filter_rotation_sequence(
     speed_alpha = _one_euro_alpha(dcutoff_hz, dt)  # fixed given dcutoff/dt -- same every frame
     out = np.zeros_like(joints)
     for j in range(n_joints):
-        quats = _hemisphere_aligned_quats(joints[:, j, :], valid)
+        quats = hemisphere_aligned_quats(joints[:, j, :], valid)
 
         # Signed angular-velocity vector between every consecutive pair of raw
         # samples, computed once for the whole sequence (not recursive, so no
@@ -366,7 +368,7 @@ def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, val
     all_frames = np.arange(n_frames, dtype=float)
     out = np.zeros_like(joints)
     for j in range(n_joints):
-        quats = _hemisphere_aligned_quats(joints[:, j, :], valid)
+        quats = hemisphere_aligned_quats(joints[:, j, :], valid)
 
         def fit(a, b, idx, quats=quats):
             return Slerp([a, b], Rotation.from_quat(quats[[a, b]]))(idx)
