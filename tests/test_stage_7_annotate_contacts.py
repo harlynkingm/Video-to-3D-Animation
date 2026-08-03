@@ -53,6 +53,35 @@ def test_contact_events_output_is_plausible(stage_7_result):
     assert len(written) == len(events)
 
 
+def test_all_frame_joints_appends_a_head_top_point_above_the_head_joint():
+    """head_top (the appended SMPL-X mesh vertex, see
+    contact_detection.HEAD_TOP_JOINT_INDEX's own comment) should sit
+    measurably above HEAD_JOINT (the skeletal joint, near the base of the
+    skull) in a neutral standing pose -- that gap is the entire reason
+    head_top exists: HEAD_JOINT alone measured ~150-250px short of a hat
+    resting on the crown in a real clip, which motivated this region."""
+    if not SMPLX_MODEL_PATH.exists():
+        pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
+
+    n_frames = 2
+    motion = {
+        "global_orient": torch.zeros(n_frames, 3),
+        "body_pose": torch.zeros(n_frames, 63),
+        "betas": torch.zeros(n_frames, 10),
+        "transl": torch.zeros(n_frames, 3),
+        "left_hand_pose": torch.zeros(n_frames, 45),
+        "right_hand_pose": torch.zeros(n_frames, 45),
+    }
+
+    joints = _all_frame_joints(motion)
+
+    assert joints.shape[1] == HEAD_TOP_JOINT_INDEX + 1
+    # Y is this project's up axis (see gvhmr_postprocess.py's own ground_y).
+    head_top_y = joints[:, HEAD_TOP_JOINT_INDEX, 1]
+    head_y = joints[:, HEAD_JOINT, 1]
+    assert np.all(head_top_y > head_y + 0.05)
+
+
 def test_render_contacts_preview_writes_one_labeled_jpeg_per_event(tmp_path):
     frames_dir = tmp_path / INPUT_FRAMES_DIRNAME
     frames_dir.mkdir()

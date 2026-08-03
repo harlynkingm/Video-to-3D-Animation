@@ -253,6 +253,47 @@ def test_resolved_events_carries_the_raw_reference_pose_not_the_baked_offset():
     assert not resolved["is_low_confidence"]
 
 
+def test_head_top_event_attaches_to_the_real_head_joint_not_its_own_mesh_vertex_index():
+    """Regression test: "head_top" (see contact_detection.HEAD_TOP_JOINT_INDEX)
+    is a synthetic mesh-vertex index, not a real skeletal joint -- indexing
+    `joint_world` with it directly would be out of bounds (`joint_world` only
+    covers SmplxSkeleton's own 22 body joints; the real crash this test
+    guards against: `IndexError: index 127 is out of bounds for axis 1 with
+    size 22`, hit on a real testPutOnHat rerun). `attachment_joint_index`
+    redirects it to the real HEAD_JOINT -- the same bone the "head" region
+    already attaches to -- since that's the only bone actually near it in the
+    exported rig."""
+    n_frames = 10
+    body_motion = _fake_body_motion(n_frames)
+    skeleton = _FakeSkeleton()
+    joint_world = _joint_world_transforms(body_motion, skeleton)
+
+    head_joint_idx = attachment_joint_index("head_top")
+    assert head_joint_idx == REGION_JOINTS["head"][-1]  # same real joint "head" itself uses
+
+    event = {"region": "head_top", "start_frame": 2, "end_frame": 5}
+    snap_frame = event["start_frame"]
+    true_center = joint_world[snap_frame, head_joint_idx, :3, 3]
+    true_rotation = joint_world[snap_frame, head_joint_idx, :3, :3]
+
+    def object_position_fn(f):
+        return (true_center, true_rotation) if f == snap_frame else None
+
+    result = compute_object_pose_sequence(
+        n_frames=n_frames,
+        attachment_events=[event],
+        body_motion=body_motion,
+        initial_center=np.zeros(3), initial_rotation=true_rotation,
+        object_position_fn=object_position_fn,
+        skeleton=skeleton,
+    )
+
+    for f in range(event["start_frame"], event["end_frame"] + 1):
+        assert np.allclose(result["translation"][f], joint_world[f, head_joint_idx, :3, 3], atol=1e-6)
+        assert not result["is_low_confidence"][f]
+    assert result["resolved_events"][0]["joint_idx"] == head_joint_idx
+
+
 def test_held_before_the_first_event_matches_its_own_reference_pose():
     """Regression test for a real bug the user found reviewing a real
     export: an earlier design measured a separate "early resting position"

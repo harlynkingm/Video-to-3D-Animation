@@ -81,6 +81,17 @@ SMPLX_MODEL_TYPE = "smplx"
 SMPLX_GENDER = "neutral"
 SMPLX_NUM_BETAS = 10
 
+# The SMPL-X neutral mesh's own fixed topology (vertex indices are the same
+# across every body shape/pose, only the topology itself would change them)
+# -- found empirically as the highest (+Y, this project's up axis) vertex
+# within 15cm of the rest-pose HEAD_JOINT, i.e. the top of the scalp. Used
+# instead of a skeletal joint for the "head_top" region (see
+# contact_detection.HEAD_TOP_JOINT_INDEX's own comment for why): a mesh
+# vertex rides the actual head surface, so it lands where a hat/cap
+# physically rests and stays correct under head tilts/rotations, unlike a
+# fixed offset from a joint would.
+SMPLX_HEAD_TOP_VERTEX = 9003
+
 CONTACTS_DIRNAME = f"stage{StageName.STAGE_7_ANNOTATE_CONTACTS.stage_number}_contacts"
 CONTACT_EVENTS_FILENAME = "contact_events.json"
 CONTACTS_PREVIEW_DIRNAME = "contacts_preview"
@@ -135,7 +146,9 @@ def _all_frame_joints(motion: dict) -> np.ndarray:
     """Forward-kinematics the full retargeted body+hands sequence in one
     batched call. Returns (F, J, 3) camera-space joint positions -- GVHMR/
     HaMeR's own space, not real-world/depth-aligned (see this module's
-    docstring)."""
+    docstring). The last column is not a real skeletal joint: it's
+    SMPLX_HEAD_TOP_VERTEX, appended so contact_detection.HEAD_TOP_JOINT_INDEX
+    can address it the same way every real joint is addressed."""
     import smplx
 
     n_frames = motion[KEY_GLOBAL_ORIENT].shape[0]
@@ -151,7 +164,13 @@ def _all_frame_joints(motion: dict) -> np.ndarray:
         left_hand_pose=motion[KEY_LEFT_HAND_POSE].float(),
         right_hand_pose=motion[KEY_RIGHT_HAND_POSE].float(),
     )
-    return output.joints.detach().numpy()
+    joints = output.joints.detach().numpy()
+    assert joints.shape[1] == HEAD_TOP_JOINT_INDEX, (
+        f"smplx returned {joints.shape[1]} joints, expected {HEAD_TOP_JOINT_INDEX} -- "
+        "contact_detection.HEAD_TOP_JOINT_INDEX needs updating to match."
+    )
+    head_top = output.vertices[:, SMPLX_HEAD_TOP_VERTEX, :].detach().numpy()[:, None, :]
+    return np.concatenate([joints, head_top], axis=1)
 
 
 class _LazyMaskLoader:

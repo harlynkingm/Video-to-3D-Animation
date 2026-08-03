@@ -1,9 +1,9 @@
 """export: combines the retargeted SMPL-X body+hands motion into a single
 `output.blend` -- this pipeline's actual final deliverable, written to the
 run's top level (not nested under a per-stage subdirectory like every other
-stage's output, since this is the thing the user actually wants, not an
-intermediate artifact). A native Blender file, not FBX -- see "Why .blend,
-not FBX" below.
+stage's output, since this is the actual end result, not an intermediate
+artifact). A native Blender file, not FBX -- see "Why .blend, not FBX"
+below.
 
 If `align_scene_scale` tracked an object, it's added as a second, independent
 top-level mesh: sized/shaped from `object_shape.json` (stage 6). During a
@@ -209,11 +209,9 @@ def _root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tu
 # not derived: a pose-bone's `.location` (set directly from the npz's own
 # `trans`, no reinterpretation -- see the addon's `animation.py`) lands at
 # world position (x, -z, y), not (x, y, z), because every bone's own rest
-# orientation (baked into the addon's bundled rig template, the same one
-# that gives every bone an identical, decorative "point straight up" tail --
-# see docs/ARCHITECTURE.md's cosmetic-bones note) already carries this same
-# Y-up -> Z-up change of basis. A property of the addon's own rig asset, not
-# of any export operator -- applies to the live scene as built by
+# orientation (baked into the addon's bundled rig template) already carries
+# this same Y-up -> Z-up change of basis. A property of the addon's own rig
+# asset, not of any export operator -- applies to the live scene as built by
 # `smplx_add_animation`, independent of whether anything is ever exported.
 _AMASS_TO_BLENDER_WORLD_ROTATION = np.array([
     [1.0, 0.0, 0.0],

@@ -83,20 +83,37 @@ RIGHT_KNEE_JOINT = 5
 LEFT_ANKLE_JOINT = 7
 RIGHT_ANKLE_JOINT = 8
 
+# Not a real SMPL-X skeletal joint. HEAD_JOINT (above) sits at the base of
+# the skull/top of the neck -- fine for a chin/face/back-of-neck contact, but
+# measured up to ~250px short of an object resting on the crown (a hat), far
+# past CONTACT_PIXEL_THRESHOLD, because that's just not where the joint is
+# anatomically. `stage_7_annotate_contacts._all_frame_joints` appends one
+# synthetic "joint" instead -- the SMPL-X mesh's own head-top vertex (see
+# that function's own SMPLX_HEAD_TOP_VERTEX), which rides the actual scalp
+# surface and so tracks head tilts correctly -- as the LAST column of
+# whatever (F, J, 3) array it builds. 127 is
+# `smplx.create(..., use_pca=False, flat_hand_mean=True).joints.shape[1]`
+# for this project's SMPL-X neutral model; asserted at the append site so a
+# future smplx/model change that shifts this can't silently mis-index.
+HEAD_TOP_JOINT_INDEX = 127
+
 _HAND_JOINT_NAMES = ["index_tip", "middle_tip", "pinky_tip", "ring_tip", "thumb_tip", "wrist"]
 
 # Body region -> candidate SMPL-X joint indices to test for proximity to the
-# object mask. Deliberately coarse -- 8 regions total, including the two
+# object mask. Deliberately coarse -- 9 regions total, including the two
 # hands -- rather than a separate region per limb segment (upper arm vs.
 # forearm, thigh vs. shin vs. foot): a finer split would just fragment one
 # real limb-object contact into several near-duplicate events without adding
 # information this project needs. Each non-hand region uses its own joint
 # chain's endpoints plus midpoint (e.g. shoulder/elbow/wrist for an arm) so a
 # contact anywhere along that limb's length is caught, not just at one end.
+# "head_top" is the one exception -- see HEAD_TOP_JOINT_INDEX's own comment
+# for why it's a mesh vertex, not a skeletal joint.
 REGION_JOINTS: dict[str, list[int]] = {
     "left_hand": LEFT_FINGERTIP_JOINTS + [LEFT_WRIST_JOINT],
     "right_hand": RIGHT_FINGERTIP_JOINTS + [RIGHT_WRIST_JOINT],
     "head": [HEAD_JOINT],
+    "head_top": [HEAD_TOP_JOINT_INDEX],
     "chest": [SPINE2_JOINT, SPINE3_JOINT],
     "left_arm": [LEFT_SHOULDER_JOINT, LEFT_ELBOW_JOINT, LEFT_WRIST_JOINT],
     "right_arm": [RIGHT_SHOULDER_JOINT, RIGHT_ELBOW_JOINT, RIGHT_WRIST_JOINT],
@@ -110,6 +127,7 @@ REGION_JOINT_NAMES: dict[str, list[str]] = {
     "left_hand": _HAND_JOINT_NAMES,
     "right_hand": _HAND_JOINT_NAMES,
     "head": ["head"],
+    "head_top": ["head_top"],
     "chest": ["spine2", "spine3"],
     "left_arm": ["shoulder", "elbow", "wrist"],
     "right_arm": ["shoulder", "elbow", "wrist"],
@@ -133,6 +151,41 @@ class ContactEvent:
 
 def candidate_joint_indices(region: str) -> list[int]:
     return REGION_JOINTS[region]
+
+
+# stage 8/9's own rigid-attachment joint for a region -- almost always
+# REGION_JOINTS[region][-1] (see hoi_object_pose.py's own NUM_BODY_JOINTS
+# comment: every real REGION_JOINTS attachment joint falls within
+# SmplxSkeleton's 22-joint body scope). "head_top" is the one exception: its
+# REGION_JOINTS entry is a synthetic mesh-vertex index (HEAD_TOP_JOINT_INDEX),
+# not a real skeletal joint -- there's no bone in the exported rig to rigidly
+# attach to at that vertex, so a head_top contact still attaches to the same
+# real HEAD_JOINT the "head" region already uses. Detection benefits from the
+# accurate mesh-surface point; attachment needs an actual bone, and the
+# head/neck bone is the only one that physically exists near it.
+ATTACHMENT_JOINT_OVERRIDES: dict[str, int] = {"head_top": HEAD_JOINT}
+
+
+def attachment_joint_index(region: str) -> int:
+    return ATTACHMENT_JOINT_OVERRIDES.get(region, REGION_JOINTS[region][-1])
+
+
+# Regions that can genuinely grip an object closely enough to depress the
+# observable 2D/depth signal for reasons unrelated to whether contact is
+# real -- a hand wrapped around/behind an object, or an arm cradling one.
+# Both real-clip cases motivating stage 7's own weak-2D-confidence/large-
+# depth-gap rescue logic (see `stage_7_annotate_contacts._is_low_confidence`)
+# were hands specifically -- unvalidated for any other region, and much less
+# physically plausible for most of them: a leg/foot's real interaction with
+# an object is typically a brief kick, not a sustained hold, and this
+# project's rigid-attachment model (stage 8) has no representation for
+# "kicked and now flying free" anyway, so trusting a weak leg/chest/head
+# signal the same way a weak hand signal is trusted mostly just risks a
+# wrong attachment to an object that's merely resting nearby. Shared between
+# stage 7 (which region gets the rescue) and stage 8 (which region's
+# low-confidence events are excluded from becoming attachments at all) so
+# the two stay in sync.
+GRIP_CAPABLE_REGIONS = frozenset({"left_hand", "right_hand", "left_arm", "right_arm"})
 
 
 def project_to_pixels(points: np.ndarray, K: np.ndarray) -> np.ndarray:

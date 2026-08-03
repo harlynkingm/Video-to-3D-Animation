@@ -62,7 +62,7 @@ OUTPUT_ATTACHMENT_EVENTS = "attachment_events"
 # module docstring for why). Expressed in seconds (not a fixed frame count)
 # so it scales correctly across clips at different frame rates. Uncalibrated:
 # a rough starting point, needs real footage with an actual kick/bounce to
-# validate (see docs/ARCHITECTURE.md's stage 8 section).
+# validate.
 MIN_ATTACHMENT_DURATION_SECONDS = 0.4
 
 

@@ -7,16 +7,11 @@ Two states, not the two-regime design this module started with: **attached**
 (perfectly frozen, wherever the object last was) everywhere else -- before the
 first hold, between two holds, and after the last one. There is no more
 independent per-frame depth-tracking of the object while it isn't being held.
-That was tried first (see git history / docs/ARCHITECTURE.md's stage 8
-section for the full story) and abandoned after the user reviewed a real
-export: even after smoothing, a real object sitting perfectly still on a real
-table showed chaotic, unusable frame-to-frame X/Z jitter. Monocular
-per-frame depth is just not reliable enough, for a small object, to be worth
-independently tracking at all -- so this module no longer tries to.
-
-See docs/ARCHITECTURE.md's stage 8 section for the full design and why this
-shape was chosen over the reference implementation's own per-frame
-mesh-correspondence optimizer.
+That was tried first and abandoned after reviewing a real export: even after
+smoothing, a real object sitting perfectly still on a real table showed
+chaotic, unusable frame-to-frame X/Z jitter. Monocular per-frame depth is
+just not reliable enough, for a small object, to be worth independently
+tracking at all -- so this module no longer tries to.
 
 This module is pure algorithm -- no bpy, no DA3, no mask/frame I/O. The one
 callback callers must supply (`object_position_fn`) hides that I/O behind a
@@ -37,8 +32,11 @@ from ..adapters.gvhmr.gvhmr_forward_kinematics import forward_kinematics
 from .contact_detection import REGION_JOINTS
 
 # SMPL-X pelvis + 21 body joints -- SmplxSkeleton's own scope (see that
-# module's docstring); every REGION_JOINTS attachment joint (wrist, ankle,
-# head, spine3) falls within this range, so no hand/finger extension is needed.
+# module's docstring); every real REGION_JOINTS attachment joint (wrist,
+# ankle, head, spine3) falls within this range, so no hand/finger extension
+# is needed. "head_top" is not itself in range (a synthetic mesh-vertex
+# index, not a skeletal joint) -- attachment_joint_index redirects it to the
+# real HEAD_JOINT instead, see that function's own comment.
 NUM_BODY_JOINTS = 22
 
 # How many frames to search outward from an event's own start_frame (both
@@ -49,8 +47,8 @@ NUM_BODY_JOINTS = 22
 # *event* now, not one per frame of the whole clip, so there's no cost
 # pressure to search wide; the pressure runs the other way; searching too far
 # into an already-underway hold risks the exact occlusion bias the reference-
-# frame redesign (see the module docstring's git history pointer) already
-# fixed once. Uncalibrated -- a reasonable starting point.
+# frame redesign above already fixed once. Uncalibrated -- a reasonable
+# starting point.
 MAX_SNAP_SEARCH_FRAMES = 10
 
 

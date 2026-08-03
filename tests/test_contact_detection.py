@@ -8,9 +8,12 @@ import numpy as np
 
 from pipeline.algorithms.contact_detection import (
     CONTACT_PIXEL_THRESHOLD,
+    HEAD_JOINT,
+    HEAD_TOP_JOINT_INDEX,
     LEFT_FINGERTIP_JOINTS,
     LEFT_WRIST_JOINT,
     REGION_JOINT_NAMES,
+    REGION_JOINTS,
     REGION_NAMES,
     ContactEvent,
     _confidence_from_mask_distance,
@@ -21,6 +24,8 @@ from pipeline.algorithms.contact_detection import (
     frame_confidence_for_region,
     per_frame_region_confidence,
 )
+
+FPS = 30.0
 
 
 def _square_mask(size=100, box=(40, 40, 60, 60)):
@@ -55,13 +60,40 @@ def test_confidence_is_zero_beyond_the_threshold():
     assert confidence[0] == 0.0
 
 
-def test_all_eight_regions_are_defined_with_matching_joint_names():
+def test_all_nine_regions_are_defined_with_matching_joint_names():
     assert set(REGION_NAMES) == {
-        "left_hand", "right_hand", "head", "chest",
+        "left_hand", "right_hand", "head", "head_top", "chest",
         "left_arm", "right_arm", "left_leg", "right_leg",
     }
     for region in REGION_NAMES:
         assert len(candidate_joint_indices(region)) == len(REGION_JOINT_NAMES[region])
+
+
+def test_head_top_joint_index_does_not_collide_with_any_real_region_joint():
+    """HEAD_TOP_JOINT_INDEX is a synthetic index (the appended mesh vertex,
+    see that constant's own comment) -- it must never coincide with a real
+    skeletal joint index another region uses, or consolidate_overlapping_events
+    would wrongly treat a head-top contact and some other region's contact as
+    the same physical joint."""
+    real_region_indices = {
+        idx for region, indices in REGION_JOINTS.items() if region != "head_top" for idx in indices
+    }
+    assert HEAD_TOP_JOINT_INDEX not in real_region_indices
+
+
+def test_attachment_joint_index_redirects_head_top_to_the_real_head_joint():
+    """stage 8/9 rigidly attach to a real skeletal bone -- head_top's own
+    REGION_JOINTS entry (a synthetic mesh-vertex index) has no such bone, so
+    attachment_joint_index must redirect it to HEAD_JOINT instead (the same
+    one the "head" region already uses), not return the raw vertex index."""
+    assert attachment_joint_index("head_top") == HEAD_JOINT
+
+
+def test_attachment_joint_index_matches_region_joints_last_entry_elsewhere():
+    for region in REGION_NAMES:
+        if region == "head_top":
+            continue
+        assert attachment_joint_index(region) == REGION_JOINTS[region][-1]
 
 
 def test_candidate_joint_indices_left_vs_right_hand_are_disjoint():
@@ -125,11 +157,12 @@ def test_per_frame_region_confidence_matches_frame_confidence_for_region():
     K = np.array([[100.0, 0, 50.0], [0, 100.0, 50.0], [0, 0, 1.0]])
     mask = _square_mask()
 
-    # Sized for the full 55-joint body+hands layout -- per_frame_region_confidence
+    # Sized to cover HEAD_TOP_JOINT_INDEX (the appended mesh-vertex slot, past
+    # the real 55-joint body+hands layout) -- per_frame_region_confidence
     # indexes every region's own joints, not just left_hand's. z=1.0 everywhere
     # (a realistic camera-space depth) avoids a divide-by-zero projecting the
     # other regions' still-untouched joints.
-    frame_joints = np.zeros((55, 3))
+    frame_joints = np.zeros((HEAD_TOP_JOINT_INDEX + 1, 3))
     frame_joints[..., 2] = 1.0
     joint_ids = candidate_joint_indices("left_hand")
     frame_joints[joint_ids] = [2.0, 2.0, 1.0]
@@ -144,7 +177,7 @@ def test_per_frame_region_confidence_matches_frame_confidence_for_region():
 
 def test_per_frame_region_confidence_covers_every_region():
     K = np.eye(3)
-    frame_joints = np.zeros((55, 3))
+    frame_joints = np.zeros((HEAD_TOP_JOINT_INDEX + 1, 3))
     frame_joints[..., 2] = 1.0
     mask = _square_mask()
 
