@@ -28,6 +28,28 @@ NUM_KEYPOINTS = 17  # COCO
 DECONV_FILTERS = 256
 HEATMAP_H, HEATMAP_W = 64, 48  # 16x12 patch grid, upsampled 4x by two stride-2 deconvs
 
+# COCO-17 keypoint order, unchanged from the reference's own `keypoints_from_heatmaps`
+# output -- named here, once, since every (17, 3) [x, y, confidence] array this project
+# passes around (estimate_keypoints's return value and anything derived from it)
+# indexes into this exact order by raw integer.
+KP_NOSE, KP_LEYE, KP_REYE, KP_LEAR, KP_REAR = 0, 1, 2, 3, 4
+KP_LSHOULDER, KP_RSHOULDER = 5, 6
+KP_LELBOW, KP_RELBOW = 7, 8
+KP_LWRIST, KP_RWRIST = 9, 10
+KP_LHIP, KP_RHIP = 11, 12
+KP_LKNEE, KP_RKNEE = 13, 14
+KP_LANKLE, KP_RANKLE = 15, 16
+
+FACE_KEYPOINT_INDICES = [KP_NOSE, KP_LEYE, KP_REYE, KP_LEAR, KP_REAR]
+# Shoulder->wrist, hip->ankle -- everything but the face. Face-keypoint confidence
+# is a poor proxy for whether a frame's *body* pose evidence is trustworthy
+# (confirmed against a real clip, where a fast tumble crashed confidence across
+# every body joint together but didn't isolate cleanly via face keypoints alone).
+BODY_KEYPOINT_INDICES = [
+    KP_LSHOULDER, KP_RSHOULDER, KP_LELBOW, KP_RELBOW, KP_LWRIST, KP_RWRIST,
+    KP_LHIP, KP_RHIP, KP_LKNEE, KP_RKNEE, KP_LANKLE, KP_RANKLE,
+]
+
 
 class KeypointHead(nn.Module):
     """Two stride-2 deconvs (1280 -> 256 -> 256) then a 1x1 conv to 17 heatmaps."""
