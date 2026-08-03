@@ -610,6 +610,283 @@ def _lowest_foot_z(armature) -> float:
     return lowest
 
 
+def _primary_child(edit_bone):
+    """Which child a bone's tail should point at, when it has more than one
+    (a branch point -- e.g. pelvis -> {left_hip, right_hip, spine1}, or
+    spine3 -> {neck, left_collar, right_collar}). Every bone in the addon's
+    own template rig currently points straight up (+Z) in this project's
+    T-pose (see `_orient_bones_toward_children`'s own docstring) -- picking
+    whichever child continues furthest in that same +Z direction naturally
+    selects the spine's own continuation over a sideways branch (a hip or a
+    collar), with no bone-name-specific logic needed. `None` for a leaf bone
+    (no children -- e.g. a fingertip, or the last bone of a chain)."""
+    children = list(edit_bone.children)
+    if not children:
+        return None
+    return max(children, key=lambda c: c.head.z - edit_bone.head.z)
+
+
+def _hierarchy_order(armature) -> list[str]:
+    """Pose bone names, parent before every child -- a bone's own pose
+    correction (see `_orient_bones_toward_children`) must be applied before
+    its children's, since a child's correction reads its *current* (i.e.
+    already-corrected, if processed in this order) parent pose to derive the
+    right local rotation."""
+    order: list[str] = []
+    queue = [b for b in armature.pose.bones if b.parent is None]
+    while queue:
+        bone = queue.pop(0)
+        order.append(bone.name)
+        queue.extend(bone.children)
+    return order
+
+
+def _animated_bone_names(action) -> set[str]:
+    """Bone names with at least one existing pose keyframe -- everything
+    else (e.g. the addon's own always-static "root" bone, see the floor-
+    grounding section of this file's own module docstring) gets its own
+    orientation correction applied once, directly, with no keyframe
+    inserted, rather than adding animation data to a bone that never had
+    any."""
+    if action is None:
+        return set()
+    names = set()
+    for fcurve in _iter_action_fcurves(action):
+        path = fcurve.data_path  # e.g. 'pose.bones["left_elbow"].rotation_quaternion'
+        if path.startswith('pose.bones["'):
+            names.add(path.split('"')[1])
+    return names
+
+
+def _rotation_keyframe_data_path(pose_bone) -> str:
+    return {
+        "QUATERNION": "rotation_quaternion",
+        "AXIS_ANGLE": "rotation_axis_angle",
+    }.get(pose_bone.rotation_mode, "rotation_euler")
+
+
+def _orient_bones_toward_children(bpy, armature) -> None:
+    """Points each bone's tail at its own primary child (see
+    `_primary_child`), or -- for a leaf bone with no children of its own
+    (a fingertip, or the last bone of any other chain) -- continues its own
+    parent bone's direction, instead of the addon's own decorative "point
+    straight up" template tail. Purely a display/Edit-mode change: this
+    doesn't affect the mesh's own shape, only how each bone's octahedral
+    shape is drawn in the viewport.
+
+    Retailing a bone changes its own rest transform (`Bone.matrix_local`),
+    though, and the mesh is skinned to each bone via its *deform* matrix --
+    `PoseBone.matrix @ Bone.matrix_local.inverted()`, in armature space, the
+    formula the Armature modifier itself applies to every weighted vertex --
+    left alone, changing the rest half of that formula without also
+    adjusting the pose half would visibly move the mesh, not just the bone
+    display. So every bone's existing pose animation is rewritten afterward
+    to keep that deform matrix exactly what it was before the retail, at
+    every frame that already carries a keyframe (or once, statically, for a
+    bone with none at all -- see `_animated_bone_names`): each bone's own
+    world pose (`PoseBone.matrix`, dependency-graph-evaluated -- the same
+    live-read `_add_attachment_constraint`/`_lowest_foot_z` already use
+    elsewhere in this file) and rest transform are both captured before the
+    edit; afterward, the new pose target is the old pose composed with the
+    rest transform's own delta (`old_pose @ old_rest^-1 @ new_rest`),
+    assigned back to `PoseBone.matrix` -- Blender's own setter derives the
+    correct local rotation from that target, given the bone's new rest and
+    its current parent chain, rather than this function deriving it by hand.
+
+    Processes bones parent-first (`_hierarchy_order`) so a child's own
+    correction is derived against its parent's *already-corrected* live pose
+    at that frame, not the stale pre-retail one.
+    """
+    from mathutils import Matrix
+
+    scene = bpy.context.scene
+    action = armature.animation_data.action if armature.animation_data else None
+
+    keyframed_frames: list[int] = []
+    if action is not None:
+        frame_set: set[int] = set()
+        for fcurve in _iter_action_fcurves(action):
+            for kp in fcurve.keyframe_points:
+                frame_set.add(int(round(kp.co.x)))
+        keyframed_frames = sorted(frame_set)
+
+    animated = _animated_bone_names(action)
+    order = _hierarchy_order(armature)
+
+    # Ground truth: every bone's own real, evaluated world *pose* transform
+    # at every already-keyframed frame, captured BEFORE any edit-mode
+    # change -- plus each bone's own *rest* transform (`Bone.matrix_local`),
+    # also captured before. The rest transform is what actually changes here
+    # (that's the whole point of retailing); pose alone preserving its old
+    # value is the wrong target -- see this function's own docstring for why
+    # both are needed to get the actual invariant (the mesh's own deform
+    # matrix) right. Unanimated bones only need one pose sample (their pose
+    # is constant by definition -- no fcurve means matrix_basis never changes).
+    sample_frames = keyframed_frames or [int(scene.frame_current)]
+    world_before: dict[str, dict[int, Matrix]] = {name: {} for name in order}
+    for frame in sample_frames:
+        scene.frame_set(frame)
+        for name in order:
+            if name in animated or frame == sample_frames[0]:
+                world_before[name][frame] = armature.pose.bones[name].matrix.copy()
+    rest_before = {name: armature.data.bones[name].matrix_local.copy() for name in order}
+
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode="EDIT")
+    edit_bones = armature.data.edit_bones
+
+    # Pass 1: every bone with a child points at it (see _primary_child).
+    child_targets: dict[str, Matrix] = {}
+    for bone in edit_bones:
+        primary = _primary_child(bone)
+        if primary is None:
+            continue
+        new_tail = primary.head.copy()
+        if (new_tail - bone.head).length > 1e-6:  # skip a degenerate (near-zero-length) result
+            child_targets[bone.name] = new_tail
+    for name, new_tail in child_targets.items():
+        edit_bones[name].tail = new_tail
+
+    # Pass 2: a leaf bone (no children -- still true after pass 1, which
+    # only ever moves a *parent's* tail, never a bone's own head) continues
+    # its own parent's direction instead. Run as its own pass, after pass 1
+    # is fully applied, so it reads the parent's real (already-retailed)
+    # direction, not the stale decorative default -- otherwise a fingertip
+    # would inherit the same "point straight up" look pass 1 exists to fix.
+    leaf_targets: dict[str, Matrix] = {}
+    for bone in edit_bones:
+        if _primary_child(bone) is not None:
+            continue
+        parent = bone.parent
+        if parent is None:
+            continue  # an isolated leaf -- nothing to continue the direction of
+        parent_direction = parent.tail - parent.head
+        if parent_direction.length < 1e-9:
+            continue
+        bone_length = (bone.tail - bone.head).length
+        new_tail = bone.head + parent_direction.normalized() * bone_length
+        if (new_tail - bone.head).length > 1e-6:
+            leaf_targets[bone.name] = new_tail
+    for name, new_tail in leaf_targets.items():
+        edit_bones[name].tail = new_tail
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Blender's own mesh-deform formula for a bone is `PoseBone.matrix @
+    # Bone.matrix_local.inverted()` (in armature space -- this is what the
+    # Armature modifier actually applies to every vertex weighted to this
+    # bone, independent of parent-chain depth, since `PoseBone.matrix`
+    # already recursively encodes the whole chain). Retailing changes
+    # `Bone.matrix_local` (the rest transform); for the *deform* matrix to
+    # stay the same -- the actual requirement, since that's what the mesh
+    # itself follows -- `PoseBone.matrix` has to change by exactly the same
+    # rest-transform delta: `new_pose = old_pose @ old_rest^-1 @ new_rest`.
+    # Simply holding `PoseBone.matrix` fixed at its old value would keep the
+    # bone's own world *pose* unchanged while silently changing the deform
+    # matrix underneath it, since `old_rest^-1 @ new_rest` isn't identity.
+    rest_delta = {name: rest_before[name].inverted() @ armature.data.bones[name].matrix_local for name in order}
+
+    for name in order:
+        pose_bone = armature.pose.bones[name]
+        rotation_path = _rotation_keyframe_data_path(pose_bone)
+        delta = rest_delta[name]
+        if name in animated:
+            for frame in keyframed_frames:
+                scene.frame_set(frame)
+                pose_bone.matrix = world_before[name][frame] @ delta
+                pose_bone.keyframe_insert(data_path=rotation_path, frame=frame)
+                pose_bone.keyframe_insert(data_path="location", frame=frame)
+        else:
+            scene.frame_set(sample_frames[0])
+            pose_bone.matrix = world_before[name][sample_frames[0]] @ delta
+
+
+# The root/pelvis bone's own name in the addon's rig template -- matches
+# _SMPLX_BODY_JOINT_NAMES[0] (SMPL-X's own joint-0 convention), but this file
+# already needed a standalone name here since _SMPLX_BODY_JOINT_NAMES is
+# defined for attachment-event joint lookup, a different, unrelated purpose.
+_PELVIS_BONE_NAME = "pelvis"
+
+
+def _delete_unreliable_root_keyframes(bpy, armature, root_motion_unreliable: np.ndarray) -> None:
+    """Deletes the pelvis bone's own location/rotation keyframes at every
+    frame `pp_bridge_low_confidence_root_motion` (stage 2) flagged as
+    unreliable, so the exported file shows a real gap there instead of a
+    baked-but-fabricated keyframe -- matching the user's own explicit
+    request, and exactly how they'd already fixed an earlier export by hand:
+    deleting the pelvis bone's own keyframes in Blender and letting it
+    interpolate the resulting gap from its own surrounding real keyframes.
+    Blender's default extrapolation (constant, before the first/after the
+    last keyframe) naturally reproduces the same freeze behavior stage 2's
+    own bridging already uses for a run touching either end of the clip, so
+    no special-casing is needed for that case here.
+
+    Must run *after* `_orient_bones_toward_children` -- that function
+    rewrites every existing keyframe on every animated bone (pelvis
+    included) to preserve the mesh's own deform matrix once bone tails are
+    retailed, so deleting first would just have those keyframes reinserted
+    right back by that pass. Follow with
+    `_fix_pelvis_rotation_hemisphere_continuity` -- deleting a run can leave
+    two now-distant keyframes whose quaternions Blender's own interpolation
+    doesn't bridge correctly on its own; see that function's own docstring.
+    """
+    pose_bone = armature.pose.bones[_PELVIS_BONE_NAME]
+    rotation_path = _rotation_keyframe_data_path(pose_bone)
+    for i in np.flatnonzero(root_motion_unreliable):
+        frame = int(i) + _FIRST_MOTION_BLENDER_FRAME
+        pose_bone.keyframe_delete(data_path=rotation_path, frame=frame)
+        pose_bone.keyframe_delete(data_path="location", frame=frame)
+
+
+def _fix_pelvis_rotation_hemisphere_continuity(bpy, armature) -> None:
+    """Deleting a run of keyframes above can leave two surviving keyframes
+    bracketing a real gap in time -- and Blender's own `rotation_quaternion`
+    F-curve interpolation is NOT hemisphere-aware: it interpolates each of
+    w/x/y/z as an independent scalar curve, not a proper slerp. A unit
+    quaternion `q` and its negation `-q` represent the exact same rotation,
+    but numerically look nothing alike -- if the two keyframes bracketing a
+    gap happen to land on opposite hemispheres of that double-cover (far
+    likelier across a real multi-frame gap than between two normally-
+    adjacent frames, whose small real rotation deltas rarely cross that
+    boundary), the naive per-component interpolation spins the long way
+    around instead of the short way. Confirmed on a real export: a full
+    360-degree spin across a 6-frame gap.
+
+    This is the exact continuity problem `motion_smoothing.
+    hemisphere_aligned_quats` already solves for this project's own numpy-
+    side rotation interpolation (stage 2's own bridging uses it for exactly
+    this reason) -- applies the identical walk-and-flip algorithm directly
+    to the pelvis bone's own surviving Blender keyframes afterward, so
+    nothing downstream needs to know or care where gaps were introduced.
+    No-op if the bone isn't in quaternion rotation mode (this project's own
+    rig always is, confirmed by the real spin this fixes, but the fix only
+    makes sense for that representation)."""
+    from mathutils import Quaternion
+
+    pose_bone = armature.pose.bones[_PELVIS_BONE_NAME]
+    if pose_bone.rotation_mode != "QUATERNION":
+        return
+
+    scene = bpy.context.scene
+    action = armature.animation_data.action
+    data_path = f'pose.bones["{_PELVIS_BONE_NAME}"].rotation_quaternion'
+    frames = sorted({
+        int(round(kp.co.x))
+        for fcurve in _iter_action_fcurves(action)
+        if fcurve.data_path == data_path
+        for kp in fcurve.keyframe_points
+    })
+
+    last: Quaternion | None = None
+    for frame in frames:
+        scene.frame_set(frame)
+        quat = pose_bone.rotation_quaternion.copy()
+        if last is not None and quat.dot(last) < 0:
+            quat = Quaternion((-quat.w, -quat.x, -quat.y, -quat.z))
+            pose_bone.rotation_quaternion = quat
+            pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+        last = quat
+
+
 def _clear_scene(bpy) -> None:
     """Clears whatever the current scene contains (a stray cube/camera/
     light, or a previous pass's own armature+mesh) without touching
@@ -674,6 +951,20 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     armature.data.name = PERSON_ARMATURE_DATA_NAME
     body_mesh = next(o for o in bpy.data.objects if o.type == "MESH")
     body_mesh.name = PERSON_MESH_NAME
+
+    # Cosmetic only (see that function's own docstring for why it needs to
+    # rewrite every existing pose keyframe to stay that way) -- must run
+    # before any attachment constraint is added below, since those read this
+    # same armature's own live bone transforms at a specific frame.
+    _orient_bones_toward_children(bpy, armature)
+
+    # Must run after _orient_bones_toward_children -- see this function's own
+    # docstring for why (that pass would otherwise reinsert exactly the
+    # keyframes deleted here). Followed immediately by the hemisphere-
+    # continuity fix -- see that function's own docstring for why deleting a
+    # run of keyframes needs it.
+    _delete_unreliable_root_keyframes(bpy, armature, motion[_KEY_ROOT_MOTION_UNRELIABLE])
+    _fix_pelvis_rotation_hemisphere_continuity(bpy, armature)
 
     object_shape_path = runRecord.stages[StageName.STAGE_6_ALIGN_SCENE_SCALE].outputs.get(_OBJECT_SHAPE_OUTPUT_KEY)
     output_path = Path(runRecord.progress_dir) / OUTPUT_BLEND_FILENAME

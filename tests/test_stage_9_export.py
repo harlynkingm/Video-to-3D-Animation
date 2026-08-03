@@ -26,6 +26,7 @@ from pipeline.stages.stage_9_export import (
     _iter_action_fcurves,
     _lowest_foot_z,
     _object_pose_to_blender_world,
+    _orient_bones_toward_children,
     _prepend_rest_pose_frame,
     _root_camera_to_upright,
     _write_body_amass,
@@ -591,3 +592,157 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
     assert np.allclose(tuple(object_mesh.location)[:2], expected_held[:2], atol=1e-4)
 
     assert np.allclose(tuple(object_mesh.dimensions), (0.1, 0.12, 0.08), atol=1e-4)
+
+
+def _evaluated_mesh_world_positions(bpy, mesh_obj):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    eval_obj = mesh_obj.evaluated_get(depsgraph)
+    eval_mesh = eval_obj.to_mesh()
+    positions = [tuple(eval_obj.matrix_world @ v.co) for v in eval_mesh.vertices]
+    eval_obj.to_mesh_clear()
+    return positions
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_orient_bones_toward_children_does_not_move_the_skinned_mesh():
+    """The actual correctness property `_orient_bones_toward_children` must
+    have: the mesh is skinned to each bone via that bone's own *deform*
+    matrix (`PoseBone.matrix @ Bone.matrix_local.inverted()`, the formula
+    the Armature modifier itself applies to every weighted vertex) -- not
+    just its world *pose* matrix. Retailing a bone changes its own rest
+    transform (`Bone.matrix_local`); holding the bone's own world pose fixed
+    at its pre-retail value leaves the deform matrix changed anyway, since
+    the rest half of that formula moved out from under it and nothing
+    compensates for that half. This test checks the deform matrix's own
+    real effect directly -- actual evaluated mesh vertex positions -- not
+    bone matrices, which can't distinguish a correct fix from this bug.
+
+    Builds a small synthetic armature with a branch point (exercises
+    `_primary_child`'s own selection: "spine" continues further up than its
+    sibling "hip", so it should win), a mix of animated/unanimated bones
+    ("root" is retailed but never animated, like the real addon's own
+    always-static root bone), and two leaf bones with deliberately mismatched
+    original directions -- "hip" (child of unanimated "root") and
+    "fingertip" (child of animated "neck", itself two levels deep) -- to
+    exercise the "continue the parent's own direction" leaf behavior
+    distinctly from a coincidental match. "neck" sits sideways from "spine",
+    not directly above it -- deliberately, so retailing spine actually
+    changes its own rest rotation (from the decorative default's straight up
+    to sideways toward neck), not just its length: a geometry where old and
+    new tail directions happen to coincide can't tell a correct fix apart
+    from the deform-matrix bug this guards against, since there'd be no real
+    rest-rotation delta either way. A real skinned mesh (one vertex per bone,
+    100% weighted, no shared influence -- isolates each bone's own deform
+    contribution) checks every vertex's own real, dependency-graph-evaluated
+    world position is unchanged at every already-keyframed frame -- the
+    literal thing a user looking at the export would see move if this were
+    wrong.
+    """
+    import math as _math
+
+    import bpy
+    from mathutils import Quaternion
+
+    arm_data = bpy.data.armatures.new("test_armature")
+    arm_obj = bpy.data.objects.new("test_armature_obj", arm_data)
+    bpy.context.scene.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb_root = arm_data.edit_bones.new("root")
+    eb_root.head, eb_root.tail = (0.0, 0.0, 0.0), (0.0, 0.0, 0.1)
+
+    eb_spine = arm_data.edit_bones.new("spine")
+    eb_spine.head, eb_spine.tail = (0.0, 0.0, 1.0), (0.0, 0.0, 1.1)
+    eb_spine.parent = eb_root
+    eb_spine.use_connect = False
+
+    # A leaf (no children), with its own original tail deliberately NOT
+    # pointing straight up (root's own future direction) -- so a redirect
+    # to follow root's new direction is visible, not coincidental.
+    eb_hip = arm_data.edit_bones.new("hip")
+    eb_hip.head, eb_hip.tail = (0.3, 0.0, 0.9), (0.3, 0.2, 0.85)
+    eb_hip.parent = eb_root
+    eb_hip.use_connect = False
+
+    eb_neck = arm_data.edit_bones.new("neck")  # sideways from spine, not straight up -- see docstring
+    eb_neck.head, eb_neck.tail = (0.6, 0.0, 1.0), (0.7, 0.0, 1.0)
+    eb_neck.parent = eb_spine
+    eb_neck.use_connect = False
+
+    # A leaf two levels below an *animated* retailed bone -- own original
+    # tail again deliberately off of neck's own future (sideways) direction.
+    eb_fingertip = arm_data.edit_bones.new("fingertip")
+    eb_fingertip.head, eb_fingertip.tail = (0.7, 0.0, 1.0), (0.7, 0.15, 1.05)
+    eb_fingertip.parent = eb_neck
+    eb_fingertip.use_connect = False
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    # Offset a fixed amount off of each bone's own head, not sitting exactly
+    # on top of it: a vertex placed exactly at a bone's rotation origin can't
+    # detect a rotational change in that bone's deform matrix, since rotating
+    # a zero-offset point around itself doesn't move it -- only a translation
+    # difference would show up there, which isn't the property this test
+    # needs to check.
+    bone_names = ["root", "spine", "hip", "neck"]
+    vertex_offset = (0.0, 0.2, 0.0)
+    bone_heads = {
+        "root": (0.0, 0.0, 0.0), "spine": (0.0, 0.0, 1.0), "hip": (0.3, 0.0, 0.9), "neck": (0.6, 0.0, 1.0),
+    }
+    vertex_positions = {
+        name: tuple(h + o for h, o in zip(head, vertex_offset)) for name, head in bone_heads.items()
+    }
+
+    mesh_data = bpy.data.meshes.new("test_mesh")
+    mesh_data.from_pydata([vertex_positions[name] for name in bone_names], [], [])
+    mesh_data.update()
+    mesh_obj = bpy.data.objects.new("test_mesh_obj", mesh_data)
+    bpy.context.scene.collection.objects.link(mesh_obj)
+    for i, name in enumerate(bone_names):
+        mesh_obj.vertex_groups.new(name=name).add([i], 1.0, "REPLACE")
+    modifier = mesh_obj.modifiers.new(name="Armature", type="ARMATURE")
+    modifier.object = arm_obj
+
+    spine_pb = arm_obj.pose.bones["spine"]
+    neck_pb = arm_obj.pose.bones["neck"]
+    spine_pb.rotation_mode = "QUATERNION"
+    neck_pb.rotation_mode = "QUATERNION"
+
+    scene = bpy.context.scene
+    scene.frame_set(1)
+    spine_pb.rotation_quaternion = Quaternion((1.0, 0.0, 0.0), _math.radians(15))
+    spine_pb.keyframe_insert(data_path="rotation_quaternion", frame=1)
+    neck_pb.rotation_quaternion = Quaternion((0.0, 1.0, 0.0), _math.radians(-10))
+    neck_pb.keyframe_insert(data_path="rotation_quaternion", frame=1)
+
+    scene.frame_set(5)
+    spine_pb.rotation_quaternion = Quaternion((0.0, 0.0, 1.0), _math.radians(-20))
+    spine_pb.keyframe_insert(data_path="rotation_quaternion", frame=5)
+    neck_pb.rotation_quaternion = Quaternion((1.0, 0.0, 0.0), _math.radians(25))
+    neck_pb.keyframe_insert(data_path="rotation_quaternion", frame=5)
+
+    mesh_before = {}
+    for frame in (1, 5):
+        scene.frame_set(frame)
+        mesh_before[frame] = _evaluated_mesh_world_positions(bpy, mesh_obj)
+
+    _orient_bones_toward_children(bpy, arm_obj)
+
+    # The whole point: bones with children got retailed toward the right one.
+    assert tuple(arm_data.bones["root"].tail_local) == pytest.approx(tuple(arm_data.bones["spine"].head_local), abs=1e-6)
+    assert tuple(arm_data.bones["spine"].tail_local) == pytest.approx(tuple(arm_data.bones["neck"].head_local), abs=1e-6)
+    assert tuple(arm_data.bones["neck"].tail_local) == pytest.approx(tuple(arm_data.bones["fingertip"].head_local), abs=1e-6)
+    # Leaves (no children) continue their own parent's -- now-corrected --
+    # direction instead of the decorative default, preserving their own
+    # original bone length (only the direction changes).
+    hip_length = (0.2 ** 2 + 0.05 ** 2) ** 0.5  # |original hip tail - hip head|
+    assert tuple(arm_data.bones["hip"].tail_local) == pytest.approx((0.3, 0.0, 0.9 + hip_length), abs=1e-5)
+    fingertip_length = (0.15 ** 2 + 0.05 ** 2) ** 0.5  # |original fingertip tail - fingertip head|
+    assert tuple(arm_data.bones["fingertip"].tail_local) == pytest.approx((0.7 + fingertip_length, 0.0, 1.0), abs=1e-5)
+
+    # The property that actually matters: the mesh itself hasn't moved.
+    for frame in (1, 5):
+        scene.frame_set(frame)
+        after = _evaluated_mesh_world_positions(bpy, mesh_obj)
+        for name, before_pos, after_pos in zip(bone_names, mesh_before[frame], after):
+            assert after_pos == pytest.approx(before_pos, abs=1e-5), (name, frame)
