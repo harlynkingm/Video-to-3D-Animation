@@ -1,42 +1,23 @@
-"""annotate_contacts: detects per-frame body-to-object contact primarily from
-geometry (no learned model, no GPU for this part): projects each body
-region's candidate joints (fingertips + wrist per hand; a couple of
-representative joints for head/chest/arms/legs) into image space and checks
-proximity to the tracked object's 2D mask, using GVHMR/HaMeR's own retargeted
-positions -- deliberately not compared against real-world depth for this
-first pass (see `pipeline/algorithms/contact_detection.py`'s module docstring
-for why). Hysteresis (the same lock/release pattern as the stage 4
-wrist-plausibility gate) turns raw per-frame confidence into contact events.
+"""annotate_contacts: detects per-frame body-to-object contact from geometry
+alone (no model, no GPU here): projects each region's candidate joints
+(fingertips+wrist per hand; a few joints for head/chest/arms/legs) into
+image space, checks proximity to the object's 2D mask (GVHMR/HaMeR's own
+retargeted positions), and turns per-frame confidence into contact events
+via hysteresis (same lock/release pattern as the stage 4 wrist gate).
 
-Two second passes over the same-region-detected events, both in
-`contact_detection.py`: `consolidate_overlapping_events` merges events from
-different regions that share an underlying joint (a hand and its own arm
-both treat the wrist as a candidate, so one real grip can otherwise produce
-two region-events); `depth_gap_for_joint` DOES use real depth, but
-Depth-Anything-3's own per-frame estimate (found reliable by this project's
-depth investigation), never GVHMR's. It's only ever invoked on the specific
-frames an event was already detected on -- a real but bounded GPU cost, not
-a per-clip one -- to catch the one thing pure 2D-proximity can't: a body part
-passing in front of or behind the object in the image, with no actual
-contact, still overlaps its mask exactly like a real touch would.
+Reads stage 2's pre-foot-lock incam translation, not stage 5's corrected
+one: foot-locking's rigid per-frame root offset helps cross-frame stability
+but has no bearing on -- and can distort -- whether a joint's 2D projection
+lands on the object's mask *this frame*.
 
-A large depth gap does NOT necessarily mean incidental occlusion, though: a
-real grip commonly wraps the touching joint around or behind the object's
-near-facing visible surface (the surface its own mask actually shows), which
-a single frame's monocular depth can read as a genuine multi-centimeter gap
-even during unambiguous, sustained contact. So `_verify_events_with_depth`
-never drops an event outright on a large gap -- it flags it
-`is_low_confidence` instead (same flag a low, unsettled 2D confidence score
-gets), leaving the actual accept/reject call to whatever consumes that flag,
-rather than silently discarding real interactions the depth check got wrong.
-A small gap remains strong positive evidence of contact and overrides a
-merely-noisy 2D confidence score. If `RunInput.render_contacts_preview` is
-set, also writes one annotated JPEG per event (see
-`_render_contacts_preview`), colored and labeled with its confidence
-percentage, as a visual spot-check of the same signal -- low-confidence
-events are still used exactly like any other event, this is purely for a
-human who chooses to go look.
-"""
+Three refinement passes in `contact_detection.py` (see each one's own
+docstring for why): `consolidate_overlapping_events` merges same-joint
+events across regions; `bridge_short_gaps` extends adjacent hand/arm events
+across a brief real gap; `_verify_events_with_depth` flags (never drops) an
+event whose Depth-Anything-3 gap suggests occlusion, since a real grip reads
+the same way, wrapping around/behind the object's mask surface. Optionally
+writes an annotated preview JPEG per event
+(`RunInput.render_contacts_preview`) as a visual spot-check."""
 
 from __future__ import annotations
 

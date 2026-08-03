@@ -180,15 +180,11 @@ def pp_bridge_low_confidence_root_motion(pred_smpl_params: dict, pose_confidence
 
     `body_pose` (the other 21 joints' own local rotations -- elbows, knees,
     spine, etc.) is deliberately left untouched, and so is `betas` (body
-    shape, not motion). An earlier version of this fix also froze body_pose
-    -- reviewing a real export, the user found only the pelvis's own root
-    motion actually looked wrong during a genuine 2D-tracking dropout; the
-    other joints stayed visually plausible even though the network's
-    confidence in them was measured low too, and freezing them made the
-    result look worse, not better. This mirrors exactly how the user resolved
-    it by hand in Blender: deleting the pelvis bone's own keyframes across the
-    bad stretch (which Blender then interpolates across from its own
-    surrounding keyframes) while leaving every other bone's keyframes alone.
+    shape, not motion). An earlier version of this fix also froze body_pose,
+    but during a genuine 2D-tracking dropout only the pelvis's own root
+    motion actually reads as visually wrong -- the other joints stay
+    plausible even though the network's confidence in them is measured low
+    too, and freezing them made the result look worse, not better.
 
     Returns `(bridged_params, label)` -- `label` (the same (B, T) bool from
     `_unreliable_pose_label`) is returned too, not just used internally, so
@@ -198,9 +194,8 @@ def pp_bridge_low_confidence_root_motion(pred_smpl_params: dict, pose_confidence
     stage between this one and export (stage 6's scale fit, stage 7's contact
     projection, stage 8's attachment search all need dense, plausible
     per-frame numbers, not a gap), but the final exported file should show a
-    real gap Blender itself interpolates across, per the user's own explicit
-    request -- matching their own manual keyframe-deletion approach exactly,
-    rather than a baked keyframe that merely looks similar."""
+    real gap Blender itself interpolates across, rather than a baked
+    keyframe that merely looks similar."""
     label = _unreliable_pose_label(pose_confidence)
     valid = (~label).cpu().numpy()
     bridged = {k: v.clone() for k, v in pred_smpl_params.items()}

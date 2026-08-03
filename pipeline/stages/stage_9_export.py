@@ -1,99 +1,23 @@
-"""export: combines the retargeted SMPL-X body+hands motion into a single
-`output.blend` -- this pipeline's actual final deliverable, written to the
-run's top level (not nested under a per-stage subdirectory like every other
-stage's output, since this is the actual end result, not an intermediate
-artifact). A native Blender file, not FBX -- see "Why .blend, not FBX"
-below.
+"""export: combines the retargeted SMPL-X body+hands motion into
+`output.blend`, this pipeline's final deliverable, written to the run's
+top level. Native Blender file, not FBX (its own animation-baking
+introduces real precision errors on stage 8's sparsely-keyframed object
+data). Runs only in the separate `export` pixi env (needs `bpy`, no
+torch); every bpy touch point lives inside `run()`, imported lazily.
 
-If `align_scene_scale` tracked an object, it's added as a second, independent
-top-level mesh: sized/shaped from `object_shape.json` (stage 6). During a
-genuine hold, it's rigidly attached to the holding bone via a live **Child Of
-constraint** (target the armature, subtarget the bone, keyframed influence
-0/1 -- see `_add_attachment_constraint`), not baked per-frame world-space
-keyframes -- so the object stays correctly attached even if the skeleton's
-own animation is later retargeted onto a different rig (different bone
-lengths/proportions), the same way the retargeted rig's own bone rotations
-reconstruct its animation, rather than replaying a recording made for this
-rig's own proportions. Held perfectly still (baked world-space keyframes,
-unparented) everywhere else -- a real-world resting position has nothing to
-do with which character's hand eventually reaches for it, so it doesn't need
-to be rig-relative at all. See stage 8's own module docstring for the
-attached/held design this reflects. Human-only runs (no object tracked) fall
-back to the body-only export exactly as before.
+If `align_scene_scale` tracked an object, it's added as a second mesh
+(shape from stage 6): a live Child Of constraint rigidly attaches it to
+the holding bone during a genuine hold (`_add_attachment_constraint`),
+held still and unparented otherwise (`_keyframe_held_object_pose`; see
+stage 8's own docstring for the attached/held design). Human-only runs
+export body-only.
 
-The object mesh is added directly into the same live scene `smplx_add_
-animation` builds and keyframed there -- no separate export/reimport step,
-no duplicate scene. Earlier versions of this file went through the SMPL-X
-addon's own `smplx_export_fbx` operator first (even for a body-only run) to
-get its shape-key-baking/Unity-axis-remap side effects; reading that
-operator's own source (`operators/export.py`) shows it actually duplicates
-the mesh/armature, bakes/rotates the *duplicate*, exports it, then deletes it
--- the original scene objects it leaves behind are never touched. So that
-call was never actually necessary for correctness here, and calling it at all
-would have baked shape keys that a native `.blend` save doesn't need (Blender
-handles live shape keys and drivers natively, no baking required to view or
-render them correctly).
-
-**Why .blend, not FBX**: stage 8 now holds the object perfectly still for
-long stretches between attachment events (see hoi_object_pose.py's own module
-docstring) and keyframes those flat stretches sparsely -- two keyframes at a
-stretch's own first/last frame, not one per frame, since linear interpolation
-between two identical values is already exactly flat. That sparse
-keyframing surfaced a real, previously-invisible imprecision in Blender's own
-FBX exporter: baking the animation for FBX export (its own default,
-`bake_anim=True`) introduced a ~1.3cm single-frame error right at a flat
-stretch's own first frame, even though the source data and the in-memory
-F-curve were both confirmed exactly correct beforehand -- confirmed by
-writing the exact same keyframed object straight to `.blend` instead (no bake
-step involved in that path at all) and finding it reproduced the source data
-exactly, with no artifact. This was a smaller version of an already-known
-FBX-export quirk this file used to work around (combining two independently-
-keyframed actions in one FBX export could silently reintroduce the body's
-pre-floor-offset height) -- rather than keep chasing FBX-bake-specific
-precision issues, the fix is to stop asking Blender to bake anything at all:
-write the scene's own native representation directly.
-
-Needs `bpy`, which lives only in the separate `export` pixi environment --
-every bpy touch point here is inside `run()` (imported lazily, not at module
-load time) so this file stays importable under the `main` environment too
-(needed for `pipeline.run`'s own dispatch logic and so this module's own
-constants are readable without bpy installed). That environment has no torch
-at all (kept minimal on purpose, see `pixi.toml`), so this reads
-`retarget_hands`'s plain-numpy `.npz` companion output, never its `.pt` --
-and deliberately never imports `gvhmr_adapter`/`hamer_adapter`, even just for
-their KEY_* string constants, since both pull in `torch` at module load time
-(`object_extent_fit.py` is plain numpy underneath and is imported directly
-for its shape-descriptor constants -- no torch involved there).
-
-Retarget_hands' motion is in GVHMR's own incam (raw camera-space, X-right/
-Y-down/Z-forward) frame, never GVHMR's separate "global" one -- see this
-project's own depth-reliability investigation for why staying in incam
-avoids a fragile, unnecessary incam-to-global reconciliation for the
-eventual per-frame object pose. The AMASS/SMPL-X-addon import path expects
-an upright, gravity-aligned root, though (confirmed empirically: feeding
-incam's raw root orientation/translation straight through put the head
-below the feet), so the root gets the exact same camera-space -> upright
-change of basis already proven for the BVH previews
-(`bvh_export.CAMERA_TO_BVH_ROOT_ROTATION`) before being written out --
-non-root joints are unaffected (their rotations are relative to their
-parent, not the world).
-
-Two more real gaps, both confirmed against a real export: incam space
-has no inherent floor, so the character's absolute height after the
-rotation above was wherever GVHMR's raw numbers happened to put it (~1.7m
-underground on a real clip) -- `run()` builds the animation once to measure
-the lowest foot height, then rebuilds with a compensating offset baked into
-the root's own translation (see `_lowest_foot_z`/`floor_offset`). Separately,
-retargeting this onto another rig has no bind/reference pose to work from, so
-`_prepend_rest_pose_frame` always adds one neutral SMPL-X rest-stance frame
-before the real motion.
-
-Where stage 2's own `pp_bridge_low_confidence_root_motion` judged the root's
-tracked motion unreliable (2D keypoint tracking genuinely lost), this stage
-deletes the pelvis bone's own keyframes at those frames instead of exporting
-its bridged/interpolated numbers as real keyframes -- see
-`_delete_unreliable_root_keyframes`'s own docstring for why.
-"""
+Retargeted motion is GVHMR's own incam frame, reoriented upright for the
+addon's import path (`_root_camera_to_upright`); floor height
+(`_lowest_foot_z`) and a prepended rest-pose frame
+(`_prepend_rest_pose_frame`) cover what incam has no reference for.
+Frames flagged unreliable (stage 2) get pelvis keyframes deleted, not
+exported as fabricated data (`_delete_unreliable_root_keyframes`)."""
 
 from __future__ import annotations
 
@@ -104,6 +28,10 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+# Deliberately never imports gvhmr_adapter/hamer_adapter, even just for their
+# KEY_* string constants -- both pull in torch at module load time, and the
+# `export` pixi env this module actually runs in has no torch installed
+# (object_extent_fit is plain numpy underneath, safe to import directly).
 from ..algorithms.object_extent_fit import KEY_KIND, KIND_BOX, KIND_CYLINDER, KIND_ELLIPSOID
 from ..helpers.amass_export_helper import write_amass_npz
 from ..helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
@@ -811,10 +739,9 @@ def _delete_unreliable_root_keyframes(bpy, armature, root_motion_unreliable: np.
     """Deletes the pelvis bone's own location/rotation keyframes at every
     frame `pp_bridge_low_confidence_root_motion` (stage 2) flagged as
     unreliable, so the exported file shows a real gap there instead of a
-    baked-but-fabricated keyframe -- matching the user's own explicit
-    request, and exactly how they'd already fixed an earlier export by hand:
-    deleting the pelvis bone's own keyframes in Blender and letting it
-    interpolate the resulting gap from its own surrounding real keyframes.
+    baked-but-fabricated keyframe -- the same effect as deleting the pelvis
+    bone's own keyframes directly in Blender and letting it interpolate the
+    resulting gap from its own surrounding real keyframes.
     Blender's default extrapolation (constant, before the first/after the
     last keyframe) naturally reproduces the same freeze behavior stage 2's
     own bridging already uses for a run touching either end of the clip, so
