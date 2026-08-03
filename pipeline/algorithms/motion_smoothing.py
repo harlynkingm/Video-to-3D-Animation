@@ -181,47 +181,38 @@ def one_euro_filter_rotation_sequence(
     dcutoff_hz: float = DEFAULT_ONE_EURO_DCUTOFF_HZ,
     valid: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Adaptively smooth a per-frame rotation sequence: heavy smoothing while a
-    joint is nearly still, loosening automatically (low lag) once it starts
-    moving -- the One Euro Filter (Casiez, Roussel & Vogel 2012), adapted for
-    rotations.
+    """Adaptively smooth a per-frame rotation sequence: heavy smoothing while
+    a joint is nearly still, loosening automatically (low lag) once it
+    starts moving -- the One Euro Filter (Casiez, Roussel & Vogel 2012),
+    adapted for rotations.
 
-    The paper's own filter operates on independent scalars (e.g. a cursor's x
-    and y separately). Doing that naively per quaternion component here would
-    let each of the 4 components pick its own adaptive cutoff per frame based
-    on its own local behaviour -- reintroducing a subtler version of the exact
-    artifact this replaced (per-component quaternion filtering + renormalizing
-    can distort the true rotation axis). Instead, one shared speed estimate
-    drives the whole joint, computed the way the paper's own derivative is:
-    a *signed* angular-velocity vector between consecutive raw samples
-    (the relative rotation's axis-angle, scaled by 1/dt) -- not its magnitude.
-    That vector is smoothed component-wise by its own fixed-cutoff low-pass
-    (`dcutoff_hz`) *before* taking its norm to get a scalar speed. Filtering the
-    signed vector first matters: opposite-direction noise cancels on averaging,
-    the way the paper's own signed scalar derivative does. Filtering the
-    magnitude instead (as an earlier version of this function did) cannot --
-    a magnitude is never negative, so rectified per-frame noise has a nonzero
-    mean no matter how heavily it's smoothed, confirmed on real data: even a
-    very heavy low-pass left a persistent, non-shrinking "speed" floor at rest,
-    which kept nudging the cutoff up and let noise leak through as a persistent
-    low-amplitude wobble rather than the intended calm hold. The resulting
-    scalar speed sets one adaptive cutoff per frame, which blends the previous
-    filtered orientation toward the new raw one via proper quaternion slerp --
-    a single rotation-aware decision per frame, not four independent scalar ones.
+    Filtering each quaternion component independently (as the paper does
+    for scalars) would let each pick its own adaptive cutoff per frame,
+    reintroducing a subtler version of the per-component distortion this
+    replaced. Instead one shared speed estimate drives the whole joint: a
+    *signed* angular-velocity vector between consecutive raw samples
+    (relative rotation's axis-angle / dt), smoothed component-wise
+    (`dcutoff_hz`) *before* taking its norm. Filtering the signed vector
+    first matters -- opposite-direction noise cancels on averaging; an
+    earlier version filtered the magnitude instead, which can't cancel
+    (never negative), leaving a persistent nonzero "speed" floor at rest
+    even under heavy smoothing, confirmed on real data. That scalar speed
+    sets one adaptive cutoff per frame, blending the previous filtered
+    orientation toward the new raw one via proper quaternion slerp -- one
+    rotation-aware decision per frame, not four independent scalar ones.
 
     Args:
-        axis_angle: (T, ...) where the trailing dims flatten to a multiple of 3,
-            same convention as `smooth_rotation_sequence`.
-        fps: sample rate (frames/sec) -- the filter's notion of real time.
-        min_cutoff_hz: cutoff at zero speed. Lower = smoother/more lag at rest.
-        beta: how fast the cutoff rises with speed. Higher = faster response to
-            real motion, at the cost of passing more raw jitter through while moving.
-        dcutoff_hz: fixed cutoff for smoothing the speed estimate itself.
-        valid: optional (T,) bool, gap-filled the same way as
-            `smooth_rotation_sequence` -- see `fill_invalid`.
+        axis_angle: (T, ...), trailing dims a multiple of 3 (same
+            convention as `smooth_rotation_sequence`).
+        fps: sample rate (frames/sec). min_cutoff_hz: cutoff at zero speed
+            (lower = smoother at rest). beta: how fast the cutoff rises
+            with speed (higher = faster response, more jitter passed
+            through while moving). dcutoff_hz: fixed cutoff for the speed
+            estimate itself.
+        valid: optional (T,) bool, gap-filled like `smooth_rotation_
+            sequence` (`fill_invalid`).
 
-    Returns the same shape/dtype. Returned unchanged when there are fewer than
-    2 frames, or fewer than 2 valid frames to filter from.
+    Returns the same shape/dtype, unchanged if fewer than 2 (valid) frames.
     """
     axis_angle = np.asarray(axis_angle)
     original_shape = axis_angle.shape
@@ -307,46 +298,36 @@ def _rdp_knot_indices(n_frames: int, tol: float, fit, error) -> np.ndarray:
 
 
 def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, valid: np.ndarray | None = None) -> np.ndarray:
-    """Replace a per-frame rotation sequence with a mathematically smooth curve
-    fitted through a sparse set of keyframes -- keyframe reduction, the way an
-    animator would clean up mocap by hand (Blender's Decimate), but done in
-    quaternion space instead of per Euler channel.
+    """Replace a per-frame rotation sequence with a mathematically smooth
+    curve fit through a sparse set of keyframes -- keyframe reduction, the
+    way an animator cleans up mocap by hand (Blender's Decimate), done in
+    quaternion space instead of per Euler channel. Unlike a filter (a
+    moving average that always leaves some residual jitter), the fitted
+    curve has no degrees of freedom to wiggle between keyframes, so
+    high-frequency content is gone by construction. `tolerance_deg` is the
+    one knob -- max angular deviation (degrees) the fit is allowed from the
+    original; larger means fewer keyframes and a flatter curve, smaller
+    hugs the input more tightly (and past a point starts preserving jitter
+    again).
 
-    Unlike a filter, which is a moving average that always leaves *some* residual
-    of the input jitter in its passband, this removes jitter outright: the output
-    between keyframes is a fitted curve with no degrees of freedom to wiggle, so
-    high-frequency content is gone by construction. `tolerance_deg` is the one
-    knob -- the maximum angular deviation (degrees) the fitted curve is allowed
-    from the original: larger means fewer keyframes and a smoother, flatter curve
-    that departs further from the raw motion; smaller hugs the input more tightly
-    (and, past a point, starts preserving its jitter again).
-
-    Knots are chosen by geodesic-error RDP (`_rdp_knot_indices`); the full
-    per-frame sequence is then rebuilt by slerping between consecutive knots. A
-    smooth C2 spline was tried for the reconstruction (to soften the velocity
-    "snap" at a hard direction-change knot) but rejected: it overshoots between
-    sparse knots, swinging the fit several times `tolerance_deg` past the real
-    pose -- both a new artifact of its own and a broken tolerance guarantee.
-    Slerp instead keeps the output provably within `tolerance_deg` of the input,
-    and at the knot densities this runs at (the flat regions decimate hard, the
-    fast regions keep most frames as knots) the segments are short enough that
-    the residual snap is not visible.
+    Knots are chosen by geodesic-error RDP (`_rdp_knot_indices`), rebuilt by
+    slerping between consecutive knots. A smooth C2 spline was tried (to
+    soften the velocity "snap" at a knot) but rejected: it overshoots
+    between sparse knots, breaking the tolerance guarantee. Slerp keeps the
+    output provably within `tolerance_deg`, and at the knot densities this
+    runs at, segments are short enough that the residual snap isn't visible.
 
     Args:
-        axis_angle: (T, ...) trailing dims flatten to a multiple of 3, same
-            convention as the smoothing functions above.
-        tolerance_deg: max allowed angular deviation of the fit, in degrees.
-        valid: optional (T,) bool, gap-filled the same way as
-            `smooth_rotation_sequence` before fitting -- see `fill_invalid`. The
-            occlusion contract survives decimation: a frozen (constant) trailing
-            gap keeps needing no interior knots, and a linearly-interpolated
+        axis_angle: (T, ...), trailing dims a multiple of 3 (same
+            convention as the smoothing functions above).
+        tolerance_deg: max allowed angular deviation of the fit, degrees.
+        valid: optional (T,) bool, gap-filled before fitting (`fill_
+            invalid`) -- the occlusion contract survives decimation: a
+            frozen trailing gap needs no interior knots, an interpolated
             interior gap is already representable by its two bounding knots.
 
-    Returns the same shape/dtype. Returned unchanged when the clip is too short
-    (< 3 frames), or when `valid` marks too few real frames to fit through
-    (mirrors `smooth_rotation_sequence`/`one_euro_filter_rotation_sequence`'s
-    own guard -- with zero real frames there's nothing for `fill_invalid` to
-    interpolate from).
+    Returns the same shape/dtype, unchanged if the clip is too short
+    (< 3 frames) or `valid` marks too few real frames to fit through.
     """
     axis_angle = np.asarray(axis_angle)
     original_shape = axis_angle.shape

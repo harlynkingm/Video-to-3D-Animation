@@ -115,48 +115,36 @@ def reject_biomechanically_implausible_wrist(
     release_deg: float,
     window: int,
 ) -> torch.Tensor:
-    """Demote to invalid every frame in a stretch where the wrist-relative-to-
-    elbow rotation magnitude (`wrist_relative_to_elbow`) is implausibly large --
-    a real human wrist cannot bend this far relative to the forearm, so this is
-    HaMeR regressing a pose from an ambiguous view (e.g. a foreshortened
-    forearm, or a genuine rotation-from-monocular-view ambiguity), not real
-    motion. Two real clips showed two different shapes of this failure, so a
-    single instantaneous threshold isn't enough on its own:
+    """Demote to invalid every frame in a stretch where the wrist-relative-
+    to-elbow rotation magnitude (`wrist_relative_to_elbow`) is implausibly
+    large -- a real wrist can't bend this far relative to the forearm, so
+    this is HaMeR regressing from an ambiguous view (foreshortened forearm,
+    monocular rotation ambiguity), not real motion. A single instantaneous
+    threshold misses two real failure shapes: a slow drift into impossible
+    territory, and a chaotic stretch jumping between clearly-implausible
+    values and moderate ones that look individually plausible (a clean
+    clip's own legitimate max reaches ~95-103 degrees) but still anchor the
+    smoothing chain as a milder-but-still-wrong bump.
 
-      - A slow, single-frame-smooth drift into impossible territory (a wrist
-        that gradually and continuously rotates past ~150 degrees, then back).
-      - A CHAOTIC stretch, jumping frame-to-frame between clearly-implausible
-        values (>150 degrees) and moderate ones (80-100 degrees) that, in
-        isolation, aren't distinguishable from a real deep bend elsewhere in
-        the clip (a clean reference clip's own legitimate max reached ~95-103
-        degrees) -- an instantaneous-only check catches the extreme frames but
-        leaves these moderate "shoulder" frames of the same bad stretch
-        looking individually plausible, so they still anchor the smoothing
-        chain and the excursion survives as a milder-but-still-wrong bump.
+    Hysteresis (same lock/release pattern as a noise gate): `max_deg`
+    strictly SEEDS detection (unambiguously bad); from any seed frame, the
+    invalid region expands outward while a `window`-frame ROLLING MAX stays
+    above the lower `release_deg` -- the rolling max, not the instantaneous
+    value, is what keeps a single-frame dip inside an otherwise-bad chaotic
+    stretch from prematurely ending the region (same reason `hamer_
+    adapter`'s confidence gate uses a rolling min). This only ever expands
+    from a confirmed-bad seed, so a clip that never crosses `max_deg` is
+    unaffected regardless of how `release_deg` is tuned.
 
-    Handled with hysteresis, the same lock/release pattern as a noise gate (or,
-    concretely, the same idea as this project's own root-motion-lock Blender
-    addon): `max_deg` is the strict threshold that SEEDS detection (a frame
-    exceeding it is unambiguously bad); from any seed frame, the invalid region
-    expands outward in both time directions while a `window`-frame ROLLING MAX
-    of the magnitude stays above the lower `release_deg` -- the rolling max
-    (not the instantaneous value) is what keeps a single-frame dip inside an
-    otherwise-bad chaotic stretch from prematurely ending the region, the same
-    reason `hamer_adapter`'s confidence gate uses a rolling min rather than a
-    raw per-frame check. This can only ever expand FROM a confirmed-bad seed,
-    so a clip that never crosses `max_deg` (any clean, real clip observed so
-    far) is completely unaffected regardless of how `release_deg` is tuned.
-
-    Deliberately a validity gate, not a clamp: a clamped value would still look
-    wrong (the wrist visibly stopping dead at a ceiling instead of continuing
-    to move), whereas marking frames invalid lets the existing occlusion
-    gap-fill (`motion_smoothing.fill_invalid`, run by stage 4's own smoothing
-    chain right after this) bridge across the whole excursion with a plausible
-    transition, the same as any other occlusion. Called from stage 4 on
-    HaMeR's raw per-frame estimate, before that smoothing chain runs --
-    catching a bad value before any filter blends it into its neighbors,
-    rather than after, since a filter that's already blended a bad value in
-    can't be un-blended downstream."""
+    A validity gate, not a clamp: a clamped value would still look wrong
+    (visibly stopping dead at a ceiling), whereas marking frames invalid
+    lets the existing occlusion gap-fill (`motion_smoothing.fill_invalid`,
+    run right after this in stage 4's own smoothing chain) bridge across
+    the excursion with a plausible transition, like any other occlusion.
+    Called on HaMeR's raw estimate before that smoothing chain runs -- a
+    filter that's already blended a bad value in can't be un-blended
+    downstream.
+    """
     wrist_local_aa = wrist_relative_to_elbow(elbow_global, wrist_global_aa)
     magnitude_deg = torch.rad2deg(torch.linalg.norm(wrist_local_aa, dim=-1)).numpy()
 

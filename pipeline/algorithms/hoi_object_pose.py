@@ -224,92 +224,33 @@ def compute_object_pose_sequence(
 ) -> dict:
     """The full per-frame object pose for a clip.
 
-    For each attachment event, in order: a single reference measurement is
-    taken near the event's own `start_frame` (see `_find_snap_measurement`),
-    its rotation axis-disambiguated against the most recently known-good
-    orientation, and its position **depth-corrected**: the object's own
-    lateral (X/Y) measurement is trusted, but its own depth (Z, the camera's
-    forward axis) is replaced with the attaching joint's own Z that same
-    frame. This isn't a compromise -- `similarity_transform.py`'s own fit
-    already established, on real data, that monocular per-frame depth is
-    measurably less reliable along Z specifically than laterally, while the
-    body's own motion-capture Z is comparatively trustworthy. The reference
-    rotation is also snapped so whichever of its own fitted axes is already
-    closest to vertical points exactly upright (see `_snap_axis_to_up`) --
-    PCA's own raw fit has no reason to already look that way, especially for
-    a rotationally symmetric shape. The corrected reference pose fixes a
-    rigid joint-relative offset, which then propagates rigidly for the
-    event's whole `[start_frame, end_frame]` range -- so the object's
-    rotation during the hold itself still evolves naturally as the joint
-    rotates, starting from that upright baseline rather than PCA's raw one.
-    Once the event ends, that final frame's own resulting absolute pose
-    becomes the new held pose, frozen forward until the next event (or the
-    end of the clip) -- the object stays wherever it was last placed, the
-    same way a real object would, rather than continuing to move or snapping
-    back to some earlier default. The *next* event, when it comes, measures
-    and snaps its own fresh reference pose independently -- there was never
-    cross-event rotation continuity to preserve (unlike position, a real
-    object could plausibly be reoriented by an unseen hand between two
-    holds), so this isn't a new discontinuity.
+    For each attachment event: one reference measurement near its own
+    `start_frame` (`_find_snap_measurement`), rotation axis-disambiguated
+    against the last known-good orientation and snapped upright
+    (`_snap_axis_to_up`), position depth-corrected (lateral X/Y trusted,
+    depth replaced with the attaching joint's own Z -- monocular depth is
+    measurably less reliable along Z than laterally). That reference fixes
+    a rigid joint-relative offset propagated for the event's whole span, so
+    rotation still evolves naturally as the joint does. After an event
+    ends, its final pose freezes as the held pose until the next event.
+    Before the first event, the object holds that same first event's own
+    reference pose (not a separate measurement), so entry is as pop-free
+    as exit -- no independent second measurement to disagree with the
+    first. `initial_center`/`initial_rotation` are a last-resort fallback.
 
-    Before the *first* event, the object holds that same first event's own
-    reference pose, not a separately-measured "early resting position" (an
-    earlier design measured one independently, scanning forward from frame
-    0). Both would be measuring the same physically-stationary object at
-    different times, so any disagreement between them is pure measurement
-    noise -- two independent depth reads, not two different real positions
-    -- and that earlier design produced a real, jarring multi-meter pop
-    right at the first contact frame as a result. Reusing the same reference
-    pose the event itself already trusts makes entry exactly as pop-free as
-    exit already is, for the same reason: both sides of the transition come
-    from one single measurement, not two independent ones. `initial_center`/
-    `initial_rotation` are used only as a last-resort fallback, for a clip
-    with no attachment events at all, or one whose very first event's own
-    snap search finds nothing usable.
+    Args: n_frames, attachment_events (pre-filtered/non-overlapping/sorted
+    by `start_frame`), body_motion (`retarget_hands`'s own schema) are the
+    clip's known quantities; initial_center/initial_rotation are the
+    last-resort fallback pose; object_position_fn is `frame -> (center,
+    rotation) | None` (a fresh depth pass + `object_extent_fit.fit_
+    position_and_orientation`); skeleton defaults to a fresh `SmplxSkeleton`.
 
-    There is no cross-fade/blend at transitions (an earlier design had one)
-    -- both entry and exit are now already continuous by construction (see
-    above), so there's no discontinuity left to blend across.
-
-    Args:
-        n_frames: clip length.
-        attachment_events: already filtered by the caller to qualifying
-            (duration-gated) events, each `{"region": str, "start_frame": int,
-            "end_frame": int}` (inclusive), sorted by `start_frame`, with no
-            two events overlapping (the caller resolves cross-region/cross-
-            hand overlap -- e.g. by `mean_confidence` -- before calling this).
-        body_motion: `global_orient (F,3)`, `body_pose (F,63)`, `betas (F,10)`,
-            `transl (F,3)` -- same schema as `retarget_hands`'s own output.
-        initial_center: fallback held pose center, used only if there are no
-            attachment events at all, or the first one's own snap search
-            finds nothing usable.
-        initial_rotation: fallback held pose rotation (and fallback axis-
-            disambiguation reference), used in the same last-resort case as
-            `initial_center`.
-        object_position_fn: `frame -> (center, rotation) | None` -- the
-            expensive one (a fresh depth pass + back-projection +
-            `object_extent_fit.fit_position_and_orientation`), or `None` if
-            unusable that frame (no mask, too few points).
-        skeleton: an `SmplxSkeleton` instance (constructed once by the
-            caller, reused across a whole run); defaults to constructing one
-            here if not supplied (tests may inject a fake/stub).
-
-    Returns `{"translation": (F,3), "rotation": (F,3,3), "is_low_confidence": (F,) bool,
-    "resolved_events": list[dict]}`. `is_low_confidence` is True for every
-    held (non-attached) frame, plus any attachment event whose own snap
-    search found nothing usable. `resolved_events` carries each event's own
-    `{region, joint_idx, start_frame, end_frame, snap_frame, ref_center,
-    ref_rotation, is_low_confidence}` -- the raw reference measurement, not
-    the rigid offset derived from it. A caller that wants the object to stay
-    correctly attached to the joint even after the skeleton itself is later
-    retargeted onto a different rig (bone lengths/proportions changed) needs
-    a *live* parent/constraint relationship to that joint, not the baked
-    `translation`/`rotation` values above (which are frozen for the joint's
-    original proportions) -- this is what `resolved_events` is for; the
-    caller re-derives the offset itself, in whatever space it needs (e.g.
-    stage 9 does this in Blender's own live coordinate space, reusing
-    `_object_pose_to_blender_world`, not this module's own incam-space
-    `offset`).
+    Returns `{"translation", "rotation", "is_low_confidence", "resolved_
+    events"}` -- `is_low_confidence` is True for held frames and any event
+    with no usable snap; `resolved_events` carries each event's own raw
+    reference measurement, for a caller needing the object to stay attached
+    through a later retarget (re-derives the offset itself, since the baked
+    pose above is frozen for the original rig's own proportions).
     """
     if skeleton is None:
         from ..adapters.gvhmr.gvhmr_smplx_skeleton import SmplxSkeleton
