@@ -20,6 +20,10 @@ from pipeline.helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
 from pipeline.progress_tracker import RunInput, RunRecord, SceneInfo, StageName, StageRecord
 from pipeline.stages.stage_9_export import (
     OUTPUT_BLEND,
+    _FIRST_MOTION_BLENDER_FRAME,
+    _REST_POSE_YAW_RADIANS,
+    _fix_pelvis_rotation_hemisphere_continuity,
+    _iter_action_fcurves,
     _lowest_foot_z,
     _object_pose_to_blender_world,
     _prepend_rest_pose_frame,
@@ -109,7 +113,10 @@ def test_prepend_rest_pose_frame_adds_one_all_zero_frame():
     go, bp, tr, lh, rh = _prepend_rest_pose_frame(global_orient, body_pose, transl, left_hand_pose, right_hand_pose)
 
     assert go.shape == (N_FRAMES + 1, 3)
-    assert np.allclose(go[0], 0.0) and np.allclose(go[1:], global_orient)
+    # Root orientation is yawed (see _REST_POSE_YAW_RADIANS), not literal
+    # zero -- everything else about the rest frame (body/hand pose) stays a
+    # true T-pose.
+    assert np.allclose(go[0], [0.0, _REST_POSE_YAW_RADIANS, 0.0]) and np.allclose(go[1:], global_orient)
     assert np.allclose(bp[0], 0.0) and np.allclose(bp[1:], body_pose)
     assert np.allclose(lh[0], 0.0) and np.allclose(lh[1:], left_hand_pose)
     assert np.allclose(rh[0], 0.0) and np.allclose(rh[1:], right_hand_pose)
@@ -408,7 +415,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
 
     import bpy
 
-    from pipeline.stages.stage_9_export import OBJECT_MESH_PREFIX, _OBJECT_FIRST_MOTION_BLENDER_FRAME
+    from pipeline.stages.stage_9_export import OBJECT_MESH_PREFIX
 
     # A real save->reopen round trip (not just reading the live in-memory
     # scene, which the subprocess above doesn't share with this process
@@ -425,7 +432,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
     floor_offset = -_lowest_foot_z(armature)
 
     def blender_frame(raw_frame: int) -> int:
-        return raw_frame + _OBJECT_FIRST_MOTION_BLENDER_FRAME
+        return raw_frame + _FIRST_MOTION_BLENDER_FRAME
 
     # `floor_offset` re-derived this way is near-zero (grounding is already
     # correct post-reload), NOT the original, generally-nonzero value `run()`

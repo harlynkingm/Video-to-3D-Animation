@@ -78,7 +78,7 @@ change of basis already proven for the BVH previews
 non-root joints are unaffected (their rotations are relative to their
 parent, not the world).
 
-Two more real gaps found by the user inspecting a real export: incam space
+Two more real gaps, both confirmed against a real export: incam space
 has no inherent floor, so the character's absolute height after the
 rotation above was wherever GVHMR's raw numbers happened to put it (~1.7m
 underground on a real clip) -- `run()` builds the animation once to measure
@@ -156,7 +156,7 @@ _SMPLX_BODY_JOINT_NAMES = (
 # (`_prepend_rest_pose_frame`), which has no equivalent concept for the
 # object. The object is just held at its own first frame's pose for that
 # one extra frame too (see `_keyframe_held_object_pose`).
-_OBJECT_FIRST_MOTION_BLENDER_FRAME = 2
+_FIRST_MOTION_BLENDER_FRAME = 2
 
 # Matches retarget_hands.OUTPUT_RETARGET_MOTION_NPZ and its own npz key names
 # exactly (the latter same strings as gvhmr_adapter.KEY_GLOBAL_ORIENT/
@@ -335,7 +335,7 @@ def _keyframe_held_object_pose(
 
     Frame 1 (the body's own prepended rest-pose frame) has no equivalent
     concept for the object, so it's just held at the object's own first real
-    frame's pose too (see `_OBJECT_FIRST_MOTION_BLENDER_FRAME`).
+    frame's pose too (see `_FIRST_MOTION_BLENDER_FRAME`).
 
     A held frame is skipped (no keyframe) when it's bit-for-bit identical to
     both neighbors *and* both neighbors are themselves held -- a flat
@@ -367,7 +367,7 @@ def _keyframe_held_object_pose(
         )
         obj.location = tuple(blender_location)
         obj.rotation_quaternion = Matrix(blender_rotation.tolist()).to_quaternion()
-        frame = i + _OBJECT_FIRST_MOTION_BLENDER_FRAME
+        frame = i + _FIRST_MOTION_BLENDER_FRAME
         if i == 0:
             obj.keyframe_insert(data_path="location", frame=frame - 1)
             obj.keyframe_insert(data_path="rotation_quaternion", frame=frame - 1)
@@ -447,7 +447,7 @@ def _add_attachment_constraint(
     # below (the armature was built from AMASS data that chain already
     # produced), so composing the two gives a constraint offset expressed
     # correctly in Blender's own live space, not stage 8's incam space.
-    scene.frame_set(event["snap_frame"] + _OBJECT_FIRST_MOTION_BLENDER_FRAME)
+    scene.frame_set(event["snap_frame"] + _FIRST_MOTION_BLENDER_FRAME)
     bone_world = armature.matrix_world @ armature.pose.bones[bone_name].matrix
 
     blender_location, blender_rotation = _object_pose_to_blender_world(
@@ -461,8 +461,8 @@ def _add_attachment_constraint(
     constraint.subtarget = bone_name
     constraint.inverse_matrix = bone_world.inverted() @ ref_transform
 
-    frame_start = start + _OBJECT_FIRST_MOTION_BLENDER_FRAME
-    frame_end = end + _OBJECT_FIRST_MOTION_BLENDER_FRAME
+    frame_start = start + _FIRST_MOTION_BLENDER_FRAME
+    frame_end = end + _FIRST_MOTION_BLENDER_FRAME
     data_path = f'constraints["{constraint.name}"].influence'
     if start > 0:
         constraint.influence = 0.0
@@ -485,23 +485,45 @@ def _add_attachment_constraint(
                     keyframe_point.interpolation = "CONSTANT"
 
 
+# The rest frame's own root orientation is the identity SMPL-X pose *plus*
+# this yaw, not literal zero. Zero, written directly into this function's
+# already-upright AMASS space (it bypasses _root_camera_to_upright entirely,
+# unlike every real frame), renders as a fixed "-Y facing" in Blender's own
+# world space -- a mismatch against where the real motion's own first frame
+# actually faces (+X, the direction CAMERA_TO_BVH_ROOT_ROTATION's own
+# "forward" maps to -- see bvh_export.py's own docstring). This mismatch is
+# architecturally fixed (not clip-specific): CAMERA_TO_BVH_ROOT_ROTATION is a
+# constant, so every clip's real motion faces the same consistent direction
+# once corrected, while the rest frame's identity orientation never passes
+# through that correction at all. A rotation about AMASS's own up axis
+# (index 1, Y -- same axis `_write_body_amass`'s own `floor_offset` uses)
+# maps, under the same up-axis-preserving change of basis
+# `_AMASS_TO_BLENDER_WORLD_ROTATION` uses for everything else, to the
+# same-angle same-handedness rotation about Blender's own up axis (Z) -- so
+# +90 degrees here rotates the rest pose's fixed -Y facing to +X, matching
+# the real motion's own starting direction. Not yet independently visually
+# reconfirmed in Blender -- if this turns out backwards, flip the sign.
+_REST_POSE_YAW_RADIANS = math.pi / 2
+
+
 def _prepend_rest_pose_frame(
     global_orient: np.ndarray, body_pose: np.ndarray, transl: np.ndarray,
     left_hand_pose: np.ndarray, right_hand_pose: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Adds one neutral (all-zero-rotation, SMPL-X's own canonical rest
-    stance) frame before the real motion. Retargeting this onto another rig
-    otherwise has no bind/reference pose to work from -- a real, concrete
-    usability gap the user hit trying to do exactly that. Positioned at the
-    real motion's own first frame's location, so only the *pose* jumps at
-    the frame 0->1 boundary, not the character's position -- a static
-    calibration frame most retargeting tools skip or trim anyway. Always
-    included; not currently exposed as an opt-out flag (the existing
+    """Adds one neutral (SMPL-X's own canonical rest stance, yawed to face
+    the same direction the real motion's own first frame does -- see
+    `_REST_POSE_YAW_RADIANS`) frame before the real motion. Retargeting this
+    onto another rig otherwise has no bind/reference pose to work from.
+    Positioned at the real motion's own first frame's location, so only the
+    *pose* jumps at the frame 0->1 boundary, not the character's position --
+    a static calibration frame most retargeting tools skip or trim anyway.
+    Always included; not currently exposed as an opt-out flag (the existing
     `RunInput` bool-flag CLI plumbing is wired for opt-in/default-off flags
     like the `--render-*-preview` family, not default-on ones -- add one if
     a real need to disable this ever comes up).
     """
     rest_global_orient = np.zeros((1, 3), dtype=global_orient.dtype)
+    rest_global_orient[0, 1] = _REST_POSE_YAW_RADIANS
     rest_body_pose = np.zeros((1, body_pose.shape[1]), dtype=body_pose.dtype)
     rest_left_hand_pose = np.zeros((1, left_hand_pose.shape[1]), dtype=left_hand_pose.dtype)
     rest_right_hand_pose = np.zeros((1, right_hand_pose.shape[1]), dtype=right_hand_pose.dtype)
@@ -627,9 +649,9 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     # Second pass: rebuild with that offset baked into the root's own
     # per-frame translation curve -- keeps the addon's separate, always-
-    # static "root" bone at true world origin (per the user's own request),
-    # since only the *pelvis*'s translation is shifted, not an object-level
-    # transform that would move everything including "root".
+    # static "root" bone at true world origin, since only the *pelvis*'s
+    # translation is shifted, not an object-level transform that would move
+    # everything including "root".
     _write_body_amass(motion, runRecord.scene.fps, amass_path, floor_offset=floor_offset)
     _clear_scene(bpy)
     bpy.ops.object.smplx_add_animation(filepath=str(amass_path), anim_format=_ADDON_ANIM_FORMAT)
@@ -666,8 +688,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         held_mask = _held_frame_mask(n_frames, attachment_events)
         _keyframe_held_object_pose(obj, translations, rotations, held_mask, pelvis_rest, floor_offset)
         for event in attachment_events:
-            _reset_object_base_transform(obj, event["start_frame"] + _OBJECT_FIRST_MOTION_BLENDER_FRAME)
-            _reset_object_base_transform(obj, event["end_frame"] + _OBJECT_FIRST_MOTION_BLENDER_FRAME)
+            _reset_object_base_transform(obj, event["start_frame"] + _FIRST_MOTION_BLENDER_FRAME)
+            _reset_object_base_transform(obj, event["end_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset)
 
     # Building the animation above (attachment constraints, foot-grounding)
