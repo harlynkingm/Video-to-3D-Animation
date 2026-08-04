@@ -116,7 +116,7 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--render-retarget-preview` | No | off | Stage 5 also writes a `.bvh` full-body-plus-hands skeleton animation importable into Blender for confirming the hands sit correctly on the body. See [stage 5](#stage-5-retarget-hands) below. |
 | `--render-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#stage-6-align-scene-scale) below. |
 | `--render-contacts-preview` | No | off | Stage 7 also writes one annotated JPEG per contact event, circling the contact point on the source frame, for visual spot-checking. See [stage 7](#stage-7-annotate-contacts) below. |
-| `--force-all` | No | off | Forces all stages to re-run, even if they have already run. The equivalent of passing `--force` to each stage individually. |
+| `--force-all` (`-f`) | No | off | Forces all stages to re-run, even if they have already run. The equivalent of passing `--force` to each stage individually. |
 </details>
 
 **Running stages individually**: `pipeline.run` is just `pipeline.create_run` followed by every stage's own script, run in sequence. See [Pipeline](#pipeline) below for each stage's individual command and options.
@@ -143,7 +143,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 
 </details>
 
-**Every stage skips itself if `progress.json` already shows it as complete.** Pass `--force` to re-run a stage anyway.
+**Every stage skips itself if `progress.json` already shows it as complete.** Pass `--force` or `-f` to re-run a stage anyway.
 
 ### Create a Run File
 

@@ -172,7 +172,7 @@ def main() -> None:
              "Omit to run every implemented stage.",
     )
     parser.add_argument(
-        "--force-all",
+        "-f", "--force-all",
         action="store_true",
         help="Force all stages to re-run. The equivalent of passing `--force` to each stage individually.",
     )

@@ -62,7 +62,7 @@ def cli_entrypoint(run: Callable[[RunRecord], dict[str, str]], stage_name: Stage
     parser = argparse.ArgumentParser(description=f"Run the {stage_name} stage")
     parser.add_argument("-o", "--output-dir", dest="progress_dir", metavar="OUTPUT_DIR", required=True,
                          help="Path to the run directory containing progress.json")
-    parser.add_argument("--force", action="store_true", help="Re-run even if this stage is already marked complete")
+    parser.add_argument("-f", "--force", action="store_true", help="Re-run even if this stage is already marked complete")
     args = parser.parse_args()
 
     runRecord = RunRecord.load(args.progress_dir)
