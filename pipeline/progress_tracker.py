@@ -36,7 +36,7 @@ class StageName(enum.StrEnum):
         obj.stage_number = stage_number
         return obj
 
-    STAGE_0_INGEST_VIDEO = "ingest_video", "initial stage: processing video", 0
+    STAGE_0_INGEST_VIDEO = "ingest_video", "initial stage: process video", 0
     STAGE_1_MASK_AND_TRACK = "mask_and_track", "stage 1: generate masks", 1
     STAGE_1A_HUMAN_MASK = "generate_human_mask", "stage 1: generate human mask", 1
     STAGE_1B_OBJECT_MASK = "generate_object_mask", "stage 1: generate object mask", 1
@@ -45,8 +45,9 @@ class StageName(enum.StrEnum):
     STAGE_4_ESTIMATE_HANDS = "estimate_hands", "stage 4: estimate hands motion", 4
     STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body", 5
     STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale", 6
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect human-object interaction points", 7
-    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize human-object interaction", 8
+    STAGE_6B_SAMPLE_OBJECT_SHAPE = "sample_object_shape", "stage 6: detect object shape", 6
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect object interaction", 7
+    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interaction", 8
     STAGE_9_EXPORT = "export", "stage 9: export animation", 9
 
 
