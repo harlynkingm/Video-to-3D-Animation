@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pipeline.progress_tracker import ObjectShapeHint, StageName
+from pipeline.progress_tracker import PROGRESS_JSON_NAME, ObjectShapeHint, StageName
 
 from ui.pipeline_runner import PipelineRunner, RunFormState, build_run_argv
 
@@ -279,18 +279,22 @@ class MainWindow(QMainWindow):
 
     # -- run / stop ---------------------------------------------------------
 
-    def _parse_positive_float(self, text: str, label: str, errors: list[str]) -> float:
+    def _parse_positive_float(
+        self, text: str, label: str, errors: list[str], required: bool = True,
+    ) -> float | None:
         text = text.strip()
         if not text:
-            errors.append(f"{label} is required.")
-            return 0.0
+            if required:
+                errors.append(f"{label} is required.")
+            return None
         try:
             value = float(text)
         except ValueError:
             errors.append(f"{label} must be a number.")
-            return 0.0
+            return None
         if value <= 0:
             errors.append(f"{label} must be greater than 0.")
+            return None
         return value
 
     def _on_run_clicked(self) -> None:
@@ -299,9 +303,19 @@ class MainWindow(QMainWindow):
 
         errors: list[str] = []
 
+        destination = self.destination_edit.text().strip()
+        if not destination:
+            errors.append("Destination folder is required.")
+
+        # An existing run at destination already has its own stored input --
+        # pipeline.run resumes it, applying only whichever of these fields
+        # are actually given as overrides, so none of them are required here.
+        resuming = bool(destination) and (Path(destination) / PROGRESS_JSON_NAME).exists()
+
         video_path = self.video_path_edit.text().strip()
         if not video_path:
-            errors.append("Source video/image sequence path is required.")
+            if not resuming:
+                errors.append("Source video/image sequence path is required.")
         elif not Path(video_path).exists():
             errors.append(f"Source path does not exist: {video_path}")
 
@@ -310,25 +324,25 @@ class MainWindow(QMainWindow):
         if is_image_sequence:
             source_fps = self._parse_positive_float(self.fps_edit.text(), "FPS", errors)
 
-        destination = self.destination_edit.text().strip()
-        if not destination:
-            errors.append("Destination folder is required.")
-
         human_prompt = self.human_prompt_edit.text().strip()
-        if not human_prompt:
+        if not human_prompt and not resuming:
             errors.append("Human prompt is required.")
 
-        focal_length = self._parse_positive_float(self.focal_length_edit.text(), "Focal length", errors)
-        sensor_width = self._parse_positive_float(self.sensor_width_edit.text(), "Sensor width", errors)
+        focal_length = self._parse_positive_float(
+            self.focal_length_edit.text(), "Focal length", errors, required=not resuming,
+        )
+        sensor_width = self._parse_positive_float(
+            self.sensor_width_edit.text(), "Sensor width", errors, required=not resuming,
+        )
 
         if errors:
             QMessageBox.warning(self, "Cannot start run", "\n".join(errors))
             return
 
         state = RunFormState(
-            video_path=video_path,
             destination_folder=destination,
-            human_prompt=human_prompt,
+            video_path=video_path or None,
+            human_prompt=human_prompt or None,
             object_prompt=self.object_prompt_edit.text().strip() or None,
             focal_length_mm=focal_length,
             sensor_width_mm=sensor_width,

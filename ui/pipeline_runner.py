@@ -19,11 +19,18 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 @dataclass
 class RunFormState:
-    video_path: str
     destination_folder: str
-    human_prompt: str
-    focal_length_mm: float
-    sensor_width_mm: float
+    # video_path/human_prompt/focal_length_mm/sensor_width_mm are only required
+    # for a fresh run -- pipeline.run itself already resumes an existing run
+    # (progress.json already present at destination_folder) from its own
+    # stored RunInput, treating any of these as an override only when given.
+    # Left as None, they're simply omitted from argv (see build_run_argv)
+    # rather than sent as empty/zero values that would fail argparse or
+    # overwrite the stored run's real input.
+    video_path: str | None = None
+    human_prompt: str | None = None
+    focal_length_mm: float | None = None
+    sensor_width_mm: float | None = None
     object_prompt: str | None = None
     is_image_sequence: bool = False
     source_fps: float | None = None
@@ -42,17 +49,21 @@ def build_run_argv(state: RunFormState) -> list[str]:
     """
     argv = [
         sys.executable, "-m", "pipeline.run",
-        "--input-video", state.video_path,
         "--output-dir", state.destination_folder,
-        "--human-prompt", state.human_prompt,
-        "--focal-length-mm", str(state.focal_length_mm),
-        "--sensor-width-mm", str(state.sensor_width_mm),
         "--start-on-stage", str(state.start_stage),
         "--stop-after-stage", str(state.stop_stage),
         "--object-shape-hint", state.object_shape,
     ]
+    if state.video_path:
+        argv += ["--input-video", state.video_path]
+    if state.human_prompt:
+        argv += ["--human-prompt", state.human_prompt]
     if state.object_prompt:
         argv += ["--object-prompt", state.object_prompt]
+    if state.focal_length_mm is not None:
+        argv += ["--focal-length-mm", str(state.focal_length_mm)]
+    if state.sensor_width_mm is not None:
+        argv += ["--sensor-width-mm", str(state.sensor_width_mm)]
     if state.is_image_sequence and state.source_fps is not None:
         argv += ["--source-fps", str(state.source_fps)]
     if state.force_all:

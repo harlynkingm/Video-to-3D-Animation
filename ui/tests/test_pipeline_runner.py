@@ -69,3 +69,24 @@ def test_build_run_argv_stage_range_and_object_shape():
     assert argv[argv.index("--start-on-stage") + 1] == "4"
     assert argv[argv.index("--stop-after-stage") + 1] == "6"
     assert argv[argv.index("--object-shape-hint") + 1] == "box"
+
+
+def test_build_run_argv_omits_optional_fields_when_resuming():
+    # Only destination_folder given (as when resuming/re-running an existing
+    # output folder without re-filling the rest of the form) -- pipeline.run
+    # itself fills in everything else from the existing run's stored input,
+    # so none of these should be sent as empty/zero overrides.
+    argv = build_run_argv(RunFormState(destination_folder="C:/runs/my_clip"))
+
+    assert argv[argv.index("--output-dir") + 1] == "C:/runs/my_clip"
+    assert "--input-video" not in argv
+    assert "--human-prompt" not in argv
+    assert "--object-prompt" not in argv
+    assert "--focal-length-mm" not in argv
+    assert "--sensor-width-mm" not in argv
+    assert "--source-fps" not in argv
+    # Stage range and object shape are pipeline.run's own flags/defaults,
+    # unrelated to resuming, so they're always sent.
+    assert "--start-on-stage" in argv
+    assert "--stop-after-stage" in argv
+    assert "--object-shape-hint" in argv
