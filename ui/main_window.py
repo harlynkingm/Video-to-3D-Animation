@@ -47,10 +47,10 @@ _LINE_BREAK_RE = re.compile(r"(\r\n|\r|\n)")
 WINDOW_TITLE = "Video to 3D Animation"
 
 UI_SOURCE_VIDEO = "Source video:"
-UI_DESTINATION_FOLDER = "Destination folder:"
+UI_DESTINATION_FOLDER = "Output folder:"
 UI_HUMAN_PROMPT = "Human prompt:"
 UI_OBJECT_PROMPT = "Object prompt:"
-UI_CAMERA = "Camera:"
+UI_CAMERA = "Camera"
 UI_BROWSE = "Browse..."
 UI_IMAGE_SEQUENCE = "Use image sequence for source video"
 UI_FPS = "FPS:"
@@ -59,7 +59,7 @@ UI_SENSOR_WIDTH = "Sensor width (mm):"
 UI_OBJECT_SHAPE = "Object shape:"
 UI_ADVANCED_OPTIONS = "Advanced options"
 UI_STAGE_RANGE = "Stage range:"
-UI_CONSOLE_LOG = "Console:"
+UI_CONSOLE_LOG = "Console"
 UI_RUN_BUTTON = "Run"
 UI_STOP_BUTTON = "Stop"
 UI_FORCE_RERUN = "Force re-run selected stages"
@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
             self.video_path_edit.setText(path)
 
     def _on_browse_destination_clicked(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select destination folder")
+        path = QFileDialog.getExistingDirectory(self, "Select output folder")
         if path:
             self.destination_edit.setText(path)
 
@@ -345,7 +345,7 @@ class MainWindow(QMainWindow):
 
         destination = self.destination_edit.text().strip()
         if not destination:
-            errors.append("Destination folder is required.")
+            errors.append("Output folder is required.")
 
         # An existing run at destination already has its own stored input --
         # pipeline.run resumes it, applying only whichever of these fields
@@ -471,6 +471,7 @@ class MainWindow(QMainWindow):
         self.log_edit.appendPlainText(f"\n[process exited with code {exit_code}]")
         self._set_running(False)
         if self._run_destination is not None and self._run_destination.exists() and exit_code == 0:
+            self.log_edit.appendPlainText(f"\nOpening output folder: {self._run_destination}")
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._run_destination)))
 
     def closeEvent(self, event) -> None:

@@ -20,7 +20,7 @@ from pipeline.run import ORDERED_STAGES
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 UI_STAGES_COMPLETE = "All stages complete"
-UI_PREPARING_NEXT_STAGE = "Preparing next stage..."
+UI_PREPARING_NEXT_STAGE = "Preparing to run next stage..."
 
 @dataclass
 class RunFormState:
@@ -111,7 +111,7 @@ def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: 
     if failed_stage is not None:
         status_text = f"Failed: {failed_stage.label}"
     elif running_stage is not None:
-        status_text = f"Running {running_stage.label}..."
+        status_text = f"Running [{running_stage.label}]..."
     elif total > 0 and completed == total:
         status_text = UI_STAGES_COMPLETE
     else:

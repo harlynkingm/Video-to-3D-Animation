@@ -46,8 +46,8 @@ class StageName(enum.StrEnum):
     STAGE_5_RETARGET_HANDS = "retarget_hands","stage 5: attach hands to body", 5
     STAGE_6_ALIGN_SCENE_SCALE = "align_scene_scale", "stage 6: detect scene scale", 6
     STAGE_6B_SAMPLE_OBJECT_SHAPE = "sample_object_shape", "stage 6: detect object shape", 6
-    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect object interaction", 7
-    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interaction", 8
+    STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect object interactions", 7
+    STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interactions", 8
     STAGE_9_EXPORT = "export", "stage 9: export animation", 9
 
 def ordered_stages() -> list[StageName]:
