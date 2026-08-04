@@ -5,11 +5,13 @@ that command by hand on the CLI (see README.md's Quick Start section).
 
 from __future__ import annotations
 
+import json
+import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QDoubleValidator, QFontDatabase, QTextCursor
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDoubleValidator, QDesktopServices, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -23,18 +25,24 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from pipeline.progress_tracker import PROGRESS_JSON_NAME, ObjectShapeHint, StageName
+from pipeline.progress_tracker import PROGRESS_JSON_NAME, ObjectShapeHint, RunRecord, StageName, ordered_stages
 
-from ui.pipeline_runner import PipelineRunner, RunFormState, build_run_argv
+from ui.pipeline_runner import PipelineRunner, RunFormState, StageProgress, build_run_argv, compute_stage_progress
 
 MAX_STAGE_NUMBER = max(stage.stage_number for stage in StageName)
 VIDEO_FILE_FILTER = "Video files (*.mp4 *.mov *.mpeg *.mpg *.flv *.wmv);;All files (*)"
+PROGRESS_POLL_INTERVAL_MS = 750
+# Splits process output on line breaks while keeping the delimiters, so a
+# lone "\r" (tqdm's per-frame progress updates) can be told apart from a real
+# "\n"/"\r\n" line break in _on_output_received.
+_LINE_BREAK_RE = re.compile(r"(\r\n|\r|\n)")
 
 WINDOW_TITLE = "Video to 3D Animation"
 
@@ -51,9 +59,11 @@ UI_SENSOR_WIDTH = "Sensor width (mm):"
 UI_OBJECT_SHAPE = "Object shape:"
 UI_ADVANCED_OPTIONS = "Advanced options"
 UI_STAGE_RANGE = "Stage range:"
-UI_CONSOLE_LOG = "Console log:"
+UI_CONSOLE_LOG = "Console:"
 UI_RUN_BUTTON = "Run"
 UI_STOP_BUTTON = "Stop"
+UI_FORCE_RERUN = "Force re-run selected stages"
+UI_RENDER_PREVIEWS = "Render preview outputs for each stage"
 
 
 class MainWindow(QMainWindow):
@@ -65,6 +75,13 @@ class MainWindow(QMainWindow):
         self.pipeline_runner.output_received.connect(self._on_output_received)
         self.pipeline_runner.finished.connect(self._on_process_finished)
 
+        self.progress_timer = QTimer(self)
+        self.progress_timer.setInterval(PROGRESS_POLL_INTERVAL_MS)
+        self.progress_timer.timeout.connect(self._on_progress_tick)
+        self._run_destination: Path | None = None
+        self._run_start_stage = 0
+        self._run_stop_stage = MAX_STAGE_NUMBER
+
         self.form_container = self._build_form_container()
 
         self.log_edit = QPlainTextEdit()
@@ -75,6 +92,8 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.addWidget(self.form_container)
+        layout.addLayout(self._build_run_stop_row())
+        layout.addWidget(self._build_progress_bar())
         layout.addWidget(QLabel(UI_CONSOLE_LOG))
         layout.addWidget(self.log_edit, 1)
         self.setCentralWidget(central)
@@ -91,8 +110,8 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         top_form = QFormLayout()
-        top_form.addRow(UI_SOURCE_VIDEO, self._build_source_row())
         top_form.addRow(UI_DESTINATION_FOLDER, self._build_destination_row())
+        top_form.addRow(UI_SOURCE_VIDEO, self._build_source_row())
 
         self.human_prompt_edit = QLineEdit()
         top_form.addRow(UI_HUMAN_PROMPT, self.human_prompt_edit)
@@ -107,7 +126,6 @@ class MainWindow(QMainWindow):
         self.advanced_frame = self._build_advanced_frame()
         layout.addWidget(self.advanced_frame)
 
-        layout.addLayout(self._build_run_stop_row())
         return container
 
     def _build_source_row(self) -> QWidget:
@@ -208,22 +226,27 @@ class MainWindow(QMainWindow):
         stage_row = QWidget()
         stage_row_layout = QHBoxLayout(stage_row)
         stage_row_layout.setContentsMargins(0, 0, 0, 0)
-        stage_numbers = [str(n) for n in range(MAX_STAGE_NUMBER + 1)]
+        # Stored so combo *index* can be mapped back to each stage's real
+        # `.stage_number` explicitly (see _on_run_clicked) instead of assuming
+        # they're numerically equal -- true today only because ordered_stages()
+        # happens to return one deduplicated entry per number, 0..9, in order.
+        self._stages_by_combo_index = ordered_stages()
+        stage_names = [s.label for s in self._stages_by_combo_index]
         self.stage_from_combo = QComboBox()
-        self.stage_from_combo.addItems(stage_numbers)
-        self.stage_from_combo.setCurrentText("0")
+        self.stage_from_combo.addItems(stage_names)
+        self.stage_from_combo.setCurrentIndex(0)
         self.stage_to_combo = QComboBox()
-        self.stage_to_combo.addItems(stage_numbers)
-        self.stage_to_combo.setCurrentText(str(MAX_STAGE_NUMBER))
+        self.stage_to_combo.addItems(stage_names)
+        self.stage_to_combo.setCurrentIndex(len(self._stages_by_combo_index) - 1)
         stage_row_layout.addWidget(self.stage_from_combo)
         stage_row_layout.addWidget(QLabel("to"))
         stage_row_layout.addWidget(self.stage_to_combo)
         form.addRow(UI_STAGE_RANGE, stage_row)
 
-        self.force_rerun_checkbox = QCheckBox("Force rerun all stages")
+        self.force_rerun_checkbox = QCheckBox(UI_FORCE_RERUN)
         form.addRow("", self.force_rerun_checkbox)
 
-        self.render_previews_checkbox = QCheckBox("Render preview outputs for each stage")
+        self.render_previews_checkbox = QCheckBox(UI_RENDER_PREVIEWS)
         form.addRow("", self.render_previews_checkbox)
 
         form.addRow("", self._build_image_sequence_row())
@@ -232,6 +255,10 @@ class MainWindow(QMainWindow):
 
     def _build_run_stop_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
+
+        self.status_label = QLabel()
+        self.status_label.setVisible(False)
+        row.addWidget(self.status_label)
         row.addStretch(1)
 
         button_width = 90
@@ -253,6 +280,19 @@ class MainWindow(QMainWindow):
         row.addWidget(self.run_button)
 
         return row
+
+    def _build_progress_bar(self) -> QProgressBar:
+        bar = QProgressBar()
+        bar.setRange(0, 1)
+        bar.setValue(0)
+        bar.setTextVisible(False)
+        bar.setVisible(False)
+        bar.setStyleSheet(
+            "QProgressBar { border: 1px solid #555; border-radius: 3px; }"
+            "QProgressBar::chunk { background-color: #107C10; }"
+        )
+        self.progress_bar = bar
+        return bar
 
     # -- browse / toggle handlers ------------------------------------------
 
@@ -348,16 +388,28 @@ class MainWindow(QMainWindow):
             sensor_width_mm=sensor_width,
             is_image_sequence=is_image_sequence,
             source_fps=source_fps,
-            start_stage=int(self.stage_from_combo.currentText()),
-            stop_stage=int(self.stage_to_combo.currentText()),
+            start_stage=self._stages_by_combo_index[self.stage_from_combo.currentIndex()].stage_number,
+            stop_stage=self._stages_by_combo_index[self.stage_to_combo.currentIndex()].stage_number,
             object_shape=self.object_shape_combo.currentText(),
             force_all=self.force_rerun_checkbox.isChecked(),
             render_previews=self.render_previews_checkbox.isChecked(),
         )
         argv = build_run_argv(state)
         self.log_edit.appendPlainText("$ " + " ".join(argv))
+        self.log_edit.appendPlainText("\n")
         self._set_running(True)
+
+        self._run_destination = Path(destination)
+        self._run_start_stage = state.start_stage
+        self._run_stop_stage = state.stop_stage
+        self.progress_bar.setRange(0, 1)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.status_label.setText("Starting...")
+        self.status_label.setVisible(True)
+
         self.pipeline_runner.start(argv)
+        self.progress_timer.start()
 
     def _on_stop_clicked(self) -> None:
         self.pipeline_runner.stop()
@@ -372,16 +424,54 @@ class MainWindow(QMainWindow):
     def _on_output_received(self, text: str) -> None:
         scrollbar = self.log_edit.verticalScrollBar()
         at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
+        # A plain QTextCursor (as returned by textCursor()) still edits the
+        # widget's real document regardless of whether it's ever handed back
+        # via setTextCursor() -- so the insert/select operations below always
+        # take effect. Only setTextCursor() itself (which moves the widget's
+        # own visible caret) triggers Qt's auto-scroll-into-view; calling it
+        # unconditionally was overriding the at_bottom check below and
+        # forcing the scrollbar to the end on every single update.
         cursor = self.log_edit.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(text)
-        self.log_edit.setTextCursor(cursor)
+        for piece in _LINE_BREAK_RE.split(text):
+            if not piece:
+                continue
+            if piece in ("\r\n", "\n"):
+                cursor.insertBlock()
+            elif piece == "\r":
+                # tqdm-style progress update: overwrite the current line
+                # instead of appending a new one, like a real terminal would.
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+            else:
+                cursor.insertText(piece)
         if at_bottom:
+            self.log_edit.setTextCursor(cursor)
             scrollbar.setValue(scrollbar.maximum())
 
+    def _on_progress_tick(self) -> None:
+        if self._run_destination is None:
+            return
+        try:
+            run_record = RunRecord.load(self._run_destination)
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            return  # progress.json doesn't exist yet, or is mid-write -- try again next tick
+        progress = compute_stage_progress(run_record, self._run_start_stage, self._run_stop_stage)
+        self._apply_progress(progress)
+
+    def _apply_progress(self, progress: StageProgress) -> None:
+        self.progress_bar.setRange(0, max(progress.total, 1))
+        self.progress_bar.setValue(progress.completed)
+        self.status_label.setText(progress.status_text)
+
     def _on_process_finished(self, exit_code: int) -> None:
+        self.progress_timer.stop()
+        self.progress_bar.setVisible(False)
+        self.status_label.setVisible(False)
         self.log_edit.appendPlainText(f"\n[process exited with code {exit_code}]")
         self._set_running(False)
+        if self._run_destination is not None and self._run_destination.exists() and exit_code == 0:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._run_destination)))
 
     def closeEvent(self, event) -> None:
         if self.pipeline_runner.is_running():

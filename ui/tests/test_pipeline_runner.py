@@ -1,6 +1,7 @@
 import sys
 
-from ui.pipeline_runner import RunFormState, build_run_argv
+from pipeline.progress_tracker import RunInput, RunRecord, StageName, StageRecord, StageStatus
+from ui.pipeline_runner import RunFormState, build_run_argv, compute_stage_progress
 
 
 def _base_state(**overrides) -> RunFormState:
@@ -90,3 +91,58 @@ def test_build_run_argv_omits_optional_fields_when_resuming():
     assert "--start-on-stage" in argv
     assert "--stop-after-stage" in argv
     assert "--object-shape-hint" in argv
+
+
+def _run_record(**stage_statuses: StageStatus) -> RunRecord:
+    return RunRecord(
+        run_id="test",
+        progress_dir="runs/test",
+        input=RunInput(video_path="v.mp4", human_prompt="a person"),
+        stages={name: StageRecord(status=status) for name, status in stage_statuses.items()},
+    )
+
+
+def test_compute_stage_progress_nothing_started():
+    progress = compute_stage_progress(_run_record(), start_stage=0, stop_stage=9)
+
+    assert progress.completed == 0
+    assert progress.total == 10
+    assert progress.status_text == "Preparing next stage..."
+
+
+def test_compute_stage_progress_partial_complete_and_running():
+    progress = compute_stage_progress(
+        _run_record(
+            ingest_video=StageStatus.COMPLETE,
+            mask_and_track=StageStatus.COMPLETE,
+            estimate_human_motion=StageStatus.RUNNING,
+        ),
+        start_stage=0, stop_stage=9,
+    )
+
+    assert progress.completed == 2
+    assert progress.total == 10
+    label = StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.label
+    assert progress.status_text == f"Running {label}..."
+
+
+def test_compute_stage_progress_respects_stage_range():
+    # Every stage complete, but only a 3-stage sub-range was actually run.
+    progress = compute_stage_progress(
+        _run_record(**{stage.value: StageStatus.COMPLETE for stage in StageName if stage.stage_number <= 9}),
+        start_stage=2, stop_stage=4,
+    )
+
+    assert progress.completed == 3
+    assert progress.total == 3
+    assert progress.status_text == "All stages complete"
+
+
+def test_compute_stage_progress_reports_failure():
+    progress = compute_stage_progress(
+        _run_record(ingest_video=StageStatus.COMPLETE, mask_and_track=StageStatus.FAILED),
+        start_stage=0, stop_stage=9,
+    )
+
+    label = StageName.STAGE_1_MASK_AND_TRACK.label
+    assert progress.status_text == f"Failed: {label}"

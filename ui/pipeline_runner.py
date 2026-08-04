@@ -11,11 +11,16 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QProcess, Signal
+from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
+
+from pipeline.progress_tracker import RunRecord, StageStatus
+from pipeline.run import ORDERED_STAGES
 
 # ui/ -> repo root, matching pipeline/run.py's own _REPO_ROOT (pipeline/ -> repo root).
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+UI_STAGES_COMPLETE = "All stages complete"
+UI_PREPARING_NEXT_STAGE = "Preparing next stage..."
 
 @dataclass
 class RunFormState:
@@ -73,6 +78,48 @@ def build_run_argv(state: RunFormState) -> list[str]:
     return argv
 
 
+@dataclass
+class StageProgress:
+    completed: int
+    total: int
+    status_text: str
+
+
+def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: int) -> StageProgress:
+    """Summarizes a run's on-disk progress.json against the stages
+    `pipeline.run` actually executes for [start_stage, stop_stage] --
+    `ORDERED_STAGES`, the same list pipeline.run itself iterates -- into one
+    bar-fill fraction and one human-readable status line, reusing each
+    stage's own `StageName.label` rather than inventing new wording.
+    """
+    stages_in_range = [s for s in ORDERED_STAGES if start_stage <= s.stage_number <= stop_stage]
+    total = len(stages_in_range)
+    completed = 0
+    running_stage = None
+    failed_stage = None
+    for stage in stages_in_range:
+        record = run_record.stages.get(stage.value)
+        if record is None:
+            continue
+        if record.status == StageStatus.COMPLETE:
+            completed += 1
+        elif record.status == StageStatus.RUNNING and running_stage is None:
+            running_stage = stage
+        elif record.status == StageStatus.FAILED and failed_stage is None:
+            failed_stage = stage
+
+    if failed_stage is not None:
+        status_text = f"Failed: {failed_stage.label}"
+    elif running_stage is not None:
+        status_text = f"Running {running_stage.label}..."
+    elif total > 0 and completed == total:
+        status_text = UI_STAGES_COMPLETE
+    else:
+        status_text = UI_PREPARING_NEXT_STAGE
+
+    return StageProgress(completed=completed, total=total, status_text=status_text)
+
+
 class PipelineRunner(QObject):
     """Thin QProcess wrapper: launches a `pipeline.run` argv, merges
     stdout/stderr into one stream (the console log shows both together), and
@@ -93,6 +140,18 @@ class PipelineRunner(QObject):
         self._process = QProcess(self)
         self._process.setWorkingDirectory(str(REPO_ROOT))
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        # Python only line-buffers stdout when it's a real terminal -- piped to
+        # QProcess like this, it's fully block-buffered by default, so a print
+        # can sit unflushed for a long time (confirmed: pipeline.run's own
+        # early "Found an existing run..." print was arriving after every
+        # stage's output, only flushed at process exit). PYTHONUNBUFFERED
+        # forces unbuffered stdout/stderr for this process AND everything it
+        # subprocess.run()s in turn (stages 0-8 directly, stage 9 through its
+        # `pixi run -e export ...` wrapper), since env vars inherit down the
+        # whole chain -- restoring live output without touching pipeline code.
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONUNBUFFERED", "1")
+        self._process.setProcessEnvironment(env)
         self._process.readyReadStandardOutput.connect(self._on_ready_read)
         self._process.finished.connect(self._on_finished)
         program, *args = argv

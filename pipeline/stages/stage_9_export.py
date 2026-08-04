@@ -840,6 +840,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     import bpy
     import addon_utils
 
+    print(f"[{StageName.STAGE_9_EXPORT.label}] running...")
+
     addon_utils.enable(_ADDON_MODULE_NAME, default_set=True, persistent=True)
 
     motion = np.load(runRecord.stages[StageName.STAGE_5_RETARGET_HANDS].outputs[_RETARGET_MOTION_NPZ_OUTPUT_KEY])
@@ -930,6 +932,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # dict entry below -- lets a caller find the final file without knowing
     # which stage produced it.
     runRecord.outputs.final_blend = str(output_path)
+
+    print(f"[{StageName.STAGE_9_EXPORT.label}] done")
 
     return {OUTPUT_BLEND: str(output_path)}
 
