@@ -8,7 +8,15 @@ import json
 
 from conftest import TEST_VIDEO_PATH, make_run_input
 from pipeline.create_run import create_run
-from pipeline.progress_tracker import RunRecord, StageName, StageStatus, validate_camera_input, validate_video_input
+from pipeline.progress_tracker import (
+    RunRecord,
+    StageName,
+    StageStatus,
+    ordered_stages,
+    stage_by_number,
+    validate_camera_input,
+    validate_video_input,
+)
 
 
 def test_validate_camera_input_accepts_focal_length_path():
@@ -91,3 +99,39 @@ def test_load_defaults_missing_timestamps_to_zero(tmp_path):
     reloaded = RunRecord.load(runRecord.progress_dir)
     assert reloaded.created_at == 0.0
     assert reloaded.updated_at == 0.0
+
+
+def test_ordered_stages_has_one_entry_per_stage_number_in_ascending_order():
+    stages = ordered_stages()
+    numbers = [stage.stage_number for stage in stages]
+
+    assert numbers == sorted(numbers)
+    assert len(numbers) == len(set(numbers))  # no stage_number repeated
+    assert numbers == list(range(10))  # stages 0-9, no gaps
+
+
+def test_ordered_stages_prefers_each_stage_own_top_level_member():
+    # Stage 1 and stage 6 both have sub-progress labels sharing their
+    # stage_number (STAGE_1A/1B_*, STAGE_6B_*) -- ordered_stages() must
+    # still surface the real top-level stage pipeline.run actually invokes,
+    # not one of those internal-reporting-only sub-labels.
+    stages_by_number = {stage.stage_number: stage for stage in ordered_stages()}
+
+    assert stages_by_number[1] == StageName.STAGE_1_MASK_AND_TRACK
+    assert stages_by_number[6] == StageName.STAGE_6_ALIGN_SCENE_SCALE
+
+
+def test_stage_by_number_finds_the_boundary_and_a_middle_stage():
+    assert stage_by_number(0) == StageName.STAGE_0_INGEST_VIDEO
+    assert stage_by_number(4) == StageName.STAGE_4_ESTIMATE_HANDS
+    assert stage_by_number(9) == StageName.STAGE_9_EXPORT
+
+
+def test_stage_by_number_also_prefers_the_top_level_member():
+    assert stage_by_number(1) == StageName.STAGE_1_MASK_AND_TRACK
+    assert stage_by_number(6) == StageName.STAGE_6_ALIGN_SCENE_SCALE
+
+
+def test_stage_by_number_returns_none_when_out_of_range():
+    assert stage_by_number(-1) is None
+    assert stage_by_number(10) is None

@@ -46,10 +46,12 @@ from .progress_tracker import (
     NewRunID,
     RunRecord,
     StageName,
+    StageStatus,
     add_dataclass_cli_arguments,
     add_run_input_arguments,
     apply_run_input_overrides,
     run_input_from_args,
+    stage_by_number,
     validate_camera_input,
     validate_video_input,
 )
@@ -180,11 +182,14 @@ def main() -> None:
     args = parser.parse_args()
 
     max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
+    starting_stage = 0
+    ending_stage = max_stage_number
     if args.start_on_stage is not None:
         if args.start_on_stage < 0:
             parser.error("--start-on-stage must be >= 0")
         elif args.start_on_stage > max_stage_number:
             parser.error(f"--start-on-stage must be <= {max_stage_number}")
+        starting_stage = args.start_on_stage
     if args.stop_after_stage is not None:
         if args.stop_after_stage < 0:
             parser.error("--stop-after-stage must be >= 0")
@@ -192,12 +197,18 @@ def main() -> None:
             parser.error(f"--stop-after-stage must be <= {max_stage_number}")
         elif args.start_on_stage is not None and args.stop_after_stage < args.start_on_stage:
             parser.error("--stop-after-stage must be >= --start-on-stage")
+        ending_stage = args.stop_after_stage
 
     progress_dir = args.progress_dir
     if resuming:
         print(f"Found an existing run at {progress_dir}, resuming")
         runRecord = RunRecord.load(progress_dir)
         runRecord.input = apply_run_input_overrides(runRecord.input, args)
+        if args.force_all:
+            for stage_number in range(starting_stage, ending_stage + 1):
+                stage_name = stage_by_number(stage_number)
+                if stage_name is not None:
+                    runRecord.mark_progress(stage_name, StageStatus.PENDING)
         runRecord.save()
     else:
         run_input = run_input_from_args(args)

@@ -50,6 +50,27 @@ class StageName(enum.StrEnum):
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interaction", 8
     STAGE_9_EXPORT = "export", "stage 9: export animation", 9
 
+def ordered_stages() -> list[StageName]:
+    """One `StageName` per distinct `.stage_number`, in ascending stage-number
+    order. Picks whichever member is declared FIRST
+    for a given number, so each stage's own top-level member must stay
+    declared before any of its sub-labels above for this to keep picking the
+    right one.
+    """
+    stage_numbers: set[int] = set()
+    stages: list[StageName] = []
+    for stage in StageName:
+        if stage.stage_number not in stage_numbers:
+            stage_numbers.add(stage.stage_number)
+            stages.append(stage)
+    return stages
+
+
+def stage_by_number(stage_number: int) -> StageName | None:
+    """The single top-level stage (see `ordered_stages()`) with this
+    `.stage_number`, or `None` if no stage has it.
+    """
+    return next((stage for stage in ordered_stages() if stage.stage_number == stage_number), None)
 
 class StageStatus(enum.StrEnum):
     PENDING = "pending"
