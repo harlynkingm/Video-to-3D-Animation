@@ -23,7 +23,13 @@ version = "0.1.0"
 # every test genuinely passed. The wrapper isolates that crash to a child
 # process and reports the real result from its junit report instead.
 [tasks.test]
-cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python scripts/run_export_tests.py"
+cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python scripts/run_export_tests.py; pixi run -e main python -m pytest ui/tests"
+
+# Launches the minimal desktop UI (ui/) that composes and runs a `pipeline.run`
+# invocation instead of using the CLI by hand. Runs under the same `main` env
+# as the pipeline itself -- see ui/pipeline_runner.py.
+[tasks.ui]
+cmd = "pixi run -e main python -m ui"
 
 # Static dead-code scan (vulture) -- checks pipeline/ for functions/classes/
 # attributes with no reference anywhere, including tests/ and scripts/ (passed
@@ -100,6 +106,10 @@ depth-anything-3 = ">=0.1.1"
 # but its pyproject.toml never declares it -- a real gap in the upstream package's
 # own metadata, confirmed by actually importing the package and hitting this.
 addict = "*"
+# ui/: the minimal desktop UI that runs the pipeline as a subprocess instead
+# of via the CLI by hand. Lives in the same `main` env as everything else so
+# it shells out to `pipeline.run` under the exact same interpreter.
+PySide6 = ">=6.8"
 
 [feature.main.pypi-dependencies.torch]
 version = "==2.8.*"

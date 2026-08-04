@@ -67,7 +67,16 @@ There is an additional ~1.3GB Depth-Anything-3 checkpoint which is automatically
 
 ## Quick Start
 
-Create a run and process a video:
+### UI Application
+
+Run `pixi run ui` to launch the desktop app (Windows-only). Select a source video, a destination folder, a human/object prompt, and the camera's focal length/sensor width, then click **Run**.
+
+> [!TIP]
+> Select a still video, captured on a tripod, for the best results.
+
+### Terminal / CLI
+
+To create a run and process a video from the command line:
 
 ```bash
 pixi run -e main python -m pipeline.run \
