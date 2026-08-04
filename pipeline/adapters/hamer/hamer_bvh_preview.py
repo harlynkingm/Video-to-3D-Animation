@@ -23,6 +23,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from ...helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION, write_bvh
+from ...helpers.smplx_bvh_preview import smplx_rest_joints_and_parents
 from .hamer_adapter import (
     KEY_LEFT_GLOBAL_ORIENT,
     KEY_LEFT_HAND_POSE,
@@ -31,9 +32,6 @@ from .hamer_adapter import (
     KEY_RIGHT_HAND_POSE,
     KEY_RIGHT_VALID,
 )
-
-# Repo root is 3 levels up (hamer/ -> adapters/ -> pipeline/ -> root).
-SMPLX_MODEL_PATH = Path(__file__).resolve().parents[3] / "body_models" / "smplx" / "SMPLX_NEUTRAL.npz"
 
 # SMPL-X joint layout: wrists 20/21, left fingers 25-39, right fingers 40-54.
 LEFT_WRIST, RIGHT_WRIST = 20, 21
@@ -47,18 +45,10 @@ FINGER_NAMES = [
 HAND_SEPARATION = 0.30  # meters each hand sits from the synthetic root (spread apart for a readable preview)
 
 
-def _smplx_rest_joints_and_parents() -> tuple[np.ndarray, np.ndarray]:
-    data = np.load(SMPLX_MODEL_PATH, allow_pickle=True)
-    rest_joints = np.asarray(data["J_regressor"]) @ np.asarray(data["v_template"])  # (55, 3)
-    parents = np.asarray(data["kintree_table"][0]).astype(int)
-    parents[0] = -1
-    return rest_joints, parents
-
-
 def _build_skeleton():
     """Returns (names, parents, offsets, rot_sources) for the two-hand rig.
     rot_sources[j] says where joint j's per-frame rotation comes from."""
-    rest, smplx_parents = _smplx_rest_joints_and_parents()
+    rest, smplx_parents = smplx_rest_joints_and_parents()
 
     names: list[str] = ["Root"]
     parents: list[int] = [-1]

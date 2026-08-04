@@ -119,7 +119,8 @@ def test_confidence_gate_passes_through_uniformly_confident_sequence():
 def test_hands_bvh_preview_is_structurally_valid(tmp_path):
     """The optional BVH preview builds a valid two-hand animated skeleton. Needs
     only the SMPL-X model file (for the hand joint offsets), no GPU/checkpoints."""
-    from pipeline.adapters.hamer.hamer_bvh_preview import SMPLX_MODEL_PATH, render_hands_bvh
+    from pipeline.adapters.hamer.hamer_bvh_preview import render_hands_bvh
+    from pipeline.helpers.smplx_bvh_preview import SMPLX_MODEL_PATH
 
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (see README's Setup section)")

@@ -718,6 +718,7 @@ def _orient_bones_toward_children(bpy, armature) -> None:
 # already needed a standalone name here since _SMPLX_BODY_JOINT_NAMES is
 # defined for attachment-event joint lookup, a different, unrelated purpose.
 _PELVIS_BONE_NAME = "pelvis"
+_QUATERNION_COMPONENTS = 4  # w, x, y, z -- one F-curve each
 
 
 def _delete_unreliable_root_keyframes(bpy, armature, root_motion_unreliable: np.ndarray) -> None:
@@ -737,7 +738,7 @@ def _delete_unreliable_root_keyframes(bpy, armature, root_motion_unreliable: np.
     included) to preserve the mesh's own deform matrix once bone tails are
     retailed, so deleting first would just have those keyframes reinserted
     right back by that pass. Follow with
-    `_fix_pelvis_rotation_hemisphere_continuity` -- deleting a run can leave
+    `_fix_rotation_hemisphere_continuity` -- deleting a run can leave
     two now-distant keyframes whose quaternions Blender's own interpolation
     doesn't bridge correctly on its own; see that function's own docstring.
     """
@@ -749,54 +750,66 @@ def _delete_unreliable_root_keyframes(bpy, armature, root_motion_unreliable: np.
         pose_bone.keyframe_delete(data_path="location", frame=frame)
 
 
-def _fix_pelvis_rotation_hemisphere_continuity(bpy, armature) -> None:
-    """Deleting a run of keyframes above can leave two surviving keyframes
-    bracketing a real gap in time -- and Blender's own `rotation_quaternion`
-    F-curve interpolation is NOT hemisphere-aware: it interpolates each of
-    w/x/y/z as an independent scalar curve, not a proper slerp. A unit
-    quaternion `q` and its negation `-q` represent the exact same rotation,
-    but numerically look nothing alike -- if the two keyframes bracketing a
-    gap happen to land on opposite hemispheres of that double-cover (far
-    likelier across a real multi-frame gap than between two normally-
-    adjacent frames, whose small real rotation deltas rarely cross that
-    boundary), the naive per-component interpolation spins the long way
-    around instead of the short way. Confirmed on a real export: a full
-    360-degree spin across a 6-frame gap.
+def _fix_rotation_hemisphere_continuity(armature) -> None:
+    """Blender's `rotation_quaternion` F-curve interpolation is NOT
+    hemisphere-aware -- it interpolates w/x/y/z as independent scalar curves,
+    not a proper slerp. `q` and its negation `-q` are the same rotation but
+    look nothing alike numerically, so when two consecutive keyframes land on
+    opposite sides of that double-cover, the naive interpolation sweeps every
+    component through zero, passing through a degenerate quaternion that
+    renders as the joint swinging through an impossible orientation.
 
-    This is the exact continuity problem `motion_smoothing.
-    hemisphere_aligned_quats` already solves for this project's own numpy-
-    side rotation interpolation (stage 2's own bridging uses it for exactly
-    this reason) -- applies the identical walk-and-flip algorithm directly
-    to the pelvis bone's own surviving Blender keyframes afterward, so
-    nothing downstream needs to know or care where gaps were introduced.
-    No-op if the bone isn't in quaternion rotation mode (this project's own
-    rig always is, confirmed by the real spin this fixes, but the fix only
-    makes sense for that representation)."""
-    from mathutils import Quaternion
+    Walks every quaternion-mode bone's keyframes and flips any with a
+    negative dot product with the previous one -- the same algorithm
+    `motion_smoothing.hemisphere_aligned_quats` already applies numpy-side.
+    Doesn't change the exported pose (both representations are the same
+    rotation), only removes the interpolation artifact between keyframes.
 
-    pose_bone = armature.pose.bones[_PELVIS_BONE_NAME]
-    if pose_bone.rotation_mode != "QUATERNION":
-        return
+    Two real triggers, both confirmed on real exports: the pelvis across a
+    keyframe *gap* left by `_delete_unreliable_root_keyframes` (a 360-degree
+    spin across a 6-frame gap), and the wrists on *adjacent* keyframes with
+    no gap at all -- a wrist rotation often sits near 180 degrees, where `w`
+    is near zero and `q`/`-q` are equally canonical, so numerical noise picks
+    either (8 such flips measured on a real export, every one inside a
+    visibly glitching stretch).
 
-    scene = bpy.context.scene
+    Works directly on F-curve keyframe values rather than stepping the scene
+    frame by frame, since covering every bone that way would be tens of
+    thousands of `frame_set` calls on a long clip. Bezier handles are negated
+    alongside each flipped value so the curve shape mirrors with it."""
     action = armature.animation_data.action
-    data_path = f'pose.bones["{_PELVIS_BONE_NAME}"].rotation_quaternion'
-    frames = sorted({
-        int(round(kp.co.x))
-        for fcurve in _iter_action_fcurves(action)
-        if fcurve.data_path == data_path
-        for kp in fcurve.keyframe_points
-    })
 
-    last: Quaternion | None = None
-    for frame in frames:
-        scene.frame_set(frame)
-        quat = pose_bone.rotation_quaternion.copy()
-        if last is not None and quat.dot(last) < 0:
-            quat = Quaternion((-quat.w, -quat.x, -quat.y, -quat.z))
-            pose_bone.rotation_quaternion = quat
-            pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
-        last = quat
+    for pose_bone in armature.pose.bones:
+        if pose_bone.rotation_mode != "QUATERNION":
+            continue
+        data_path = f'pose.bones["{pose_bone.name}"].rotation_quaternion'
+        curves = {
+            fcurve.array_index: fcurve
+            for fcurve in _iter_action_fcurves(action)
+            if fcurve.data_path == data_path
+        }
+        if len(curves) != _QUATERNION_COMPONENTS:
+            continue  # not fully keyed (or not keyed at all) -- nothing to align
+
+        components = [curves[i].keyframe_points for i in range(_QUATERNION_COMPONENTS)]
+        n_keyframes = len(components[0])
+        if any(len(points) != n_keyframes for points in components):
+            continue  # components keyed at different frames -- can't pair them up safely
+
+        last = None
+        for k in range(n_keyframes):
+            quat = np.array([points[k].co[1] for points in components])
+            if last is not None and float(quat @ last) < 0:
+                quat = -quat
+                for value, points in zip(quat, components):
+                    keyframe = points[k]
+                    keyframe.co[1] = value
+                    keyframe.handle_left[1] = -keyframe.handle_left[1]
+                    keyframe.handle_right[1] = -keyframe.handle_right[1]
+            last = quat
+
+        for fcurve in curves.values():
+            fcurve.update()
 
 
 def _clear_scene(bpy) -> None:
@@ -873,10 +886,11 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # Must run after _orient_bones_toward_children -- see this function's own
     # docstring for why (that pass would otherwise reinsert exactly the
     # keyframes deleted here). Followed immediately by the hemisphere-
-    # continuity fix -- see that function's own docstring for why deleting a
-    # run of keyframes needs it.
+    # continuity fix, which has to see the final keyframe set: deleting a run
+    # is one of its two real triggers, and it rewrites keyframe values, so
+    # anything that reinserts keyframes afterward would undo it.
     _delete_unreliable_root_keyframes(bpy, armature, motion[_KEY_ROOT_MOTION_UNRELIABLE])
-    _fix_pelvis_rotation_hemisphere_continuity(bpy, armature)
+    _fix_rotation_hemisphere_continuity(armature)
 
     object_shape_path = runRecord.stages[StageName.STAGE_6_ALIGN_SCENE_SCALE].outputs.get(_OBJECT_SHAPE_OUTPUT_KEY)
     output_path = Path(runRecord.progress_dir) / OUTPUT_BLEND_FILENAME

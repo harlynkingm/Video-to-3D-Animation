@@ -1,56 +1,35 @@
 """Graft HaMeR's per-hand MANO pose onto GVHMR's SMPL-X body by reconciling the
 wrist orientation.
 
-Two pieces of information come out of stage 4 (HaMeR) per hand: the finger
-articulation (`hand_pose`, 15 joints relative to the wrist) and the wrist's
-global orientation (`global_orient`, in the hand crop's camera frame). The
-fingers transfer directly -- MANO's joint order matches SMPL-X's hand-joint
-order, and relative rotations are frame-independent, so they drop straight into
-SMPL-X's `left_hand_pose`/`right_hand_pose`.
-
-The wrist is the part that needs work. HaMeR gives the wrist's *global*
-orientation; SMPL-X wants it as a rotation *relative to the forearm* (the elbow
-joint, the wrist's parent). So we forward-kinematics the GVHMR body to get the
-elbow's global rotation, then express HaMeR's wrist in that frame:
+Finger articulation (`hand_pose`, 15 joints relative to the wrist) transfers
+directly -- MANO's joint order matches SMPL-X's, and relative rotations are
+frame-independent. The wrist needs work: HaMeR gives its *global* orientation,
+SMPL-X wants it relative to the forearm (the elbow, its parent):
 
     R_wrist_local = R_elbow_global^T @ R_wrist_global
 
-and overwrite the wrist slot of the body pose with it. This is the arm-retarget
-step of `open4dhoi`'s `preprocessing/scripts/make_hand_sam3d.py` (which does the
-same `R_new_local = gvhmr_globals[parent].T @ R_child_target`), specialized to
-HaMeR as the hand source. That reference also applies an `R_align` rotation to
-bring the hand estimator's coordinate frame into GVHMR's before the change of
-basis; whether HaMeR's crop-frame `global_orient` needs one is left to real-data
-verification rather than assumed here -- the seam is the wrist-global term below.
+-- the arm-retarget step of `open4dhoi`'s `make_hand_sam3d.py`, specialized to
+HaMeR. That reference also applies an `R_align` correction for its own hand
+estimator's frame; verified unneeded here (see `wrist_relative_to_elbow`).
 
-Stage 4 already fills in the frames it couldn't detect (interpolating an
-occlusion that recovers, freezing one that runs to either end of the clip --
-see `motion_smoothing.fill_invalid`), so every frame of `left/right_wrist_global`
-and `left/right_hand_pose` is a usable pose whenever the hand was detected at
-least once anywhere in the clip. Only a hand that was *never once* detected in
-the whole clip has nothing usable to reconcile -- that one keeps GVHMR's own
-wrist and flat fingers for its entire duration, so a hand that's off-screen or
-too occluded the entire time degrades gracefully instead of reconciling against
-noise.
+Stage 4 gap-fills every detected-at-least-once hand (interior occlusions
+interpolated, edge ones frozen -- `motion_smoothing.fill_invalid`), so every
+frame is usable except a hand never once detected, which keeps GVHMR's own
+wrist and flat fingers for its whole duration.
 
-The wrist-relative-to-elbow math below is also used, standalone, by stage 4
-*before* this reconciliation even happens: `reject_biomechanically_implausible_wrist`
-catches a HaMeR wrist estimate that's anatomically impossible relative to the
-forearm (see that function's docstring) so it can be treated as an occlusion
-before stage 4's own smoothing chain ever sees it, rather than only being
-visible once it reaches this stage's full merge.
+Four independent, complementary checks gate wrist validity before any of this
+runs (each function's own docstring has the specifics): `reject_biomechanically
+_implausible_wrist` (static magnitude vs. the forearm), `reject_wrist_velocity
+_spikes` (frame-to-frame rotation speed), `reject_hand_swung_past_forearm`
+(pointing-direction deviation from rest, excluding twist), and `reject_hand_
+through_forearm` (real 3D geometry -- does the hand's position overlap the
+forearm segment). Each catches a failure shape the others structurally can't.
 
-Wrist and finger validity are deliberately kept as two SEPARATE per-frame
-arrays throughout the pipeline (stage 4's `hand_pose.npz`, and this function's
-own `left/right_wrist_valid` vs `left/right_finger_valid` params), not one
-shared flag. A frame whose wrist estimate is biomechanically implausible
-doesn't mean the finger articulation from the same HaMeR inference is
-untrustworthy too -- checked on a real clip: finger joint jitter during a bad
-wrist stretch was only modestly elevated (nowhere near the wrist's own
-near-total breakdown), consistent with a wrist-orientation-specific failure
-(monocular rotation estimation is a harder, more ambiguous read than finger
-curl), not a wholesale bad-crop failure. Coupling them would throw away real,
-usable finger motion for every frame the wrist gate rejects.
+Wrist and finger validity are kept as separate per-frame arrays throughout the
+pipeline, not one shared flag -- a biomechanically bad wrist doesn't mean the
+same frame's fingers are untrustworthy too (confirmed on real data: finger
+jitter during a bad wrist stretch stays only modestly elevated). Coupling them
+would throw away real, usable finger motion for every wrist-gate rejection.
 """
 
 from __future__ import annotations
@@ -60,6 +39,7 @@ import torch
 from scipy.ndimage import maximum_filter1d
 
 from ..adapters.gvhmr.gvhmr_rotation_math import axis_angle_to_matrix, matrix_to_axis_angle
+from ..helpers.smplx_bvh_preview import smplx_rest_joints_and_parents
 
 # SMPL-X kinematic-tree indices (full-skeleton numbering): the root plus the 21
 # body-pose joints make up the first 22 joints, and the wrists are the last two
@@ -68,6 +48,11 @@ NUM_BODY_JOINTS = 22  # root (global_orient) + 21 body-pose joints
 POSE_AXIS_DIM = 3
 LEFT_ELBOW, RIGHT_ELBOW = 18, 19
 LEFT_WRIST, RIGHT_WRIST = 20, 21
+# Middle finger's first knuckle, used only to define "which way the hand
+# points" for `rest_hand_direction`/`reject_hand_swung_past_forearm` below --
+# any finger's own first knuckle would do equally well, middle was picked
+# arbitrarily for being roughly central.
+LEFT_MIDDLE1, RIGHT_MIDDLE1 = 28, 43
 
 
 def _global_joint_rotations(local_rotmats: torch.Tensor, parents: list[int]) -> torch.Tensor:
@@ -95,6 +80,14 @@ def body_joint_global_rotations(global_orient: torch.Tensor, body_pose: torch.Te
     return _global_joint_rotations(axis_angle_to_matrix(local_aa), parents)
 
 
+def _wrist_relative_to_elbow_matrix(elbow_global: torch.Tensor, wrist_global_aa: torch.Tensor) -> torch.Tensor:
+    """The rotation-matrix form of `wrist_relative_to_elbow`, shared by that
+    function (which converts to axis-angle for a magnitude check) and
+    `reject_hand_swung_past_forearm` (which needs the matrix directly, to
+    rotate the rest-pose hand direction)."""
+    return elbow_global.transpose(-1, -2) @ axis_angle_to_matrix(wrist_global_aa)
+
+
 def wrist_relative_to_elbow(elbow_global: torch.Tensor, wrist_global_aa: torch.Tensor) -> torch.Tensor:
     """HaMeR's wrist orientation (axis-angle, in the hand crop's own camera
     frame) expressed relative to the forearm (the elbow's global rotation) --
@@ -103,8 +96,16 @@ def wrist_relative_to_elbow(elbow_global: torch.Tensor, wrist_global_aa: torch.T
     arm can legitimately point anywhere, so only the wrist-relative-to-forearm
     angle is meaningful to check against anatomical limits (see
     `reject_biomechanically_implausible_wrist`)."""
-    wrist_local = elbow_global.transpose(-1, -2) @ axis_angle_to_matrix(wrist_global_aa)
-    return matrix_to_axis_angle(wrist_local)
+    return matrix_to_axis_angle(_wrist_relative_to_elbow_matrix(elbow_global, wrist_global_aa))
+
+
+def wrist_global_from_relative(elbow_global: torch.Tensor, wrist_local_aa: torch.Tensor) -> torch.Tensor:
+    """Inverse of `wrist_relative_to_elbow`: takes the wrist's rotation
+    relative to the forearm back to the crop-camera-frame global orientation
+    the rest of the pipeline stores. Lets stage 4 do its gap-filling and
+    smoothing in the forearm-relative frame (where "hold this pose" means
+    what it anatomically should) and convert back afterward."""
+    return matrix_to_axis_angle(elbow_global @ axis_angle_to_matrix(wrist_local_aa))
 
 
 def reject_biomechanically_implausible_wrist(
@@ -114,36 +115,31 @@ def reject_biomechanically_implausible_wrist(
     max_deg: float,
     release_deg: float,
     window: int,
+    max_expansion_frames: int,
 ) -> torch.Tensor:
-    """Demote to invalid every frame in a stretch where the wrist-relative-
-    to-elbow rotation magnitude (`wrist_relative_to_elbow`) is implausibly
-    large -- a real wrist can't bend this far relative to the forearm, so
-    this is HaMeR regressing from an ambiguous view (foreshortened forearm,
-    monocular rotation ambiguity), not real motion. A single instantaneous
-    threshold misses two real failure shapes: a slow drift into impossible
-    territory, and a chaotic stretch jumping between clearly-implausible
-    values and moderate ones that look individually plausible (a clean
-    clip's own legitimate max reaches ~95-103 degrees) but still anchor the
-    smoothing chain as a milder-but-still-wrong bump.
+    """Demote to invalid every frame near a seed where the wrist-relative-
+    to-elbow magnitude (`wrist_relative_to_elbow`) is implausibly large -- a
+    real wrist can't bend this far (clean-clip legitimate max ~95-103 deg),
+    so this is HaMeR misreading an ambiguous view, not real motion.
 
-    Hysteresis (same lock/release pattern as a noise gate): `max_deg`
-    strictly SEEDS detection (unambiguously bad); from any seed frame, the
-    invalid region expands outward while a `window`-frame ROLLING MAX stays
-    above the lower `release_deg` -- the rolling max, not the instantaneous
-    value, is what keeps a single-frame dip inside an otherwise-bad chaotic
-    stretch from prematurely ending the region (same reason `hamer_
-    adapter`'s confidence gate uses a rolling min). This only ever expands
-    from a confirmed-bad seed, so a clip that never crosses `max_deg` is
-    unaffected regardless of how `release_deg` is tuned.
+    Hysteresis, not a single threshold (same lock/release pattern as a noise
+    gate): `max_deg` strictly SEEDS detection; from each seed, the invalid
+    region expands up to `max_expansion_frames` either direction while a
+    `window`-frame rolling max stays above the lower `release_deg` (a rolling
+    max, not the instantaneous value, so a single-frame dip inside a bad
+    chaotic stretch doesn't end the region early). Never expands from
+    anything but a confirmed-bad seed. `max_expansion_frames` caps it because
+    a long stretch of real large motion (e.g. gripping a strap) can sit above
+    `release_deg` for many seconds without itself seeding -- confirmed on a
+    real clip, an 80+ frame stretch reading a smooth, plausible 60-100 deg
+    got entirely rejected because two seed frames sat at its edge; capping
+    expansion keeps the reject region local to the actual bad frame.
 
-    A validity gate, not a clamp: a clamped value would still look wrong
-    (visibly stopping dead at a ceiling), whereas marking frames invalid
-    lets the existing occlusion gap-fill (`motion_smoothing.fill_invalid`,
-    run right after this in stage 4's own smoothing chain) bridge across
-    the excursion with a plausible transition, like any other occlusion.
-    Called on HaMeR's raw estimate before that smoothing chain runs -- a
-    filter that's already blended a bad value in can't be un-blended
-    downstream.
+    A validity gate, not a clamp -- marking frames invalid lets the existing
+    gap-fill (`motion_smoothing.fill_invalid`) bridge across with a plausible
+    transition, the same as any other occlusion, instead of visibly stopping
+    dead at a ceiling. Runs on HaMeR's raw estimate before any smoothing --
+    a filter that's already blended a bad value in can't be un-blended after.
     """
     wrist_local_aa = wrist_relative_to_elbow(elbow_global, wrist_global_aa)
     magnitude_deg = torch.rad2deg(torch.linalg.norm(wrist_local_aa, dim=-1)).numpy()
@@ -161,11 +157,164 @@ def reject_biomechanically_implausible_wrist(
         j = i
         while j < n and elevated[j]:
             j += 1
-        if seed[i:j].any():
-            reject[i:j] = True
+        for s in np.flatnonzero(seed[i:j]) + i:
+            lo = max(i, s - max_expansion_frames)
+            hi = min(j, s + max_expansion_frames + 1)
+            reject[lo:hi] = True
         i = j
 
     return valid & torch.from_numpy(~reject)
+
+
+def reject_wrist_velocity_spikes(
+    valid: torch.Tensor,
+    wrist_global_aa: torch.Tensor,
+    fps: float,
+    max_velocity_deg_per_sec: float,
+) -> torch.Tensor:
+    """Demote to invalid any frame whose wrist orientation changed implausibly
+    fast from its neighbor -- a real wrist can't rotate a large fraction of a
+    full turn in one frame, so a huge frame-to-frame delta is HaMeR flipping
+    to a wrong orientation for an isolated frame or two, not real motion.
+    Catches what `reject_biomechanically_implausible_wrist` structurally
+    can't: a flip can pass entirely through a "plausible" magnitude on its way
+    up and back down (confirmed on a real clip: a 150-175 deg/frame spike
+    against a ~5-20 deg/frame baseline, magnitude staying under 110 the whole
+    time). Different question from the velocity check already tried and
+    rejected for `hamer_adapter`'s confidence gate -- that needed to separate
+    *sustained* noise from *sustained* real fast motion and couldn't; this is
+    an isolated single-frame reversal, a different signature entirely.
+
+    Both endpoints of an excessive transition are marked (a flip looks
+    anomalous relative to both neighbors, so marking only one leaves the
+    other spike unexplained). `max_velocity_deg_per_sec` is degrees/second,
+    not degrees/frame, so the same value means the same physical speed
+    regardless of fps. `valid` only narrows (never resurrects); a velocity
+    is only meaningful between two already-valid frames, skipped across gaps.
+    """
+    wrist_mats = axis_angle_to_matrix(wrist_global_aa)  # (T, 3, 3)
+    relative = wrist_mats[1:] @ wrist_mats[:-1].transpose(-1, -2)  # (T-1, 3, 3)
+    trace = relative[..., 0, 0] + relative[..., 1, 1] + relative[..., 2, 2]
+    delta_deg = torch.rad2deg(torch.arccos(torch.clamp((trace - 1) / 2, -1.0, 1.0)))  # (T-1,)
+    velocity_deg_per_sec = delta_deg * fps
+
+    both_valid = valid[1:] & valid[:-1]
+    spike = both_valid & (velocity_deg_per_sec > max_velocity_deg_per_sec)
+
+    reject = torch.zeros_like(valid)
+    reject[:-1] |= spike
+    reject[1:] |= spike
+    return valid & ~reject
+
+
+def rest_hand_direction(wrist_joint: int, middle1_joint: int) -> np.ndarray:
+    """Unit vector from the wrist to the middle finger's first knuckle, in
+    SMPL-X's own neutral rest pose -- the hand's own "pointing straight out
+    from the forearm" direction, the reference `reject_hand_swung_past_
+    forearm` measures every frame's actual hand direction against. Pass
+    `(LEFT_WRIST, LEFT_MIDDLE1)`/`(RIGHT_WRIST, RIGHT_MIDDLE1)`."""
+    rest_joints, _ = smplx_rest_joints_and_parents()
+    v = rest_joints[middle1_joint] - rest_joints[wrist_joint]
+    return (v / np.linalg.norm(v)).astype(np.float32)
+
+
+def reject_hand_swung_past_forearm(
+    valid: torch.Tensor,
+    wrist_global_aa: torch.Tensor,
+    elbow_global: torch.Tensor,
+    rest_direction: np.ndarray,
+    max_swing_deg: float,
+) -> torch.Tensor:
+    """Demote to invalid any frame where the hand's own pointing direction
+    (wrist-to-middle-finger) has swung more than `max_swing_deg` from its
+    rest-pose direction -- a real wrist can't swing much past ~90 deg without
+    the hand folding back over the forearm.
+
+    Measures SWING only, deliberately ignoring TWIST (rotation about that
+    direction, e.g. forearm pronation while the hand keeps pointing the same
+    way): rejecting on twist directly doesn't work, since composing two
+    legitimate swing rotations (pure flex + pure deviate) produces large
+    *apparent* twist purely from how compound 3D rotations compose, not from
+    real axial rotation (confirmed both synthetically and on a real clip --
+    a strap-grip pose read swing under 30 deg while blended magnitude spiked
+    past 150, almost all of it twist from adjusting the strap, correctly left
+    alone). Swing has none of that artifact -- it's just the angle between
+    two directions, not a decomposition of one rotation into two parts.
+
+    Single instantaneous threshold, not hysteresis like the other wrist gates
+    -- swing isn't contaminated by twist the way raw magnitude is, so it
+    doesn't have the "plausible shoulder frames of a chaotic excursion"
+    problem hysteresis exists for. `rest_direction`: (3,) unit vector from
+    `rest_hand_direction`, fixed per side.
+    """
+    wrist_local_mat = _wrist_relative_to_elbow_matrix(elbow_global, wrist_global_aa)
+    rest = torch.as_tensor(rest_direction, dtype=wrist_local_mat.dtype, device=wrist_local_mat.device)
+    current_direction = torch.einsum("...ij,j->...i", wrist_local_mat, rest)
+    cos_swing = torch.clamp((current_direction * rest).sum(-1), -1.0, 1.0)
+    swing_deg = torch.rad2deg(torch.arccos(cos_swing))
+    return valid & (swing_deg <= max_swing_deg)
+
+
+def rest_forearm_and_hand_offsets(
+    elbow_joint: int, wrist_joint: int, middle1_joint: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """(elbow->wrist rest offset, wrist->middle1 rest offset), both real
+    metric (meters) vectors from SMPL-X's own neutral mesh -- the fixed local
+    geometry `reject_hand_through_forearm` needs (forearm ~25cm, hand ~11cm
+    on the neutral mesh; a real person's own proportions vary, but this is
+    the same neutral-mesh approximation `smplx_bvh_preview.py` already uses
+    for skeleton geometry without needing per-person betas)."""
+    rest_joints, _ = smplx_rest_joints_and_parents()
+    forearm = rest_joints[wrist_joint] - rest_joints[elbow_joint]
+    hand = rest_joints[middle1_joint] - rest_joints[wrist_joint]
+    return forearm.astype(np.float32), hand.astype(np.float32)
+
+
+def reject_hand_through_forearm(
+    valid: torch.Tensor,
+    wrist_global_aa: torch.Tensor,
+    elbow_global: torch.Tensor,
+    forearm_offset: np.ndarray,
+    hand_offset: np.ndarray,
+    forearm_radius_m: float,
+    forearm_interior_max_t: float,
+) -> torch.Tensor:
+    """Demote to invalid any frame where the hand has folded back far enough
+    to sit inside the forearm's own segment -- a direct geometric check, not
+    another rotation-angle heuristic, for what "the hand goes through the
+    arm" describes.
+
+    Works in the elbow's own local frame (same convention as `wrist_relative_
+    to_elbow`): the forearm bone is rigid, so the elbow sits at the origin
+    and the wrist always sits at the fixed rest offset `forearm_offset`; only
+    the hand's position (`forearm_offset + wrist_local_rotation @ hand_
+    offset`) moves per frame. Checked against the fixed [elbow, wrist]
+    segment: `t` is where the closest point falls along it (0=elbow, 1=wrist,
+    unclamped so below-1 is meaningful), `forearm_interior_max_t` is how far
+    below the wrist end still counts as "inside" rather than merely "near the
+    wrist" (fingers curled toward the palm sit close to the wrist in plenty
+    of normal poses), and `forearm_radius_m` requires genuine proximity to
+    the forearm's own axis so a hand held out to the side isn't penalized.
+
+    Calibrated on a real clip: a confirmed hand-through-forearm stretch
+    dropped `t` to 0.67-0.99 at 7-11cm from the axis; a confirmed real
+    (if extreme-looking) grip and 1900+ other frames never dropped below
+    ~1.1 -- wide margin either side. `forearm_offset`/`hand_offset`: (3,)
+    rest-pose vectors from `rest_forearm_and_hand_offsets`, fixed per side.
+    """
+    wrist_local_mat = _wrist_relative_to_elbow_matrix(elbow_global, wrist_global_aa)
+    forearm = torch.as_tensor(forearm_offset, dtype=wrist_local_mat.dtype, device=wrist_local_mat.device)
+    hand_vec = torch.as_tensor(hand_offset, dtype=wrist_local_mat.dtype, device=wrist_local_mat.device)
+
+    hand_point = forearm + torch.einsum("...ij,j->...i", wrist_local_mat, hand_vec)
+
+    seg_len_sq = (forearm * forearm).sum()
+    t = (hand_point * forearm).sum(-1) / seg_len_sq
+    closest = torch.clamp(t, 0.0, 1.0).unsqueeze(-1) * forearm
+    distance = torch.linalg.norm(hand_point - closest, dim=-1)
+
+    penetrating = (t < forearm_interior_max_t) & (distance < forearm_radius_m)
+    return valid & ~penetrating
 
 
 def retarget_hands(

@@ -248,6 +248,76 @@ class RunInput:
     hand_wrist_max_deviation_deg: float = 110.0
     hand_wrist_release_deviation_deg: float = 55.0
     hand_wrist_deviation_window: int = 5
+    # How many frames the rejected region may expand outward from a seed
+    # frame, in either direction. Without a cap, a long stretch of real
+    # sustained motion that stays above `hand_wrist_release_deviation_deg`
+    # (e.g. gripping a strap near the shoulder for several seconds) gets
+    # entirely rejected the moment one bad frame anywhere in it seeds
+    # detection -- confirmed on a real clip, an 80+ frame stretch reading a
+    # smooth, plausible 60-100 degrees throughout was thrown out this way.
+    # 10 frames (~0.33s at 30fps) is a first-pass value calibrated against
+    # one clip; revisit once more clips are available to check it against.
+    hand_wrist_max_expansion_frames: int = 10
+
+    # A separate check from the deviation gate above: catches a HaMeR wrist
+    # estimate that flips to a different (wrong) orientation for an isolated
+    # frame or two while staying within a plausible magnitude relative to the
+    # elbow the whole time -- invisible to the deviation gate, which only
+    # looks at the static magnitude, never at how fast it's changing. A real
+    # wrist cannot rotate a large fraction of a full turn within one frame.
+    # Calibrated against a real clip: genuine fast motion topped out around
+    # 40 degrees/frame (1200 degrees/sec at 30fps) even during active
+    # reaching, while flip instances read 100-175 degrees/frame (3000+
+    # degrees/sec) -- a clean gap between the two. In degrees/second (not
+    # degrees/frame) so the same value means the same physical speed
+    # regardless of a clip's fps. See
+    # hand_retarget.reject_wrist_velocity_spikes.
+    hand_wrist_max_velocity_deg_per_sec: float = 2400.0
+
+    # How much of a long invalid wrist stretch (real occlusion, or one
+    # rejected by the gates above) is left for straight-line interpolation
+    # before the rest gets held at the last known-good orientation instead --
+    # confirmed on a real clip, interpolating across a 40-90+ frame gap can
+    # visibly sweep through a large, physically-impossible-looking rotation.
+    # 15 frames (~0.5s at 30fps) is a first-pass value; revisit once more
+    # clips are available to check it against. See
+    # motion_smoothing.cap_long_gaps_with_hold.
+    hand_wrist_max_bridge_frames: int = 15
+
+    # A third, independent wrist check: how far the hand's own pointing
+    # direction (wrist to middle-finger) may swing away from its rest-pose
+    # direction before a frame is rejected -- catches a sustained
+    # anatomically-impossible pose that changes too slowly to trip the
+    # velocity check and reads a moderate enough blended magnitude to dodge
+    # the deviation check too. Deliberately measures swing only, never twist
+    # (rotation about the hand's own pointing direction) -- twist isn't a
+    # reliable signal here, since composing two legitimate swing-only
+    # rotations produces large apparent twist as a pure artifact of how
+    # compound 3D rotations compose, confirmed both synthetically and on real
+    # motion (a strap-grip clip read swing under 30 degrees the whole time
+    # while its blended magnitude spiked past 150 from twist alone). ~90-100
+    # degrees is roughly where a real wrist starts folding the hand back over
+    # the forearm; 95 is a first-pass value from one real clip, not a
+    # multi-clip calibration. See hand_retarget.reject_hand_swung_past_forearm.
+    hand_wrist_max_swing_deg: float = 95.0
+
+    # A fourth wrist check, genuinely different from the three above: real 3D
+    # geometry (does the hand's own reference point sit inside the forearm's
+    # fixed rest-pose segment) instead of any rotation angle -- catches a hand
+    # folded back into the forearm's own space even when every rotation-based
+    # check reads within range. `hand_forearm_interior_max_t` is how far
+    # inside the segment (0 = elbow, 1 = wrist) still counts as "inside the
+    # forearm" rather than merely "near the wrist," which happens in plenty
+    # of normal poses; `hand_forearm_radius_m` additionally requires genuine
+    # proximity to the forearm's own axis, not just alignment along its
+    # length. Calibrated on a real clip: a confirmed hand-through-forearm
+    # stretch dropped to t=0.67-0.99 at 7-11cm from the axis, while 1900+
+    # other real frames (including a confirmed genuine extreme-looking grip)
+    # never dropped below ~1.1 -- comfortable margin either side of these
+    # defaults, but from one clip only. See hand_retarget.reject_hand_
+    # through_forearm.
+    hand_forearm_interior_max_t: float = 0.95
+    hand_forearm_radius_m: float = 0.10
 
 
 def add_dataclass_cli_arguments(parser: argparse.ArgumentParser, dataclass_type: type, *, required: bool = True) -> None:

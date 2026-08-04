@@ -50,7 +50,12 @@ RIGHT_FINGERS = range(40, 55)
 INCLUDED_JOINTS = list(range(22)) + list(LEFT_FINGERS) + list(RIGHT_FINGERS)
 
 
-def _smplx_rest_joints_and_parents() -> tuple[np.ndarray, np.ndarray]:
+def smplx_rest_joints_and_parents() -> tuple[np.ndarray, np.ndarray]:
+    """(55, 3) rest-pose joint positions + length-55 kinematic-tree parents,
+    from SMPL-X's own neutral mesh. Public -- shared with `hand_retarget.py`,
+    which needs the rest-pose wrist-to-finger direction for its anatomical
+    swing check, the same rest geometry this module already loads to build
+    its own preview skeleton."""
     data = np.load(SMPLX_MODEL_PATH, allow_pickle=True)
     rest_joints = np.asarray(data["J_regressor"]) @ np.asarray(data["v_template"])  # (55, 3)
     parents = np.asarray(data["kintree_table"][0]).astype(int)
@@ -88,7 +93,7 @@ def render_body_hands_bvh(
     transl = _np(transl)
     n_frames = global_orient.shape[0]
 
-    rest, smplx_parents = _smplx_rest_joints_and_parents()
+    rest, smplx_parents = smplx_rest_joints_and_parents()
     remap = {smplx_j: out_i for out_i, smplx_j in enumerate(INCLUDED_JOINTS)}
     names = [_joint_name(j) for j in INCLUDED_JOINTS]
     parents = [-1 if smplx_parents[j] == -1 else remap[smplx_parents[j]] for j in INCLUDED_JOINTS]

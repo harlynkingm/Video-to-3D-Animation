@@ -21,7 +21,7 @@ from pipeline.stages.stage_9_export import (
     OUTPUT_BLEND,
     _FIRST_MOTION_BLENDER_FRAME,
     _REST_POSE_YAW_RADIANS,
-    _fix_pelvis_rotation_hemisphere_continuity,
+    _fix_rotation_hemisphere_continuity,
     _iter_action_fcurves,
     _lowest_foot_z,
     _object_pose_to_blender_world,
@@ -343,16 +343,20 @@ def test_run_deletes_pelvis_keyframes_at_unreliable_root_motion_frames(tmp_path)
 
 
 @pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
-def test_fix_pelvis_rotation_hemisphere_continuity_flips_opposite_sign_keyframe():
-    """Regression test for a real bug found on a real export: deleting a run
-    of pelvis keyframes can leave two surviving keyframes far enough apart
-    in time that Blender's own naive per-component quaternion interpolation
-    -- not hemisphere-aware -- spins the long way around between them if
-    they land on opposite sides of the q/-q double-cover, even though both
-    represent the identical rotation. Directly constructs that exact
-    scenario (two keyframes, same real rotation, numerically opposite sign)
-    and confirms the fix flips the second one back onto the first's own
-    hemisphere."""
+@pytest.mark.parametrize("bone_name", ["pelvis", "left_wrist"])
+def test_fix_rotation_hemisphere_continuity_flips_opposite_sign_keyframe(bone_name):
+    """Regression test for a real bug found on real exports, in two distinct
+    forms this one fix covers: the pelvis across a keyframe *gap* (deleting a
+    run leaves two surviving keyframes far enough apart that a large real
+    rotation between them crosses the q/-q double-cover), and the wrists on
+    *adjacent* keyframes with no gap at all (a wrist near 180 degrees has a
+    near-zero `w`, where tiny numerical noise flips which representation the
+    conversion picks). Blender's own per-component quaternion interpolation
+    isn't hemisphere-aware either way, so it sweeps through a degenerate
+    near-zero quaternion between the two. Constructs that exact scenario and
+    confirms the fix flips the second keyframe back onto the first's own
+    hemisphere. Parameterized over a non-pelvis bone specifically: the fix
+    was originally pelvis-only, which is why the wrists kept glitching."""
     import math
 
     import bpy
@@ -364,12 +368,12 @@ def test_fix_pelvis_rotation_hemisphere_continuity_flips_opposite_sign_keyframe(
     bpy.context.view_layer.objects.active = arm_obj
 
     bpy.ops.object.mode_set(mode="EDIT")
-    eb = arm_data.edit_bones.new("pelvis")
+    eb = arm_data.edit_bones.new(bone_name)
     eb.head, eb.tail = (0.0, 0.0, 0.0), (0.0, 0.0, 0.1)
     bpy.ops.object.mode_set(mode="OBJECT")
 
-    pelvis = arm_obj.pose.bones["pelvis"]
-    pelvis.rotation_mode = "QUATERNION"
+    pose_bone = arm_obj.pose.bones[bone_name]
+    pose_bone.rotation_mode = "QUATERNION"
 
     axis = Vector((0.3, 0.7, 0.2)).normalized()
     quat_a = Quaternion(axis, math.radians(40))
@@ -378,19 +382,59 @@ def test_fix_pelvis_rotation_hemisphere_continuity_flips_opposite_sign_keyframe(
 
     scene = bpy.context.scene
     scene.frame_set(1)
-    pelvis.rotation_quaternion = quat_a
-    pelvis.keyframe_insert(data_path="rotation_quaternion", frame=1)
+    pose_bone.rotation_quaternion = quat_a
+    pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=1)
 
     scene.frame_set(5)
-    pelvis.rotation_quaternion = quat_a_negated  # same real rotation, opposite numeric sign
-    pelvis.keyframe_insert(data_path="rotation_quaternion", frame=5)
+    pose_bone.rotation_quaternion = quat_a_negated  # same real rotation, opposite numeric sign
+    pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=5)
 
-    _fix_pelvis_rotation_hemisphere_continuity(bpy, arm_obj)
+    _fix_rotation_hemisphere_continuity(arm_obj)
 
     scene.frame_set(5)
-    fixed = arm_obj.pose.bones["pelvis"].rotation_quaternion
+    fixed = arm_obj.pose.bones[bone_name].rotation_quaternion
     assert fixed.dot(quat_a) > 0  # now on the same hemisphere as frame 1
     assert tuple(fixed) == pytest.approx(tuple(quat_a), abs=1e-6)
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_fix_rotation_hemisphere_continuity_leaves_already_continuous_keyframes_alone():
+    """The fix must be a no-op on a bone whose keyframes already share a
+    hemisphere -- it rewrites keyframe values in place, so a false positive
+    would silently corrupt good animation."""
+    import math
+
+    import bpy
+    from mathutils import Quaternion, Vector
+
+    arm_data = bpy.data.armatures.new("test_armature")
+    arm_obj = bpy.data.objects.new("test_armature_obj", arm_data)
+    bpy.context.scene.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+
+    bpy.ops.object.mode_set(mode="EDIT")
+    eb = arm_data.edit_bones.new("right_wrist")
+    eb.head, eb.tail = (0.0, 0.0, 0.0), (0.0, 0.0, 0.1)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    pose_bone = arm_obj.pose.bones["right_wrist"]
+    pose_bone.rotation_mode = "QUATERNION"
+
+    axis = Vector((0.1, 0.2, 0.97)).normalized()
+    scene = bpy.context.scene
+    expected = []
+    for frame, degrees in ((1, 10.0), (2, 25.0), (3, 40.0)):
+        quat = Quaternion(axis, math.radians(degrees))
+        scene.frame_set(frame)
+        pose_bone.rotation_quaternion = quat
+        pose_bone.keyframe_insert(data_path="rotation_quaternion", frame=frame)
+        expected.append((frame, tuple(quat)))
+
+    _fix_rotation_hemisphere_continuity(arm_obj)
+
+    for frame, original in expected:
+        scene.frame_set(frame)
+        assert tuple(arm_obj.pose.bones["right_wrist"].rotation_quaternion) == pytest.approx(original, abs=1e-6)
 
 
 @pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")

@@ -13,6 +13,7 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from pipeline.algorithms.motion_smoothing import (
+    cap_long_gaps_with_hold,
     decimate_rotation_sequence,
     decimate_translation_sequence,
     one_euro_filter_rotation_sequence,
@@ -123,6 +124,76 @@ def test_leading_gap_freezes_at_first_known_pose():
     smoothed = smooth_rotation_sequence(rest, window=5, valid=valid)
 
     assert np.allclose(smoothed[2], [0.0, -1.0, 0.3], atol=0.05)
+
+
+def test_cap_long_gaps_with_hold_leaves_short_gap_untouched():
+    """A gap at or below the cap is left for the existing interpolation --
+    already looks fine at that length."""
+    n = 30
+    values = np.zeros((n, 3))
+    values[:10] = [1.0, 0.0, 0.0]
+    values[20:] = [-1.0, 0.0, 0.0]
+    valid = np.ones(n, bool)
+    valid[10:20] = False  # 10-frame interior gap
+
+    held_values, held_valid = cap_long_gaps_with_hold(values, valid, max_bridge_frames=10)
+
+    assert np.array_equal(held_valid, valid)
+    assert np.array_equal(held_values, values)
+
+
+def test_cap_long_gaps_with_hold_freezes_early_part_of_long_gap():
+    """A gap longer than the cap: the early portion is held at the entry
+    value and marked valid; only the final `max_bridge_frames` are left
+    invalid for the existing interpolation to bridge into the recovery."""
+    n = 50
+    values = np.zeros((n, 3))
+    values[:10] = [1.0, 0.0, 0.0]  # entry value
+    values[40:] = [-1.0, 0.0, 0.0]  # exit value
+    valid = np.ones(n, bool)
+    valid[10:40] = False  # 30-frame interior gap
+
+    held_values, held_valid = cap_long_gaps_with_hold(values, valid, max_bridge_frames=10)
+
+    # Held region: [10, 30) -- frozen at the entry value, now marked valid.
+    assert held_valid[10:30].all()
+    assert np.array_equal(held_values[10:30], np.tile([1.0, 0.0, 0.0], (20, 1)))
+    # Tail region: [30, 40) -- still invalid, left for interpolation.
+    assert not held_valid[30:40].any()
+    # Untouched elsewhere.
+    assert held_valid[:10].all() and held_valid[40:].all()
+
+
+def test_cap_long_gaps_with_hold_leaves_leading_and_trailing_gaps_untouched():
+    """Leading/trailing runs already freeze correctly via `fill_invalid`'s own
+    boundary behavior -- there's no entry value to hold from on the open side
+    of a leading run, and holding a trailing run's entry value is exactly
+    what already happens."""
+    n = 40
+    values = np.zeros((n, 3))
+    values[15:] = [1.0, 0.0, 0.0]
+    valid = np.ones(n, bool)
+    valid[:15] = False  # leading gap, longer than any reasonable cap
+
+    held_values, held_valid = cap_long_gaps_with_hold(values, valid, max_bridge_frames=5)
+
+    assert np.array_equal(held_valid, valid)
+    assert np.array_equal(held_values, values)
+
+
+def test_cap_long_gaps_with_hold_does_not_mutate_inputs():
+    n = 30
+    values = np.zeros((n, 3))
+    values[:5] = [1.0, 0.0, 0.0]
+    values[25:] = [-1.0, 0.0, 0.0]
+    valid = np.ones(n, bool)
+    valid[5:25] = False
+    values_before, valid_before = values.copy(), valid.copy()
+
+    cap_long_gaps_with_hold(values, valid, max_bridge_frames=5)
+
+    assert np.array_equal(values, values_before)
+    assert np.array_equal(valid, valid_before)
 
 
 def test_decimate_removes_jitter_outright():

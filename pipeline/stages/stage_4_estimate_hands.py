@@ -51,11 +51,23 @@ from ..adapters.hamer.hamer_adapter import (
 )
 from ..algorithms.hand_retarget import (
     LEFT_ELBOW,
+    LEFT_MIDDLE1,
+    LEFT_WRIST,
     RIGHT_ELBOW,
+    RIGHT_MIDDLE1,
+    RIGHT_WRIST,
     body_joint_global_rotations,
     reject_biomechanically_implausible_wrist,
+    reject_hand_swung_past_forearm,
+    reject_hand_through_forearm,
+    reject_wrist_velocity_spikes,
+    rest_forearm_and_hand_offsets,
+    rest_hand_direction,
+    wrist_global_from_relative,
+    wrist_relative_to_elbow,
 )
 from ..algorithms.motion_smoothing import (
+    cap_long_gaps_with_hold,
     decimate_rotation_sequence,
     one_euro_filter_rotation_sequence,
     smooth_rotation_sequence,
@@ -104,6 +116,7 @@ def _smooth_hand_channel(
 
 def _smooth_hand_result(
     result: dict,
+    global_rot: torch.Tensor,
     fps: float,
     savgol_window: int,
     beta: float,
@@ -111,68 +124,128 @@ def _smooth_hand_result(
     wrist_min_cutoff_hz: float,
     finger_decimate_deg: float,
     wrist_decimate_deg: float,
+    wrist_max_bridge_frames: int,
 ) -> None:
     """In place: temporally smooth each hand's finger articulation and wrist
-    orientation. This is the stage that most needs it -- HaMeR runs per-frame with
-    no temporal model, so its raw hands are far jitterier than GVHMR's body.
+    orientation (HaMeR has no temporal model, so raw hands are far jitterier
+    than GVHMR's body). Both run the same `_smooth_hand_channel` chain with
+    different knobs and validity arrays (fingers: base detection validity;
+    wrist: the narrower one from `_compute_wrist_validity`) -- neither array
+    is modified here, only the pose values for invalid frames.
 
-    Both parts run the same `_smooth_hand_channel` chain, differing in their
-    knobs (the wrist gets a heavier one-euro hold and a looser decimate
-    tolerance, since it starts from noisier global-orientation data and is a
-    load-bearing joint) AND in which validity array gates them: fingers use the
-    base detection validity, the wrist uses the narrower wrist-specific one
-    computed by `_compute_wrist_validity` (see this module's docstring for why
-    they're kept separate). Neither validity array itself is modified here --
-    both are still the literal record for any downstream consumer -- only the
-    pose arrays are filled in for invalid frames."""
-    for pose_key, global_orient_key, valid_key, wrist_valid_key in (
-        (KEY_LEFT_HAND_POSE, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID, KEY_LEFT_WRIST_VALID),
-        (KEY_RIGHT_HAND_POSE, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID, KEY_RIGHT_WRIST_VALID),
+    **The wrist channel runs this entire chain in the forearm-relative frame,
+    converting back after** (`hand_retarget.wrist_relative_to_elbow` /
+    `wrist_global_from_relative`). HaMeR's wrist is a *global* orientation in
+    its crop's camera frame, but gap-filling (holding an occlusion, blending
+    a short one) is only anatomically meaningful relative to the forearm --
+    holding the global orientation while the arm keeps moving drags the real
+    forearm-relative angle away from anything a wrist can do (measured on a
+    real clip: a held stretch with an unchanged stored value still swung from
+    95 to 166 degrees, rest is 8, because the elbow moved underneath it).
+    Working in the relative frame keeps held/interpolated poses anatomically
+    legal by construction, and lets the filters see real articulation instead
+    of articulation plus whole-arm motion.
+
+    The wrist alone also gets `cap_long_gaps_with_hold`, capping how much of
+    a long invalid stretch gets interpolated rather than held (see that
+    function's own docstring). Fingers get neither treatment -- they're
+    relative to the wrist already and stay mostly trustworthy through a
+    rejected wrist stretch (see `hand_retarget`'s own docstring)."""
+    for pose_key, global_orient_key, valid_key, wrist_valid_key, elbow in (
+        (KEY_LEFT_HAND_POSE, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID, KEY_LEFT_WRIST_VALID, LEFT_ELBOW),
+        (KEY_RIGHT_HAND_POSE, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID, KEY_RIGHT_WRIST_VALID, RIGHT_ELBOW),
     ):
         result[pose_key] = _smooth_hand_channel(
             result[pose_key], result[valid_key], fps, savgol_window, finger_min_cutoff_hz, beta, finger_decimate_deg
         )
-        result[global_orient_key] = _smooth_hand_channel(
-            result[global_orient_key],
-            result[wrist_valid_key],
+
+        elbow_global = global_rot[:, elbow]
+        wrist_local = wrist_relative_to_elbow(elbow_global, torch.as_tensor(result[global_orient_key]).float())
+        held_local, wrist_valid = cap_long_gaps_with_hold(
+            wrist_local.numpy(), result[wrist_valid_key], wrist_max_bridge_frames
+        )
+        smoothed_local = _smooth_hand_channel(
+            held_local,
+            wrist_valid,
             fps,
             savgol_window,
             wrist_min_cutoff_hz,
             beta,
             wrist_decimate_deg,
         )
+        smoothed_global = wrist_global_from_relative(elbow_global, torch.as_tensor(smoothed_local).float())
+        result[global_orient_key] = smoothed_global.numpy().astype(np.float32)
 
 
-def _compute_wrist_validity(result: dict, runRecord: RunRecord) -> None:
-    """In place: adds `KEY_LEFT_WRIST_VALID`/`KEY_RIGHT_WRIST_VALID` to `result`
-    -- each hand's base `*_valid` narrowed further wherever the raw wrist
-    estimate is anatomically impossible relative to GVHMR's own elbow (see this
-    module's docstring and `hand_retarget.reject_biomechanically_implausible_wrist`
-    for why this runs here, before any smoothing, rather than downstream in
-    stage 5, and why it's a separate array rather than overwriting `*_valid`)."""
+def _body_joint_rotations(runRecord: RunRecord) -> torch.Tensor:
+    """(F, 22, 3, 3) global rotation of every SMPL-X body joint, from stage
+    2's own incam body pose -- the elbow orientation both the plausibility
+    gates and the forearm-relative smoothing frame are defined against.
+    Loaded once here rather than per consumer, since both need the identical
+    tensor."""
     motion = torch.load(
         runRecord.stages[StageName.STAGE_2_ESTIMATE_HUMAN_MOTION].outputs[OUTPUT_HUMAN_MOTION],
         weights_only=False,
     )
     incam = motion[KEY_PRED_SMPL_PARAMS_INCAM]
-    global_orient = torch.as_tensor(incam[KEY_GLOBAL_ORIENT]).float()
-    body_pose = torch.as_tensor(incam[KEY_BODY_POSE]).float()
-    global_rot = body_joint_global_rotations(global_orient, body_pose, SmplxSkeleton().parents)
+    return body_joint_global_rotations(
+        torch.as_tensor(incam[KEY_GLOBAL_ORIENT]).float(),
+        torch.as_tensor(incam[KEY_BODY_POSE]).float(),
+        SmplxSkeleton().parents,
+    )
 
+
+def _compute_wrist_validity(result: dict, global_rot: torch.Tensor, runRecord: RunRecord) -> None:
+    """In place: adds `KEY_LEFT_WRIST_VALID`/`KEY_RIGHT_WRIST_VALID` to `result`
+    -- each hand's base `*_valid` narrowed further wherever the raw wrist
+    estimate is anatomically impossible relative to GVHMR's own elbow, changed
+    implausibly fast from the previous frame, has the hand swung too far from
+    its own rest-pose pointing direction, or has the hand geometrically folded
+    back into the forearm's own space (see this module's docstring and
+    `hand_retarget.reject_biomechanically_implausible_wrist`/`reject_wrist_
+    velocity_spikes`/`reject_hand_swung_past_forearm`/`reject_hand_through_
+    forearm` for why these run here, before any smoothing, rather than
+    downstream in stage 5, and why the result is a separate array rather than
+    overwriting `*_valid`)."""
     max_deg = runRecord.input.hand_wrist_max_deviation_deg
     release_deg = runRecord.input.hand_wrist_release_deviation_deg
     window = runRecord.input.hand_wrist_deviation_window
-    for elbow, global_orient_key, valid_key, wrist_valid_key in (
-        (LEFT_ELBOW, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID, KEY_LEFT_WRIST_VALID),
-        (RIGHT_ELBOW, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID, KEY_RIGHT_WRIST_VALID),
+    max_expansion_frames = runRecord.input.hand_wrist_max_expansion_frames
+    max_velocity_deg_per_sec = runRecord.input.hand_wrist_max_velocity_deg_per_sec
+    max_swing_deg = runRecord.input.hand_wrist_max_swing_deg
+    forearm_radius_m = runRecord.input.hand_forearm_radius_m
+    forearm_interior_max_t = runRecord.input.hand_forearm_interior_max_t
+    for elbow, wrist, middle1, global_orient_key, valid_key, wrist_valid_key in (
+        (LEFT_ELBOW, LEFT_WRIST, LEFT_MIDDLE1, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID, KEY_LEFT_WRIST_VALID),
+        (RIGHT_ELBOW, RIGHT_WRIST, RIGHT_MIDDLE1, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID, KEY_RIGHT_WRIST_VALID),
     ):
+        wrist_global_aa = torch.as_tensor(result[global_orient_key]).float()
         gated = reject_biomechanically_implausible_wrist(
             torch.from_numpy(result[valid_key]),
-            torch.as_tensor(result[global_orient_key]).float(),
+            wrist_global_aa,
             global_rot[:, elbow],
             max_deg,
             release_deg,
             window,
+            max_expansion_frames,
+        )
+        gated = reject_wrist_velocity_spikes(gated, wrist_global_aa, runRecord.scene.fps, max_velocity_deg_per_sec)
+        gated = reject_hand_swung_past_forearm(
+            gated,
+            wrist_global_aa,
+            global_rot[:, elbow],
+            rest_hand_direction(wrist, middle1),
+            max_swing_deg,
+        )
+        forearm_offset, hand_offset = rest_forearm_and_hand_offsets(elbow, wrist, middle1)
+        gated = reject_hand_through_forearm(
+            gated,
+            wrist_global_aa,
+            global_rot[:, elbow],
+            forearm_offset,
+            hand_offset,
+            forearm_radius_m,
+            forearm_interior_max_t,
         )
         result[wrist_valid_key] = gated.numpy()
 
@@ -195,10 +268,12 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     finally:
         adapter.unload()
 
-    _compute_wrist_validity(result, runRecord)
+    global_rot = _body_joint_rotations(runRecord)
+    _compute_wrist_validity(result, global_rot, runRecord)
 
     _smooth_hand_result(
         result,
+        global_rot,
         runRecord.scene.fps,
         runRecord.input.hand_smoothing_window,
         runRecord.input.hand_beta,
@@ -206,6 +281,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         runRecord.input.hand_wrist_min_cutoff_hz,
         runRecord.input.hand_finger_decimate_deg,
         runRecord.input.hand_wrist_decimate_deg,
+        runRecord.input.hand_wrist_max_bridge_frames,
     )
 
     hands_dir = Path(runRecord.progress_dir) / HANDS_DIRNAME

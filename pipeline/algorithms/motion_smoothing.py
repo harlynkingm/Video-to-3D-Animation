@@ -16,7 +16,9 @@ across an axis-angle wraparound produces spikes instead of removing them.
 Translation is smoothed with a zero-phase (filtfilt) Butterworth low-pass, which
 adds no lag. Ported from this project's own ComfyUI `SmoothSMPLMotion` node
 (savgol-in-quaternion + butterworth-filtfilt), extended here with validity-aware
-gap handling for the hands.
+gap handling for the hands -- including `cap_long_gaps_with_hold`, which keeps
+a long invalid run's straight-line interpolation from sweeping through a large,
+visibly implausible rotation by holding most of the gap instead.
 
 Finger joints go through `one_euro_filter_rotation_sequence` instead: an
 adaptive filter that stays heavy (kills small residual wobble) while a joint is
@@ -33,6 +35,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.signal import butter, filtfilt, savgol_filter
 from scipy.spatial.transform import Rotation, Slerp
+
+from .contact_detection import contiguous_true_runs
 
 POSE_AXIS_DIM = 3
 
@@ -75,6 +79,47 @@ def fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     for channel in range(values.shape[1]):
         filled[:, channel] = np.interp(frame_idx, valid_idx, values[valid, channel])
     return filled
+
+
+def cap_long_gaps_with_hold(
+    values: np.ndarray, valid: np.ndarray, max_bridge_frames: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """For any *interior* invalid run longer than `max_bridge_frames`, freeze
+    its early portion at the last known-good (entry) value and mark it valid
+    -- `fill_invalid` then only has the final `max_bridge_frames` left to
+    interpolate across, blending into the recovery instead of sweeping across
+    the whole gap.
+
+    Straight-line interpolation across a long gap (real clips commonly have
+    40-90+ frame invalid runs) can visibly swing through a large rotation,
+    reading as physically impossible even though each frame is individually
+    "between" two real values. There's no way to know what really happened
+    during a multi-second occlusion, so holding the last confirmed pose is
+    the same conservative default already used for leading/trailing gaps
+    (`fill_invalid`), just extended to the bulk of a long interior one too.
+
+    Runs at or under `max_bridge_frames` are left untouched (interpolating
+    already looks fine at that length), as are leading/trailing runs
+    (`fill_invalid`'s own boundary behavior already freezes those, and a
+    leading run has no entry value to hold from anyway).
+
+    values: (T, C). valid: (T,) bool. Returns (values, valid), both copies.
+    """
+    valid = np.asarray(valid, dtype=bool)
+    held_values = values.copy()
+    held_valid = valid.copy()
+
+    for start, end in contiguous_true_runs(~valid):  # inclusive
+        if start == 0 or end == len(valid) - 1:
+            continue  # leading/trailing -- fill_invalid already freezes these correctly
+        run_length = end - start + 1
+        if run_length <= max_bridge_frames:
+            continue  # short enough to interpolate as-is
+        held_end = end - max_bridge_frames + 1  # exclusive -- [start, held_end) gets held
+        held_values[start:held_end] = values[start - 1]
+        held_valid[start:held_end] = True
+
+    return held_values, held_valid
 
 
 def hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | None) -> np.ndarray:
