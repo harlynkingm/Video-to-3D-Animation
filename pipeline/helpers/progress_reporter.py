@@ -23,13 +23,17 @@ from tqdm import tqdm
 T = TypeVar("T")
 
 # tqdm's {remaining} token already renders as MM:SS (or H:MM:SS past an hour).
-_BAR_FORMAT = "[{desc}] {percentage:3.0f}% | {n_fmt}/{total_fmt} frames | {elapsed} elapsed | {remaining} remaining"
+# `{{...}}` braces are tqdm's own placeholders, left literal through this
+# module's one `.format(unit=...)` call; only `{unit}` is substituted here.
+_BAR_FORMAT = "[{{desc}}] {{percentage:3.0f}}% | {{n_fmt}}/{{total_fmt}} {unit}s | {{elapsed}} elapsed | {{remaining}} remaining"
 
 
-def frame_progress(iterable: Iterable[T], total: int, label: str) -> Iterable[T]:
-    """Wrap a per-frame loop's iterable with a terminal progress line. `label`
-    identifies the stage (and, for stage 1, which of the two tracking passes)."""
-    return tqdm(iterable, total=total, desc=label, bar_format=_BAR_FORMAT, unit="frame")
+def frame_progress(iterable: Iterable[T], total: int, label: str, unit: str = "frame") -> Iterable[T]:
+    """Wrap a per-item loop's iterable with a terminal progress line. `label`
+    identifies the stage (and, for stage 1, which of the two tracking
+    passes); `unit` customizes the counted item for a caller that isn't
+    counting video frames."""
+    return tqdm(iterable, total=total, desc=label, bar_format=_BAR_FORMAT.format(unit=unit), unit=unit)
 
 
 @contextmanager
