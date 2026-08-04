@@ -203,7 +203,7 @@ def test_main_resumes_an_existing_run_instead_of_recreating_it(tmp_path, monkeyp
 
     run_pipeline_module.main()
 
-    assert "resuming" in capsys.readouterr().out
+    assert "existing run" in capsys.readouterr().out
     reloaded = RunRecord.load(progress_dir)
     assert reloaded.run_id == "original-run-id"
 
@@ -233,7 +233,7 @@ def test_main_resumes_without_requiring_run_input_flags(tmp_path, monkeypatch, c
 
     run_pipeline_module.main()  # would previously raise SystemExit from argparse
 
-    assert "resuming" in capsys.readouterr().out
+    assert "existing run" in capsys.readouterr().out
 
 
 def test_main_applies_an_override_flag_when_resuming(tmp_path, monkeypatch, capsys):

@@ -201,7 +201,7 @@ def main() -> None:
 
     progress_dir = args.progress_dir
     if resuming:
-        print(f"Found an existing run at {progress_dir}, resuming")
+        print(f"Found an existing run at {progress_dir}")
         runRecord = RunRecord.load(progress_dir)
         runRecord.input = apply_run_input_overrides(runRecord.input, args)
         if args.force_all:
