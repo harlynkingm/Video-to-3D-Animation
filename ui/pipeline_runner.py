@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
-from pipeline.progress_tracker import RunRecord, StageStatus
+from pipeline.progress_tracker import RunRecord, StageName, StageStatus
 from pipeline.run import ORDERED_STAGES
 
 # ui/ -> repo root, matching pipeline/run.py's own _REPO_ROOT (pipeline/ -> repo root).
@@ -83,6 +83,21 @@ class StageProgress:
     completed: int
     total: int
     status_text: str
+    overall_status_text: str | None
+
+
+def _stages_in_range(start_stage: int, stop_stage: int) -> list[StageName]:
+    return [s for s in ORDERED_STAGES if start_stage <= s.stage_number <= stop_stage]
+
+
+def stage_count_in_range(start_stage: int, stop_stage: int) -> int:
+    """How many stages `pipeline.run` will actually execute for
+    [start_stage, stop_stage] -- used by the queue (ui/queue.py) to size its
+    own aggregate progress bar for items that haven't started yet (no
+    progress.json to read from) without duplicating ORDERED_STAGES'
+    filtering logic.
+    """
+    return len(_stages_in_range(start_stage, stop_stage))
 
 
 def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: int) -> StageProgress:
@@ -92,7 +107,7 @@ def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: 
     bar-fill fraction and one human-readable status line, reusing each
     stage's own `StageName.label` rather than inventing new wording.
     """
-    stages_in_range = [s for s in ORDERED_STAGES if start_stage <= s.stage_number <= stop_stage]
+    stages_in_range = _stages_in_range(start_stage, stop_stage)
     total = len(stages_in_range)
     completed = 0
     running_stage = None
@@ -117,7 +132,7 @@ def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: 
     else:
         status_text = UI_PREPARING_NEXT_STAGE
 
-    return StageProgress(completed=completed, total=total, status_text=status_text)
+    return StageProgress(completed=completed, total=total, status_text=status_text, overall_status_text=None)
 
 
 class PipelineRunner(QObject):
