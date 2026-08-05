@@ -899,7 +899,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # continuity fix, which has to see the final keyframe set: deleting a run
     # is one of its two real triggers, and it rewrites keyframe values, so
     # anything that reinserts keyframes afterward would undo it.
-    with report_single_shot(f"[{StageName.STAGE_9_EXPORT.label}] cleaning up motion and rotation continuity"):
+    with report_single_shot(StageName.STAGE_9C_CONTINUITY.label):
         _delete_unreliable_root_keyframes(bpy, armature, motion[_KEY_ROOT_MOTION_UNRELIABLE])
         _fix_rotation_hemisphere_continuity(armature)
 
@@ -924,7 +924,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         held_mask = _held_frame_mask(n_frames, attachment_events)
         _keyframe_held_object_pose(obj, translations, rotations, held_mask, pelvis_rest, floor_offset)
         for event in frame_progress(attachment_events, total=len(attachment_events),
-                                     label=StageName.STAGE_9C_ATTACH_TRACKED_OBJECT.label, unit="event"):
+                                     label=StageName.STAGE_9D_ATTACH_TRACKED_OBJECT.label, unit="event"):
             _reset_object_base_transform(obj, event["start_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _reset_object_base_transform(obj, event["end_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset)
@@ -935,7 +935,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # saving so the file doesn't open with the playhead sitting wherever that
     # process happened to leave it.
     bpy.context.scene.frame_set(0)
-    with report_single_shot(f"[{StageName.STAGE_9_EXPORT.label}] saving {output_path.name}"):
+    with report_single_shot(StageName.STAGE_9E_SAVE_FILE.label):
         bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
 
     # The run's own overall deliverable (docs/PROGRESS_SCHEMA.md's own
