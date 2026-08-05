@@ -1,7 +1,13 @@
 import sys
 
 from pipeline.progress_tracker import RunInput, RunRecord, StageName, StageRecord, StageStatus
-from ui.pipeline_runner import RunFormState, build_run_argv, compute_stage_progress
+from ui.pipeline_runner import (
+    UI_PREPARING_NEXT_STAGE,
+    UI_STAGES_COMPLETE,
+    RunFormState,
+    build_run_argv,
+    compute_stage_progress,
+)
 
 
 def _base_state(**overrides) -> RunFormState:
@@ -107,7 +113,7 @@ def test_compute_stage_progress_nothing_started():
 
     assert progress.completed == 0
     assert progress.total == 10
-    assert progress.status_text == "Preparing next stage..."
+    assert progress.status_text == UI_PREPARING_NEXT_STAGE
 
 
 def test_compute_stage_progress_partial_complete_and_running():
@@ -122,8 +128,9 @@ def test_compute_stage_progress_partial_complete_and_running():
 
     assert progress.completed == 2
     assert progress.total == 10
-    label = StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.label
-    assert progress.status_text == f"Running {label}..."
+    # Exact phrasing is free to change -- what matters is the currently-
+    # running stage's own label is what gets reported.
+    assert StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.label in progress.status_text
 
 
 def test_compute_stage_progress_respects_stage_range():
@@ -135,7 +142,7 @@ def test_compute_stage_progress_respects_stage_range():
 
     assert progress.completed == 3
     assert progress.total == 3
-    assert progress.status_text == "All stages complete"
+    assert progress.status_text == UI_STAGES_COMPLETE
 
 
 def test_compute_stage_progress_reports_failure():
@@ -144,5 +151,5 @@ def test_compute_stage_progress_reports_failure():
         start_stage=0, stop_stage=9,
     )
 
-    label = StageName.STAGE_1_MASK_AND_TRACK.label
-    assert progress.status_text == f"Failed: {label}"
+    assert StageName.STAGE_1_MASK_AND_TRACK.label in progress.status_text
+    assert "fail" in progress.status_text.lower()

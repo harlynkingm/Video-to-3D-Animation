@@ -44,6 +44,29 @@ PROGRESS_POLL_INTERVAL_MS = 750
 # "\n"/"\r\n" line break in _on_output_received.
 _LINE_BREAK_RE = re.compile(r"(\r\n|\r|\n)")
 
+class DroppableLineEdit(QLineEdit):
+    """A read-only path field: typing stays blocked (setReadOnly), but it
+    still accepts a single file/folder dragged in from Explorer and fills
+    itself with that path -- setText() works fine on a read-only QLineEdit,
+    same as the paired Browse button already relies on.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setReadOnly(True)
+        self.setAcceptDrops(True)
+
+    def dragEnterEvent(self, event) -> None:
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+
+    def dropEvent(self, event) -> None:
+        urls = event.mimeData().urls()
+        if urls:
+            self.setText(urls[0].toLocalFile())
+            event.acceptProposedAction()
+
+
 WINDOW_TITLE = "Video to 3D Animation"
 
 UI_SOURCE_VIDEO = "Source video:"
@@ -133,8 +156,7 @@ class MainWindow(QMainWindow):
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.video_path_edit = QLineEdit()
-        self.video_path_edit.setReadOnly(True)
+        self.video_path_edit = DroppableLineEdit()
         row_layout.addWidget(self.video_path_edit, 1)
 
         browse_button = QPushButton(UI_BROWSE)
@@ -170,8 +192,7 @@ class MainWindow(QMainWindow):
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.destination_edit = QLineEdit()
-        self.destination_edit.setReadOnly(True)
+        self.destination_edit = DroppableLineEdit()
         row_layout.addWidget(self.destination_edit, 1)
 
         browse_button = QPushButton(UI_BROWSE)
