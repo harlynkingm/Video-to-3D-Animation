@@ -32,7 +32,7 @@ from ..adapters.gvhmr.gvhmr_smplx_skeleton import SmplxSkeleton
 from ..algorithms.contact_detection import GRIP_CAPABLE_REGIONS, ContactEvent, bridge_short_gaps
 from ..algorithms.depth_unprojection import unproject_depth_to_points
 from ..algorithms.hoi_object_pose import compute_object_pose_sequence
-from ..algorithms.object_extent_fit import fit_position_and_orientation
+from ..algorithms.object_extent_fit import equivalent_radius, fit_position_and_orientation
 from ..helpers.progress_reporter import report_single_shot
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
@@ -251,6 +251,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
                     initial_rotation=initial_rotation,
                     object_position_fn=object_position_fn,
                     skeleton=skeleton,
+                    object_radius=equivalent_radius(object_shape),
                 )
         finally:
             adapter.unload()

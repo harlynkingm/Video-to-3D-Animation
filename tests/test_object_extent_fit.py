@@ -11,9 +11,19 @@ from pipeline.algorithms.object_extent_fit import (
     KIND_CYLINDER,
     KIND_ELLIPSOID,
     MIN_OBJECT_POINTS,
+    _depth_axis_index,
     _reject_depth_outliers,
+    correct_center_depth,
+    correct_cylinder_radius_from_mask,
+    correct_foreshortened_axis,
+    correct_lateral_axes_from_mask,
+    equivalent_radius,
     fit_object_shape,
     fit_position_and_orientation,
+    mask_circularity,
+    mask_metric_extent,
+    mask_solidity,
+    rescale_shape,
     sample_shape_surface,
 )
 from pipeline.progress_tracker import ObjectShapeHint
@@ -264,3 +274,374 @@ def test_sample_shape_surface_cylinder_returns_points_on_the_surface():
     axial, radial = local[:, 0], np.linalg.norm(local[:, 1:3], axis=1)
     assert np.allclose(radial, radius, atol=1e-6)
     assert np.all(np.abs(axial) <= half_height + 1e-6)
+
+
+def _disk_mask(radius: int, size: int = 200) -> np.ndarray:
+    yy, xx = np.mgrid[0:size, 0:size]
+    center = size // 2
+    return ((xx - center) ** 2 + (yy - center) ** 2 <= radius ** 2).astype(np.uint8)
+
+
+def test_mask_circularity_of_a_real_circle_is_close_to_one():
+    # cv2's own perimeter measure overestimates a rasterized (stair-stepped)
+    # circle's true circumference, so even a perfect disk caps out around
+    # ~0.88-0.89 here -- matches the real range measured on the basketball
+    # clip's own cleanest frames, not a bug in the metric.
+    mask = _disk_mask(radius=40)
+    assert mask_circularity(mask) > 0.85
+
+
+def test_mask_circularity_of_an_elongated_shape_is_lower():
+    size = 200
+    mask = np.zeros((size, size), dtype=np.uint8)
+    mask[90:110, 20:180] = 1  # a thin horizontal bar -- far from circular
+    assert mask_circularity(mask) < 0.5
+
+
+def test_mask_circularity_of_a_notched_circle_is_lower_than_the_full_circle():
+    # A disk with a bite taken out of it (like a hand gripping part of a
+    # ball's silhouette) should read less circular than the full disk.
+    full = _disk_mask(radius=40)
+    notched = full.copy()
+    notched[100:140, 60:140] = 0
+    assert mask_circularity(notched) < mask_circularity(full)
+
+
+def test_mask_circularity_of_an_empty_mask_is_zero():
+    assert mask_circularity(np.zeros((50, 50), dtype=np.uint8)) == 0.0
+
+
+def test_equivalent_radius_of_a_sphere_matches_its_own_radius():
+    descriptor = {"kind": KIND_ELLIPSOID, "semi_axes": [0.12, 0.12, 0.12]}
+    assert np.isclose(equivalent_radius(descriptor), 0.12)
+
+
+def test_equivalent_radius_is_the_geometric_mean_for_an_anisotropic_ellipsoid():
+    descriptor = {"kind": KIND_ELLIPSOID, "semi_axes": [0.6, 0.2, 0.15]}
+    expected = (0.6 * 0.2 * 0.15) ** (1 / 3)
+    assert np.isclose(equivalent_radius(descriptor), expected)
+
+
+def test_equivalent_radius_covers_box_and_cylinder_kinds():
+    box = {"kind": KIND_BOX, "half_extents": [0.1, 0.2, 0.3]}
+    assert np.isclose(equivalent_radius(box), (0.1 * 0.2 * 0.3) ** (1 / 3))
+
+    cylinder = {"kind": KIND_CYLINDER, "radius": 0.05, "half_height": 0.2}
+    assert np.isclose(equivalent_radius(cylinder), (0.05 * 0.05 * 0.2) ** (1 / 3))
+
+
+def test_rescale_shape_preserves_center_rotation_and_kind():
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [1.0, 2.0, 3.0],
+        "semi_axes": [0.1, 0.2, 0.3],
+        "rotation": np.eye(3).tolist(),
+    }
+    rescaled = rescale_shape(descriptor, factor=2.0)
+    assert rescaled["kind"] == descriptor["kind"]
+    assert rescaled["center"] == descriptor["center"]
+    assert rescaled["rotation"] == descriptor["rotation"]
+    assert np.allclose(rescaled["semi_axes"], [0.2, 0.4, 0.6])
+
+
+def test_rescale_shape_round_trips_through_equivalent_radius():
+    """The whole point of pairing these two functions: correcting a fitted
+    shape's overall size to some externally-measured target radius, without
+    needing to touch its own fitted proportions or orientation."""
+    descriptor = {"kind": KIND_ELLIPSOID, "semi_axes": [0.6, 0.2, 0.15]}
+    target_radius = 0.12
+    factor = target_radius / equivalent_radius(descriptor)
+    rescaled = rescale_shape(descriptor, factor)
+    assert np.isclose(equivalent_radius(rescaled), target_radius)
+    # Proportions between axes are preserved -- only overall scale changed.
+    original_ratios = np.array(descriptor["semi_axes"]) / descriptor["semi_axes"][0]
+    rescaled_ratios = np.array(rescaled["semi_axes"]) / rescaled["semi_axes"][0]
+    assert np.allclose(original_ratios, rescaled_ratios)
+
+
+def test_rescale_shape_scales_both_cylinder_dimensions():
+    descriptor = {"kind": KIND_CYLINDER, "radius": 0.05, "half_height": 0.2}
+    rescaled = rescale_shape(descriptor, factor=1.5)
+    assert np.isclose(rescaled["radius"], 0.075)
+    assert np.isclose(rescaled["half_height"], 0.3)
+
+
+def _box_mask(size: int = 200, w: int = 100, h: int = 60) -> np.ndarray:
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cy, cx = size // 2, size // 2
+    mask[cy - h // 2:cy + h // 2, cx - w // 2:cx + w // 2] = 1
+    return mask
+
+
+def test_mask_solidity_of_a_clean_box_is_close_to_one():
+    assert mask_solidity(_box_mask()) > 0.99
+
+
+def test_mask_solidity_of_a_notched_box_is_lower_than_the_clean_box():
+    # A hand gripping part of a box's silhouette bites a concave notch out
+    # of it -- the exact case mask_solidity is meant to catch, for any
+    # convex shape kind (box, cylinder, or ellipsoid alike).
+    clean = _box_mask()  # spans y in [70, 130), x in [50, 150)
+    notched = clean.copy()
+    notched[70:80, 90:110] = 0  # cuts into the top edge -- a real boundary concavity,
+    # unlike a fully interior hole (which findContours' RETR_EXTERNAL wouldn't see at all)
+    assert mask_solidity(notched) < mask_solidity(clean)
+
+
+def test_mask_solidity_does_not_catch_motion_blur_elongation():
+    """Documents a real limitation, not just a passing case: a linear-blur
+    smear of a box is still convex (a "stadium" shape), so solidity alone
+    can't tell a blurred frame from a clean one the way mask_circularity
+    can for a round object -- see this function's own docstring."""
+    clean = _box_mask(w=100, h=60)
+    blurred = _box_mask(w=180, h=60)  # smeared wider, but still a solid rectangle
+    assert mask_solidity(blurred) > 0.99  # still reads as fully solid
+
+
+def test_mask_solidity_of_an_empty_mask_is_zero():
+    assert mask_solidity(np.zeros((50, 50), dtype=np.uint8)) == 0.0
+
+
+def test_depth_axis_index_picks_whichever_column_is_camera_aligned():
+    # Camera-forward is body-space Z (see _depth_axis_index's own docstring).
+    # Local axis 1 (column 1) is the one pointing along Z here.
+    rotation = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0],
+    ])
+    assert _depth_axis_index(rotation) == 1
+
+
+def test_depth_axis_index_with_identity_rotation_is_the_last_axis():
+    assert _depth_axis_index(np.eye(3)) == 2
+
+
+def test_correct_foreshortened_axis_replaces_the_camera_axis_with_the_harmonic_mean():
+    # Identity rotation -> axis 2 (Z) is the depth axis (see above). Real
+    # lateral axes are 0.6 and 0.2; a fabricated foreshortened depth
+    # reading of 0.05 should be replaced with their harmonic mean, not left
+    # alone or replaced with their arithmetic mean.
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [1.0, 2.0, 3.0],
+        "semi_axes": [0.6, 0.2, 0.05],
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_foreshortened_axis(descriptor)
+    expected_depth = 2 * 0.6 * 0.2 / (0.6 + 0.2)
+    assert np.isclose(corrected["semi_axes"][2], expected_depth)
+    assert corrected["semi_axes"][0] == 0.6  # lateral axes untouched
+    assert corrected["semi_axes"][1] == 0.2
+    assert corrected["center"] == descriptor["center"]
+    assert corrected["rotation"] == descriptor["rotation"]
+
+
+def test_correct_foreshortened_axis_leaves_a_genuinely_matching_depth_axis_unchanged():
+    # If the "foreshortened" axis already happens to equal the harmonic mean
+    # of the other two, correction is a no-op -- not a guarantee anything was
+    # wrong, just confirms the formula doesn't introduce spurious drift.
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [0.0, 0.0, 0.0],
+        "semi_axes": [0.1, 0.1, 0.1],
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_foreshortened_axis(descriptor)
+    assert np.allclose(corrected["semi_axes"], descriptor["semi_axes"])
+
+
+def test_correct_foreshortened_axis_works_on_box_half_extents_too():
+    descriptor = {
+        "kind": KIND_BOX,
+        "center": [0.0, 0.0, 0.0],
+        "half_extents": [0.5, 0.3, 0.02],
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_foreshortened_axis(descriptor)
+    expected_depth = 2 * 0.5 * 0.3 / (0.5 + 0.3)
+    assert np.isclose(corrected["half_extents"][2], expected_depth)
+    assert corrected["half_extents"][:2] == [0.5, 0.3]
+
+
+def test_correct_foreshortened_axis_leaves_cylinder_unchanged():
+    """Cylinder's own `radius` already blends both radial directions into
+    one median distance -- there's no separate lateral measurement left to
+    correct from, so it's returned untouched (a documented, open
+    approximation, not a silent guess)."""
+    descriptor = {
+        "kind": KIND_CYLINDER,
+        "center": [0.0, 0.0, 0.0],
+        "radius": 0.05,
+        "half_height": 0.2,
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_foreshortened_axis(descriptor)
+    assert corrected == descriptor
+
+
+def test_mask_metric_extent_recovers_a_known_real_size():
+    # Pinhole: pixel_size = real_size * focal_length_px / depth. Pick real
+    # width=0.24m, height=0.16m, depth=2.0m, focal_length_px=500 -> 60x40px.
+    focal_length_px = 500.0
+    depth_value = 2.0
+    real_w, real_h = 0.24, 0.16
+    pixel_w = round(real_w * focal_length_px / depth_value)  # 60
+    pixel_h = round(real_h * focal_length_px / depth_value)  # 40
+
+    size = 200
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cy, cx = size // 2, size // 2
+    mask[cy - pixel_h // 2:cy + pixel_h // 2, cx - pixel_w // 2:cx + pixel_w // 2] = 1
+    depth = np.full((size, size), depth_value)
+    K = np.array([[focal_length_px, 0, size / 2], [0, focal_length_px, size / 2], [0, 0, 1.0]])
+
+    result = mask_metric_extent(mask, depth, K)
+    assert result is not None
+    w_m, h_m = sorted(result, reverse=True)
+    assert np.isclose(w_m, real_w, atol=0.01)
+    assert np.isclose(h_m, real_h, atol=0.01)
+
+
+def test_mask_metric_extent_returns_none_for_an_empty_mask():
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    depth = np.full((100, 100), 2.0)
+    K = np.array([[500.0, 0, 50], [0, 500.0, 50], [0, 0, 1.0]])
+    assert mask_metric_extent(mask, depth, K) is None
+
+
+def test_correct_lateral_axes_from_mask_matches_by_magnitude_rank():
+    # Identity rotation -> axis 2 is the depth axis (see _depth_axis_index
+    # tests above); axes 0 and 1 are lateral. Fitted axis 0 (0.05) is
+    # currently the *smaller* lateral value, axis 1 (0.3) the larger --
+    # the mask's own larger measured dimension should replace axis 1, not
+    # axis 0, regardless of index order.
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [0.0, 0.0, 0.0],
+        "semi_axes": [0.05, 0.3, 0.2],  # depth axis (idx 2) = 0.2, arbitrary/wrong for now
+        "rotation": np.eye(3).tolist(),
+    }
+    mask_extent_m = (0.5, 0.08)  # full width/height in meters, order doesn't matter
+    corrected = correct_lateral_axes_from_mask(descriptor, mask_extent_m, scale_xy=1.0)
+
+    assert np.isclose(corrected["semi_axes"][1], 0.25)  # larger fitted axis <- larger mask dim / 2
+    assert np.isclose(corrected["semi_axes"][0], 0.04)  # smaller fitted axis <- smaller mask dim / 2
+    assert corrected["semi_axes"][2] == 0.2  # depth axis untouched here
+    assert corrected["center"] == descriptor["center"]
+    assert corrected["rotation"] == descriptor["rotation"]
+
+
+def test_correct_lateral_axes_from_mask_divides_by_scale_xy():
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [0.0, 0.0, 0.0],
+        "semi_axes": [0.05, 0.3, 0.2],
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_lateral_axes_from_mask(descriptor, (0.5, 0.08), scale_xy=2.0)
+    assert np.isclose(corrected["semi_axes"][1], 0.125)  # 0.5 / 2 / 2.0
+
+
+def test_correct_lateral_axes_from_mask_leaves_cylinder_unchanged():
+    descriptor = {
+        "kind": KIND_CYLINDER,
+        "center": [0.0, 0.0, 0.0],
+        "radius": 0.05,
+        "half_height": 0.2,
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_lateral_axes_from_mask(descriptor, (0.5, 0.08), scale_xy=1.0)
+    assert corrected == descriptor
+
+
+def test_correct_center_depth_shifts_away_from_camera_by_two_thirds_depth_size():
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [1.0, 2.0, 3.0],
+        "semi_axes": [0.1, 0.1, 0.12],  # identity rotation -> axis 2 (Z) is the depth axis
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_center_depth(descriptor)
+    assert np.isclose(corrected["center"][2], 3.0 + (2 / 3) * 0.12)
+    assert corrected["center"][0] == 1.0  # lateral coordinates untouched
+    assert corrected["center"][1] == 2.0
+    assert corrected["semi_axes"] == descriptor["semi_axes"]
+    assert corrected["rotation"] == descriptor["rotation"]
+
+
+def test_correct_center_depth_flips_a_negative_facing_depth_axis():
+    # The depth-axis column (index 2) points toward the camera (-Z) here --
+    # the shift must still move the center *away* from the camera (+Z),
+    # not blindly follow the raw PCA axis direction.
+    rotation = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, -1.0],
+    ])
+    descriptor = {
+        "kind": KIND_ELLIPSOID,
+        "center": [0.0, 0.0, 5.0],
+        "semi_axes": [0.1, 0.1, 0.09],
+        "rotation": rotation.tolist(),
+    }
+    corrected = correct_center_depth(descriptor)
+    assert corrected["center"][2] > descriptor["center"][2]  # moved deeper, not shallower
+    assert np.isclose(corrected["center"][2], 5.0 + (2 / 3) * 0.09)
+
+
+def test_correct_center_depth_works_for_box_too():
+    descriptor = {
+        "kind": KIND_BOX,
+        "center": [0.0, 0.0, 2.0],
+        "half_extents": [0.2, 0.15, 0.1],
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_center_depth(descriptor)
+    assert np.isclose(corrected["center"][2], 2.0 + (2 / 3) * 0.1)
+
+
+def test_correct_center_depth_leaves_cylinder_unchanged():
+    descriptor = {
+        "kind": KIND_CYLINDER,
+        "center": [0.0, 0.0, 2.0],
+        "radius": 0.05,
+        "half_height": 0.2,
+        "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_center_depth(descriptor)
+    assert corrected == descriptor
+
+
+def test_correct_cylinder_radius_from_mask_uses_the_smaller_mask_dimension():
+    descriptor = {
+        "kind": KIND_CYLINDER,
+        "center": [0.0, 0.0, 0.0],
+        "radius": 0.02,  # a stand-in for a badly-biased point-cloud radius
+        "half_height": 0.2,
+        "rotation": np.eye(3).tolist(),
+    }
+    # 0.10m = diameter (radius 0.05), 0.5m = length -- order shouldn't matter.
+    corrected = correct_cylinder_radius_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
+    assert np.isclose(corrected["radius"], 0.05)
+    assert corrected["half_height"] == 0.2  # untouched, a documented open approximation
+    assert corrected["center"] == descriptor["center"]
+    assert corrected["rotation"] == descriptor["rotation"]
+
+
+def test_correct_cylinder_radius_from_mask_divides_by_scale_xy():
+    descriptor = {
+        "kind": KIND_CYLINDER, "center": [0.0, 0.0, 0.0], "radius": 0.02,
+        "half_height": 0.2, "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_cylinder_radius_from_mask(descriptor, (0.5, 0.10), scale_xy=2.0)
+    assert np.isclose(corrected["radius"], 0.025)  # 0.10 / 2 / 2.0
+
+
+def test_correct_cylinder_radius_from_mask_ignores_non_cylinder_shapes():
+    descriptor = {
+        "kind": KIND_ELLIPSOID, "center": [0.0, 0.0, 0.0],
+        "semi_axes": [0.1, 0.1, 0.1], "rotation": np.eye(3).tolist(),
+    }
+    corrected = correct_cylinder_radius_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
+    assert corrected == descriptor

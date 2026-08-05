@@ -14,8 +14,13 @@ from __future__ import annotations
 import json
 
 import numpy as np
+import torch
 
+from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks
+from pipeline.algorithms.object_extent_fit import KIND_BOX, KIND_ELLIPSOID
 from pipeline.algorithms.similarity_transform import _fit_anisotropic_scale, fit_scene_scale
+from pipeline.progress_tracker import ObjectShapeHint
+from pipeline.stages.stage_6_align_scene_scale import _resolve_auto_shape_hint, _select_shape_candidate_frames
 
 
 def _synthetic_scene(known_scale: float):
@@ -166,3 +171,92 @@ def test_scene_preview_combines_every_element(stage_6_result):
     assert has_human, "no human-colored points in scene preview"
     assert has_object, "no object-colored points in scene preview (object was tracked on this clip)"
     assert has_shape, "no fitted-shape wireframe points in scene preview (object was tracked on this clip)"
+
+
+def _disk_mask(radius: int, size: int = 200) -> np.ndarray:
+    yy, xx = np.mgrid[0:size, 0:size]
+    center = size // 2
+    return ((xx - center) ** 2 + (yy - center) ** 2 <= radius ** 2).astype(np.uint8)
+
+
+def _box_mask(size: int = 200, w: int = 100, h: int = 60) -> np.ndarray:
+    mask = np.zeros((size, size), dtype=np.uint8)
+    cy, cx = size // 2, size // 2
+    mask[cy - h // 2:cy + h // 2, cx - w // 2:cx + w // 2] = 1
+    return mask
+
+
+def _save_packed_masks(masks_by_frame: list[np.ndarray], path) -> None:
+    stacked = torch.from_numpy(np.stack(masks_by_frame)).bool().unsqueeze(1)  # (N, 1, H, W)
+    torch.save({KEY_PACKED_MASKS: pack_masks(stacked)}, path)
+
+
+def test_select_shape_candidate_frames_ranks_by_circularity_for_ellipsoid_kind(tmp_path):
+    clean_circle = _disk_mask(radius=40)
+    notched_circle = clean_circle.copy()
+    notched_circle[70:100, 70:100] = 0  # bites into the circle from an edge-adjacent area
+
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks([notched_circle, clean_circle], masks_path)
+
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2, shape_kind=KIND_ELLIPSOID)
+    assert candidates[0] == 1  # the clean circle (frame 1) ranks above the notched one (frame 0)
+
+
+def test_select_shape_candidate_frames_ranks_by_solidity_for_box_kind(tmp_path):
+    clean_box = _box_mask()
+    notched_box = clean_box.copy()
+    notched_box[70:80, 90:110] = 0  # a real boundary concavity, see test_object_extent_fit.py
+
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks([notched_box, clean_box], masks_path)
+
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2, shape_kind=KIND_BOX)
+    assert candidates[0] == 1  # the clean box (frame 1) ranks above the notched one (frame 0)
+
+
+def test_select_shape_candidate_frames_excludes_empty_frames(tmp_path):
+    empty = np.zeros((200, 200), dtype=np.uint8)
+    real = _disk_mask(radius=40)
+
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks([empty, real, empty], masks_path)
+
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=5, shape_kind=KIND_ELLIPSOID)
+    assert candidates == [1]
+
+
+def test_select_shape_candidate_frames_respects_n_candidates_limit(tmp_path):
+    masks = [_disk_mask(radius=30 + i) for i in range(5)]
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks(masks, masks_path)
+
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2, shape_kind=KIND_ELLIPSOID)
+    assert len(candidates) == 2
+
+
+def test_resolve_auto_shape_hint_forces_ellipsoid_when_a_clean_circle_exists_anywhere(tmp_path):
+    # Frame 0 (the would-be "anchor") is boxy; only a later frame is round --
+    # mirrors a real case where the auto-picked anchor frame was itself
+    # motion-blurred but a clean circle existed elsewhere in the clip.
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks([_box_mask(), _disk_mask(radius=40)], masks_path)
+
+    assert _resolve_auto_shape_hint(str(masks_path)) == ObjectShapeHint.ELLIPSOID
+
+
+def test_resolve_auto_shape_hint_falls_back_to_auto_when_nothing_reads_round(tmp_path):
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks([_box_mask(), _box_mask(w=80, h=80)], masks_path)
+
+    assert _resolve_auto_shape_hint(str(masks_path)) == ObjectShapeHint.AUTO
+
+
+def test_resolve_auto_shape_hint_falls_back_to_auto_when_only_an_occluded_circle_exists(tmp_path):
+    occluded_circle = _disk_mask(radius=40)
+    occluded_circle[70:100, 70:100] = 0  # same notch style as the candidate-ranking test above
+
+    masks_path = tmp_path / "object.pt"
+    _save_packed_masks([occluded_circle], masks_path)
+
+    assert _resolve_auto_shape_hint(str(masks_path)) == ObjectShapeHint.AUTO

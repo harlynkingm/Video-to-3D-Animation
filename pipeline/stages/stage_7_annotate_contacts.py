@@ -213,13 +213,13 @@ def _is_low_confidence(event: ContactEvent, fps: float) -> bool:
     A *small* gap overriding a merely-noisy 2D score is only trusted for
     `GRIP_CAPABLE_REGIONS` (see that constant's own comment) -- real
     evidence motivating this override was a hand grip specifically (0.01m
-    gap, 0.49 mean confidence, on a real coffee-mug clip). Elsewhere, a small
-    depth gap is common even without contact (e.g. an object resting on the
-    floor near a passing foot is genuinely close in both image space and
-    real depth without ever being touched, confirmed on another real clip:
-    0.043m gap, 0.55 mean confidence, a foot that never actually touched the
-    object) -- so a region outside that set falls back to the plain 2D-
-    confidence read instead of being rescued by depth."""
+    gap, 0.49 mean confidence, on a real clip). Elsewhere, a small depth gap
+    is common even without contact (e.g. an object resting on the floor near
+    a passing foot is genuinely close in both image space and real depth
+    without ever being touched, confirmed on another real clip: 0.043m gap,
+    0.55 mean confidence, a foot that never actually touched the object) --
+    so a region outside that set falls back to the plain 2D-confidence read
+    instead of being rescued by depth."""
     duration_frames = event.end_frame - event.start_frame + 1
     if event.mean_confidence >= LOW_CONFIDENCE_THRESHOLD and duration_frames >= SUSTAINED_CONTACT_DURATION_SECONDS * fps:
         return False

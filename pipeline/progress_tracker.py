@@ -205,6 +205,33 @@ class RunInput:
         help="Stage 7 also writes one annotated JPEG per contact event for visual spot-checking",
     )
 
+    # Stage 1's tracker can lose and re-detect the same physical object (or the
+    # human) several times in one clip, each re-detection landing as its own
+    # internal track with its own (lower, first-detection) confidence -- bridges
+    # a real gap of up to this many frames between two such tracks by holding
+    # the last tracked mask forward, so a brief re-occlusion doesn't leave a
+    # true empty gap once the object is back in view. First-pass value (~0.5s
+    # at 30fps), calibrated against one real clip's own observed gaps (2-59
+    # frames between re-detections); longer gaps stay genuinely empty rather
+    # than holding a stale mask across an uncertain-duration real occlusion.
+    # See `sam31_adapter._stitch_tracked_slots`.
+    sam_track_max_bridge_frames: int = 15
+
+    # A single anchor frame's own object-shape fit can be badly wrong when
+    # every frame of a clip is either motion-blurred (in flight) or occluded
+    # (gripped) -- confirmed on a real clip: three different
+    # anchor-frame-selection heuristics (largest mask area, visual stillness,
+    # highest 2D mask circularity) each produced a wrong overall size (over-
+    # elongated or flattened-to-a-disc). `align_scene_scale` corrects the
+    # anchor fit's overall SIZE (not its shape/orientation, which stay from
+    # the anchor) using the median equivalent-radius (see
+    # `object_extent_fit.equivalent_radius`) across this many independently
+    # re-fit candidate frames, ranked by mask circularity -- median specifically
+    # because real measurements showed errors in both directions (blur
+    # inflates, occlusion shrinks), so a robust central estimate rejects
+    # outliers either way, unlike mean or max. First-pass value, one clip.
+    object_shape_candidate_frames: int = 15
+
     # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
     # the defaults are tuned to need no adjustment; a power user can override them
     # by hand-editing these fields in a run's progress.json before running stage

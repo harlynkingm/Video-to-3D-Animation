@@ -33,6 +33,7 @@ from safetensors import safe_open
 
 from pipeline.progress_tracker import StageName
 
+from ...algorithms.contact_detection import contiguous_true_runs
 from .sam31_clip_text import Sam31TextTower, encode_prompt, load_tokenizer
 from .sam31_detector import Sam31Detector
 from .sam31_tracker import KEY_MASKS, KEY_N_FRAMES, KEY_PACKED_MASKS, KEY_SCORES, Sam31Tracker
@@ -58,7 +59,9 @@ KEY_DETECTOR = "detector"
 KEY_TRACKER = "tracker"
 
 # This adapter's own per-entity result dict keys.
-KEY_SCORE = "score"  # singular -- first-detection confidence, distinct from the tracker's own per-frame KEY_SCORES list
+KEY_SCORE = "score"  # singular -- highest first-detection confidence among the slots that
+                     # ended up contributing a frame (see _stitch_tracked_slots), distinct
+                     # from the tracker's own per-slot KEY_SCORES list
 
 # infer()'s top-level output dict keys.
 KEY_HUMAN = "human"
@@ -124,6 +127,56 @@ class _LazyFrameLoader:
         return torch.stack(frames)
 
 
+def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_bridge_frames: int) -> tuple[torch.Tensor, float]:
+    """Merge `track_video_with_detection`'s multiplex result for a singular
+    prompt ("a basketball") into one object's per-frame mask sequence,
+    working directly on the bit-packed representation (never fully
+    unpacking -- a real clip's accumulated slot count can OOM otherwise).
+
+    The tracker can lose and re-detect the same physical object several
+    times in one clip; each re-detection becomes its own multiplex slot
+    with its own (first-detection) confidence, even though it's the same
+    object still existing.
+
+    Per frame: use whichever slot has a nonempty mask there -- at most one
+    does in the common case, but if more than one slot is genuinely active
+    the same frame (e.g. a second person briefly matching "a tennis
+    player"), keep the higher-scoring one for that frame. Then bridge any
+    interior gap (no slot active at all -- a brief re-occlusion, not a
+    second instance) of at most `max_bridge_frames` by holding the previous
+    frame's chosen mask forward; longer gaps and leading/trailing runs stay
+    empty, same convention as `motion_smoothing.cap_long_gaps_with_hold`.
+
+    Returns (merged (N, 1, H, W//8) packed masks, the highest score among
+    slots that actually contributed a frame).
+    """
+    n_frames, n_obj = packed_masks.shape[0], packed_masks.shape[1]
+    scores_t = torch.tensor(scores, dtype=torch.float32)
+
+    active = torch.stack([packed_masks[:, s].reshape(n_frames, -1).any(dim=1).bool() for s in range(n_obj)])  # (n_obj, N)
+    any_active = active.any(dim=0)
+    masked_scores = torch.where(active, scores_t.unsqueeze(1), torch.full_like(scores_t.unsqueeze(1), float("-inf")))
+    winner = torch.full((n_frames,), -1, dtype=torch.long)
+    winner[any_active] = masked_scores[:, any_active].argmax(dim=0)
+
+    merged = torch.zeros(n_frames, 1, *packed_masks.shape[2:], dtype=packed_masks.dtype)
+    frame_idx = torch.nonzero(any_active, as_tuple=True)[0]
+    merged[frame_idx, 0] = packed_masks[frame_idx, winner[frame_idx]]
+
+    # Bridging holds the previous frame's already-resolved MASK CONTENT forward
+    # across the gap -- not the winning slot index re-looked-up at the gap frame
+    # itself, which is empty there by definition (that's why it's a gap).
+    for start, end in contiguous_true_runs((winner == -1).numpy()):
+        if start == 0 or end == n_frames - 1:
+            continue  # leading/trailing -- no prior mask to hold from / never recovers
+        if end - start + 1 <= max_bridge_frames:
+            merged[start:end + 1] = merged[start - 1]
+
+    contributing = set(winner[winner >= 0].tolist())
+    best_score = max(scores[i] for i in contributing)
+    return merged, best_score
+
+
 class Sam31Adapter:
     """`load()` once per stage run, `infer()` for the whole clip, `unload()` before
     the process exits -- brackets the checkpoint's time on the GPU to match this
@@ -164,7 +217,9 @@ class Sam31Adapter:
             torch.cuda.empty_cache()
         self._loaded = False
 
-    def _track_one_prompt(self, images: _LazyFrameLoader, prompt: str, progress_label: str) -> dict:
+    def _track_one_prompt(
+        self, images: _LazyFrameLoader, prompt: str, progress_label: str, max_bridge_frames: int
+    ) -> dict:
         """Run one full-clip tracking pass for a single prompt. Returns a single-object
         result -- see this module's docstring for why one prompt is tracked at a time.
         """
@@ -193,33 +248,36 @@ class Sam31Adapter:
         if result[KEY_PACKED_MASKS] is None or not result[KEY_SCORES]:
             return {KEY_PACKED_MASKS: None, KEY_N_FRAMES: result[KEY_N_FRAMES], KEY_SCORE: None}
 
-        # A singular prompt ("a tennis player") should track exactly one object; if the
-        # detector's NMS pool ever yields more than one candidate for it (e.g. a second
-        # person briefly matching "a tennis player"), keep only the highest-confidence
-        # one rather than returning an ambiguous multi-object result for what this
-        # pipeline treats as a single entity (see the locked "rigid, single-instance
-        # object" scope decision).
-        best_idx = max(range(len(result[KEY_SCORES])), key=lambda i: result[KEY_SCORES][i])
-        return {
-            KEY_PACKED_MASKS: result[KEY_PACKED_MASKS][:, best_idx:best_idx + 1],
-            KEY_N_FRAMES: result[KEY_N_FRAMES],
-            KEY_SCORE: result[KEY_SCORES][best_idx],
-        }
+        merged, best_score = _stitch_tracked_slots(result[KEY_PACKED_MASKS], result[KEY_SCORES], max_bridge_frames)
+        return {KEY_PACKED_MASKS: merged, KEY_N_FRAMES: result[KEY_N_FRAMES], KEY_SCORE: best_score}
 
-    def infer(self, frame_paths: list[Path], human_prompt: str, object_prompt: str | None) -> dict:
+    def infer(
+        self, frame_paths: list[Path], human_prompt: str, object_prompt: str | None, max_bridge_frames: int
+    ) -> dict:
         """Track `human_prompt` (always) and `object_prompt` (if given) across the
         whole clip.
 
+        `max_bridge_frames`: see `_stitch_tracked_slots` -- how many consecutive
+        frames with no active detection get bridged by holding the last tracked
+        mask forward, before a gap is left genuinely empty.
+
         Returns {"human": <result>, "object": <result> | None}, each result being
         {"packed_masks": [N_frames, 1, H, W//8] bit-packed uint8 (or None if that
-        entity was never detected), "n_frames": N, "score": first-detection
-        confidence (or None)}. See `sam31_tracker.pack_masks`/`unpack_masks` for the
-        packed mask format.
+        entity was never detected), "n_frames": N, "score": the highest
+        first-detection confidence among slots that actually contributed a frame
+        (or None)}. See `sam31_tracker.pack_masks`/`unpack_masks` for the packed
+        mask format.
         """
         images = _LazyFrameLoader(frame_paths)
-        human_result = self._track_one_prompt(images, human_prompt, progress_label=StageName.STAGE_1A_HUMAN_MASK.label)
+        human_result = self._track_one_prompt(
+            images, human_prompt, progress_label=StageName.STAGE_1A_HUMAN_MASK.label,
+            max_bridge_frames=max_bridge_frames,
+        )
         object_result = (
-            self._track_one_prompt(images, object_prompt, progress_label=StageName.STAGE_1B_OBJECT_MASK.label)
+            self._track_one_prompt(
+                images, object_prompt, progress_label=StageName.STAGE_1B_OBJECT_MASK.label,
+                max_bridge_frames=max_bridge_frames,
+            )
             if object_prompt else None
         )
         return {KEY_HUMAN: human_result, KEY_OBJECT: object_result}

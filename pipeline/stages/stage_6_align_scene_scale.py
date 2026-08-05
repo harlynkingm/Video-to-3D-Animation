@@ -25,6 +25,7 @@ import cv2
 import numpy as np
 import torch
 
+from ..adapters.depth_anything3_adapter import DepthAnything3Adapter, KEY_DEPTH
 from ..adapters.gvhmr.gvhmr_adapter import (
     KEY_BETAS,
     KEY_BODY_POSE,
@@ -34,12 +35,27 @@ from ..adapters.gvhmr.gvhmr_adapter import (
 )
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unproject_depth_to_points
-from ..algorithms.object_extent_fit import fit_object_shape, sample_shape_surface
+from ..algorithms.object_extent_fit import (
+    KEY_KIND,
+    KIND_ELLIPSOID,
+    MIN_OBJECT_POINTS,
+    correct_center_depth,
+    correct_cylinder_radius_from_mask,
+    correct_foreshortened_axis,
+    correct_lateral_axes_from_mask,
+    equivalent_radius,
+    fit_object_shape,
+    mask_circularity,
+    mask_metric_extent,
+    mask_solidity,
+    rescale_shape,
+    sample_shape_surface,
+)
 from ..algorithms.similarity_transform import fit_scene_scale
 from ..pipeline_stage_base import cli_entrypoint
 from ..helpers.ply_export_helper import write_colored_ply
-from ..helpers.progress_reporter import report_single_shot
-from ..progress_tracker import RunRecord, StageName
+from ..helpers.progress_reporter import frame_progress, report_single_shot
+from ..progress_tracker import ObjectShapeHint, RunRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS, OUTPUT_OBJECT_MASKS
 from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 from ..stages.stage_3_estimate_depth import OUTPUT_DEPTH
@@ -203,6 +219,144 @@ def _load_mask_at_depth_res(masks_path: str, anchor: int, depth_hw: tuple[int, i
     return cv2.resize(mask_anchor, (depth_hw[1], depth_hw[0]), interpolation=cv2.INTER_NEAREST).astype(bool)
 
 
+def _score_frames_by_mask(masks_path: str, score_fn) -> list[tuple[float, int]]:
+    """Scores every frame with a real object mask via `score_fn`
+    (`mask_circularity` or `mask_solidity`), descending. Works directly on
+    the bit-packed masks, one frame at a time -- unpacking every frame of a
+    long clip at once risks the same OOM `sam31_adapter._stitch_tracked_
+    slots` was written to avoid. Shared by `_select_shape_candidate_frames`
+    and `_resolve_auto_shape_hint` below -- both need the same per-frame
+    scan, just a different slice of the result."""
+    packed = torch.load(masks_path, weights_only=False)[KEY_PACKED_MASKS]
+    n_frames = packed.shape[0]
+
+    scored = []
+    for frame in range(n_frames):
+        if not packed[frame].any():
+            continue
+        mask = unpack_masks(packed[frame:frame + 1])[0, 0].numpy().astype(np.uint8)
+        score = score_fn(mask)
+        if score > 0:
+            scored.append((score, frame))
+    scored.sort(reverse=True)
+    return scored
+
+
+def _select_shape_candidate_frames(masks_path: str, n_candidates: int, shape_kind: str) -> list[int]:
+    """Ranks every frame with a real object mask by how clean/unoccluded its
+    2D silhouette looks, for `run()`'s own multi-frame size-aggregation pass
+    below -- `mask_circularity` for a round (ellipsoid) object, since it
+    catches both occlusion and motion blur there, or `mask_solidity` for a
+    box/cylinder, which only catches occlusion (see that function's own
+    docstring for why circularity doesn't generalize to non-round shapes)."""
+    score_fn = mask_circularity if shape_kind == KIND_ELLIPSOID else mask_solidity
+    scored = _score_frames_by_mask(masks_path, score_fn)
+    return [frame for _, frame in scored[:n_candidates]]
+
+
+# A clean rasterized circle tops out around here under cv2's own perimeter
+# measure (confirmed both synthetically and on a real clip's own cleanest
+# frames, which read 0.88-0.89) -- see test_object_extent_fit.py's own
+# circularity test for the same number.
+_ROUND_MASK_CIRCULARITY_THRESHOLD = 0.85
+
+
+def _resolve_auto_shape_hint(masks_path: str) -> ObjectShapeHint:
+    """`fit_object_shape`'s own AUTO mode picks box/ellipsoid/cylinder by
+    comparing mean point-to-surface residual on the anchor frame's own point
+    cloud alone -- confirmed unreliable for a genuinely round object on a
+    real clip: a single-view hemisphere sample of a sphere can score
+    deceptively close to (sometimes better than) a tightly-bounding box, so
+    tiny run-to-run measurement noise (DA3 depth inference isn't
+    bit-deterministic) flipped the decision between two otherwise-identical
+    reruns of the same clip, even though the recovered *size* stayed
+    consistent either way.
+
+    The object's own 2D silhouette is a much more direct signal for
+    roundness than a point-cloud residual comparison, so before trusting
+    that comparison, this scans every frame's own mask (not just the
+    anchor's, which may itself be blurred/occluded) for the roundest
+    silhouette found anywhere in the clip. If any frame clears
+    `_ROUND_MASK_CIRCULARITY_THRESHOLD`, that's decisive: forces ELLIPSOID
+    outright, skipping the unreliable residual comparison entirely.
+    Otherwise falls back to AUTO unchanged -- box vs cylinder discrimination
+    from a mask silhouette alone isn't attempted here, both can read as a
+    similarly non-circular "stadium" shape, so there's no equally direct
+    signal to prefer one over the residual comparison for that case.
+    """
+    scored = _score_frames_by_mask(masks_path, mask_circularity)
+    if scored and scored[0][0] >= _ROUND_MASK_CIRCULARITY_THRESHOLD:
+        return ObjectShapeHint.ELLIPSOID
+    return ObjectShapeHint.AUTO
+
+
+def _aggregate_object_shape_size(
+    object_shape: dict,
+    scale: np.ndarray,
+    translation: np.ndarray,
+    K_native: np.ndarray,
+    native_hw: tuple[int, int],
+    frame_paths: list[Path],
+    stage_1_outputs: dict,
+    n_candidates: int,
+) -> dict:
+    """Corrects `object_shape`'s overall SIZE (not its shape/orientation,
+    which stay from the single anchor-frame fit) using the median equivalent
+    radius across several independently re-measured candidate frames --
+    confirmed on a real clip that a single anchor frame's own fit can be
+    badly wrong (a motion-blurred frame over-estimated size, an occluded one
+    under-estimated it) regardless of which anchor-selection heuristic
+    picked it. Median specifically: real measurements showed errors in both
+    directions, so a robust central estimate rejects outliers on either
+    side, unlike a mean (still dragged by outliers) or a max (assumes
+    occlusion only ever shrinks, which motion blur alone already disproves).
+
+    Falls back to `object_shape` unchanged if fewer than 2 candidate frames
+    yield a usable fit (e.g. the object is barely ever cleanly visible) --
+    not enough independent samples to trust a median over the anchor's own
+    single measurement.
+    """
+    shape_kind = object_shape[KEY_KIND]
+    candidate_frames = _select_shape_candidate_frames(
+        stage_1_outputs[OUTPUT_OBJECT_MASKS], n_candidates, shape_kind
+    )
+    focal_length_px = K_native[0, 0]
+    shape_hint = ObjectShapeHint(shape_kind)
+
+    candidate_radii = []
+    depth_adapter = DepthAnything3Adapter()
+    depth_adapter.load()
+    try:
+        for frame in frame_progress(candidate_frames, total=len(candidate_frames),
+                                     label=f"{StageName.STAGE_6B_SAMPLE_OBJECT_SHAPE.label}"):
+            result = depth_adapter.infer(str(frame_paths[frame]), focal_length_px)
+            candidate_depth = result[KEY_DEPTH]
+            candidate_K = scale_intrinsics_to_resolution(K_native, native_hw, candidate_depth.shape)
+            candidate_mask = _load_mask_at_depth_res(
+                stage_1_outputs[OUTPUT_OBJECT_MASKS], frame, candidate_depth.shape
+            )
+            candidate_points = _object_points_in_body_space(
+                candidate_depth, candidate_K, candidate_mask, scale, translation
+            )
+            if len(candidate_points) < MIN_OBJECT_POINTS:
+                continue
+            candidate_shape = fit_object_shape(candidate_points, shape_hint)
+            mask_extent = mask_metric_extent(candidate_mask, candidate_depth, candidate_K)
+            if mask_extent is not None:
+                candidate_shape = correct_lateral_axes_from_mask(candidate_shape, mask_extent, scale[0])
+                candidate_shape = correct_cylinder_radius_from_mask(candidate_shape, mask_extent, scale[0])
+            candidate_shape = correct_foreshortened_axis(candidate_shape)
+            candidate_radii.append(equivalent_radius(candidate_shape))
+    finally:
+        depth_adapter.unload()
+
+    if len(candidate_radii) < 2:
+        return object_shape
+
+    target_radius = float(np.median(candidate_radii))
+    return rescale_shape(object_shape, target_radius / equivalent_radius(object_shape))
+
+
 def run(runRecord: RunRecord) -> dict[str, str]:
     anchor = runRecord.scene.anchor_frame_index
     stage_1_outputs = runRecord.stages[StageName.STAGE_1_MASK_AND_TRACK].outputs
@@ -230,8 +384,26 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         pelvis_rest = None
         if object_mask is not None:
             object_points = _object_points_in_body_space(depth, K, object_mask, scale, translation)
-            object_shape = fit_object_shape(object_points, runRecord.input.object_shape_hint)
+            shape_hint = runRecord.input.object_shape_hint
+            if shape_hint == ObjectShapeHint.AUTO:
+                shape_hint = _resolve_auto_shape_hint(stage_1_outputs[OUTPUT_OBJECT_MASKS])
+            object_shape = fit_object_shape(object_points, shape_hint)
+            mask_extent = mask_metric_extent(object_mask, depth, K)
+            if mask_extent is not None:
+                object_shape = correct_lateral_axes_from_mask(object_shape, mask_extent, scale[0])
+                object_shape = correct_cylinder_radius_from_mask(object_shape, mask_extent, scale[0])
+            object_shape = correct_foreshortened_axis(object_shape)
             pelvis_rest = _pelvis_rest_position(motion[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BETAS][anchor])
+
+    if object_shape is not None:
+        frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
+        frame_paths = sorted(frames_dir.glob("*.jpg"))
+        K_native = np.array(runRecord.scene.intrinsics_K)
+        object_shape = _aggregate_object_shape_size(
+            object_shape, scale, translation, K_native, native_hw, frame_paths, stage_1_outputs,
+            runRecord.input.object_shape_candidate_frames,
+        )
+        object_shape = correct_center_depth(object_shape)
 
     scale_dir = Path(runRecord.progress_dir) / SCALE_DIRNAME
     scale_dir.mkdir(parents=True, exist_ok=True)

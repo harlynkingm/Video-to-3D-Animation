@@ -90,7 +90,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         result = adapter.infer(
             frame_paths,
             human_prompt=runRecord.input.human_prompt,
-            object_prompt=runRecord.input.object_prompt
+            object_prompt=runRecord.input.object_prompt,
+            max_bridge_frames=runRecord.input.sam_track_max_bridge_frames,
         )
     finally:
         adapter.unload()

@@ -938,10 +938,9 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     with report_single_shot(StageName.STAGE_9E_SAVE_FILE.label):
         bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
 
-    # The run's own overall deliverable (docs/PROGRESS_SCHEMA.md's own
-    # `RunOutputs.final_blend`), distinct from this stage's own `outputs`
-    # dict entry below -- lets a caller find the final file without knowing
-    # which stage produced it.
+    # The run's own overall deliverable (`RunOutputs.final_blend`),
+    # distinct from this stage's own `outputs` dict entry below -- lets a
+    # caller find the final file without knowing which stage produced it.
     runRecord.outputs.final_blend = str(output_path)
 
     print(f"[{StageName.STAGE_9_EXPORT.label}] done")

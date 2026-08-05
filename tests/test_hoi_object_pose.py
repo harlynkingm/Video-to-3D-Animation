@@ -163,14 +163,14 @@ def test_find_snap_measurement_returns_none_when_nothing_found_in_range():
     assert result is None
 
 
-def test_attached_segment_propagates_through_real_joint_motion_and_corrects_depth():
+def test_attached_segment_propagates_through_real_joint_motion_ignoring_measured_position():
     """Rigid propagation: for every frame of the hold, the object's pose
     should exactly match `joint(frame) @ offset`, where `offset` is fixed at
-    the snap frame. The measurement's own Z is deliberately wrong here --
-    `compute_object_pose_sequence` must replace it with the joint's own Z
-    (see its own docstring for why monocular depth's Z axis isn't trusted),
-    so a passing test here also proves that correction actually happens, not
-    just that rigid propagation works.
+    the snap frame. The measurement's own center is deliberately wrong in
+    every axis here (contact-point anchoring never trusts it for position at
+    all, only its rotation -- see the module docstring), so a passing test
+    here proves that anchoring actually happens, not just that rigid
+    propagation of *some* position works.
     """
     n_frames = 10
     body_motion = _fake_body_motion(n_frames)
@@ -180,12 +180,11 @@ def test_attached_segment_propagates_through_real_joint_motion_and_corrects_dept
     joint_idx = REGION_JOINTS["left_hand"][-1]
     event = {"region": "left_hand", "start_frame": 2, "end_frame": 7}
     snap_frame = event["start_frame"]
-    true_center = joint_world[snap_frame, joint_idx, :3, 3]
     true_rotation = joint_world[snap_frame, joint_idx, :3, :3]
-    wrong_z_center = true_center + np.array([0.0, 0.0, 999.0])  # should be ignored
+    wrong_center = np.array([123.0, -456.0, 789.0])  # should be ignored entirely
 
     def object_position_fn(f):
-        return (wrong_z_center, true_rotation) if f == snap_frame else None
+        return (wrong_center, true_rotation) if f == snap_frame else None
 
     result = compute_object_pose_sequence(
         n_frames=n_frames,
@@ -208,16 +207,19 @@ def test_attached_segment_propagates_through_real_joint_motion_and_corrects_dept
         assert not result["is_low_confidence"][f]
 
 
-def test_resolved_events_carries_the_raw_reference_pose_not_the_baked_offset():
+def test_resolved_events_carries_the_joint_anchored_center_and_raw_rotation():
     """A caller that wants the object to stay correctly attached after the
     skeleton is later retargeted onto a different rig needs a *live*
     parent/constraint relationship to the joint, not the baked per-frame
     `translation`/`rotation` above (frozen for this rig's own proportions) --
     `resolved_events` carries what's needed to build that: the event's own
-    reference frame/joint plus the *raw* measured pose (before it's combined
-    with the joint's transform into a rigid offset), so a caller can re-derive
-    the offset itself in whatever space it needs (e.g. stage 9 does this in
-    Blender's own live coordinate space)."""
+    reference frame/joint, `ref_center` (the attaching joint's own position
+    at the snap frame -- contact-point anchoring, never the measurement's
+    own center, deliberately wrong here to prove it's ignored) and
+    `ref_rotation` (the object's *own* measured orientation, snapped
+    upright), so a caller can re-derive the offset itself in whatever space
+    it needs (e.g. stage 9 does this in Blender's own live coordinate
+    space)."""
     n_frames = 10
     body_motion = _fake_body_motion(n_frames)
     skeleton = _FakeSkeleton()
@@ -228,9 +230,10 @@ def test_resolved_events_carries_the_raw_reference_pose_not_the_baked_offset():
     snap_frame = event["start_frame"]
     true_center = joint_world[snap_frame, joint_idx, :3, 3]
     true_rotation = joint_world[snap_frame, joint_idx, :3, :3]
+    wrong_center = np.array([-1.0, 2.0, -3.0])  # should be ignored entirely
 
     def object_position_fn(f):
-        return (true_center, true_rotation) if f == snap_frame else None
+        return (wrong_center, true_rotation) if f == snap_frame else None
 
     result = compute_object_pose_sequence(
         n_frames=n_frames,
@@ -490,3 +493,181 @@ def test_joint_world_transforms_matches_real_smplx_forward_wrist_position():
 
     for joint_idx in [0, 15, 20, 21]:  # pelvis, head, left wrist, right wrist
         assert np.allclose(joint_world[:, joint_idx, :3, 3], real_joints[:, joint_idx], atol=0.02)
+
+
+def test_object_radius_zero_reproduces_joint_coincident_behavior():
+    """Default `object_radius=0.0` must exactly reproduce the plain contact-
+    point-anchoring behavior (`ref_center` at the joint, no offset) -- also
+    confirms the hand-direction lookup is skipped entirely when radius is
+    zero, so this needs no SMPL-X model file."""
+    n_frames = 10
+    body_motion = _fake_body_motion(n_frames)
+    skeleton = _FakeSkeleton()
+    joint_world = _joint_world_transforms(body_motion, skeleton)
+
+    joint_idx = REGION_JOINTS["left_hand"][-1]
+    event = {"region": "left_hand", "start_frame": 3, "end_frame": 6}
+    snap_frame = event["start_frame"]
+    true_rotation = joint_world[snap_frame, joint_idx, :3, :3]
+
+    def object_position_fn(f):
+        return (np.zeros(3), true_rotation) if f == snap_frame else None
+
+    result = compute_object_pose_sequence(
+        n_frames=n_frames, attachment_events=[event], body_motion=body_motion,
+        initial_center=np.zeros(3), initial_rotation=true_rotation,
+        object_position_fn=object_position_fn, skeleton=skeleton,
+    )
+    resolved = result["resolved_events"][0]
+    assert np.allclose(resolved["ref_center"], joint_world[snap_frame, joint_idx, :3, 3], atol=1e-6)
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_left_hand_event_offsets_by_the_two_term_anatomical_model():
+    """The offset is `radius * GRIP_NORMAL_SCALE * normal + palm_length *
+    GRIP_DISTAL_SCALE * distal` -- `palm_length` comes from `skeleton.get_
+    skeleton(betas)` (here `_FakeSkeleton`'s own synthetic rest geometry, not
+    real anatomy -- the point of this test is the *formula*, not real body
+    proportions), matching how `compute_object_pose_sequence` itself derives
+    it from `body_motion["betas"]`."""
+    from pipeline.algorithms.hand_retarget import (
+        LEFT_INDEX1, LEFT_MIDDLE1, LEFT_PINKY1, LEFT_WRIST,
+        palm_distal_direction, palm_normal_direction,
+    )
+    from pipeline.algorithms.hoi_object_pose import GRIP_DISTAL_SCALE, GRIP_NORMAL_SCALE
+
+    n_frames = 10
+    body_motion = _fake_body_motion(n_frames)
+    skeleton = _FakeSkeleton()
+    joint_world = _joint_world_transforms(body_motion, skeleton)
+
+    joint_idx = REGION_JOINTS["left_hand"][-1]
+    event = {"region": "left_hand", "start_frame": 3, "end_frame": 6}
+    snap_frame = event["start_frame"]
+    true_rotation = joint_world[snap_frame, joint_idx, :3, :3]
+    object_radius = 0.15
+
+    def object_position_fn(f):
+        return (np.zeros(3), true_rotation) if f == snap_frame else None
+
+    result = compute_object_pose_sequence(
+        n_frames=n_frames, attachment_events=[event], body_motion=body_motion,
+        initial_center=np.zeros(3), initial_rotation=true_rotation,
+        object_position_fn=object_position_fn, skeleton=skeleton, object_radius=object_radius,
+    )
+
+    joint_pos = joint_world[snap_frame, joint_idx, :3, 3]
+    fake_rest = skeleton.get_skeleton(torch.zeros(10)).numpy()
+    palm_length = float(np.linalg.norm(fake_rest[LEFT_MIDDLE1] - fake_rest[LEFT_WRIST]))
+    normal = palm_normal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)
+    distal = palm_distal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, LEFT_MIDDLE1)
+    local_offset = object_radius * GRIP_NORMAL_SCALE * normal + palm_length * GRIP_DISTAL_SCALE * distal
+    expected_center = joint_pos + joint_world[snap_frame, joint_idx, :3, :3] @ local_offset
+
+    resolved = result["resolved_events"][0]
+    assert np.allclose(resolved["ref_center"], expected_center, atol=1e-6)
+    # Sanity check independent of the exact formula: must NOT still sit
+    # exactly on the joint (the bug this feature fixes).
+    offset = np.array(resolved["ref_center"]) - joint_pos
+    assert np.linalg.norm(offset) > 1e-3
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_palm_normal_direction_is_a_unit_vector():
+    from pipeline.algorithms.hand_retarget import LEFT_INDEX1, LEFT_PINKY1, LEFT_WRIST, palm_normal_direction
+
+    d = palm_normal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)
+    assert np.isclose(np.linalg.norm(d), 1.0, atol=1e-5)
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_palm_normal_direction_mirror_flag_flips_the_sign():
+    """A cross product's sign encodes handedness -- the same joint order
+    read for the un-mirrored hand must come out negated for its mirror
+    image, confirming `mirror` actually corrects for that (not a no-op)."""
+    from pipeline.algorithms.hand_retarget import LEFT_INDEX1, LEFT_PINKY1, LEFT_WRIST, palm_normal_direction
+
+    unmirrored = palm_normal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)
+    mirrored = palm_normal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=True)
+    assert np.allclose(mirrored, -unmirrored, atol=1e-6)
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_palm_normal_direction_matches_real_grip_data_regression():
+    """Ground-truth regression: these exact directions (mirror=False for
+    left, mirror=True for right) were validated against real hand-placed
+    reference points across several real grip events, both hands -- ~35-39
+    degrees average error vs. the real grip direction. Pins the exact
+    numeric result so a future change to this formula gets caught here, not
+    silently drifts away from the validated direction."""
+    from pipeline.algorithms.hand_retarget import (
+        LEFT_INDEX1,
+        LEFT_PINKY1,
+        LEFT_WRIST,
+        RIGHT_INDEX1,
+        RIGHT_PINKY1,
+        RIGHT_WRIST,
+        palm_normal_direction,
+    )
+
+    left = palm_normal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)
+    right = palm_normal_direction(RIGHT_WRIST, RIGHT_INDEX1, RIGHT_PINKY1, mirror=True)
+    assert np.allclose(left, [-0.10726821, -0.986735, 0.1218503], atol=1e-5)
+    assert np.allclose(right, [0.14146563, -0.981235, 0.13101627], atol=1e-5)
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_palm_distal_direction_is_a_unit_vector_orthogonal_to_the_normal():
+    from pipeline.algorithms.hand_retarget import (
+        LEFT_INDEX1, LEFT_MIDDLE1, LEFT_PINKY1, LEFT_WRIST, palm_distal_direction, palm_normal_direction,
+    )
+
+    distal = palm_distal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, LEFT_MIDDLE1)
+    normal = palm_normal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)
+    assert np.isclose(np.linalg.norm(distal), 1.0, atol=1e-5)
+    assert np.isclose(np.dot(distal, normal), 0.0, atol=1e-6)
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_palm_distal_direction_matches_real_grip_data_regression():
+    """Pins the exact numeric result, matching `test_palm_normal_direction_
+    matches_real_grip_data_regression`'s own convention -- these two
+    together validated against 24 real reference points across several
+    grip types, cross-validated (see `hoi_object_pose.py`'s
+    `GRIP_NORMAL_SCALE` comment for the numbers)."""
+    from pipeline.algorithms.hand_retarget import (
+        LEFT_INDEX1, LEFT_MIDDLE1, LEFT_PINKY1, LEFT_WRIST,
+        RIGHT_INDEX1, RIGHT_MIDDLE1, RIGHT_PINKY1, RIGHT_WRIST,
+        palm_distal_direction,
+    )
+
+    left = palm_distal_direction(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, LEFT_MIDDLE1)
+    right = palm_distal_direction(RIGHT_WRIST, RIGHT_INDEX1, RIGHT_PINKY1, RIGHT_MIDDLE1)
+    assert np.allclose(left, [0.99330336, -0.11165075, -0.0297072], atol=1e-5)
+    assert np.allclose(right, [-0.98889714, -0.1461555, -0.02685117], atol=1e-5)
+
+
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (registration-gated)")
+def test_non_hand_region_gets_no_offset_even_with_nonzero_radius():
+    """left_arm has no defined "grip direction" -- object_radius>0 must not
+    move it off the joint the way it does for left_hand/right_hand."""
+    n_frames = 10
+    body_motion = _fake_body_motion(n_frames)
+    skeleton = _FakeSkeleton()
+    joint_world = _joint_world_transforms(body_motion, skeleton)
+
+    joint_idx = REGION_JOINTS["left_arm"][-1]
+    event = {"region": "left_arm", "start_frame": 3, "end_frame": 6}
+    snap_frame = event["start_frame"]
+    true_rotation = joint_world[snap_frame, joint_idx, :3, :3]
+
+    def object_position_fn(f):
+        return (np.zeros(3), true_rotation) if f == snap_frame else None
+
+    result = compute_object_pose_sequence(
+        n_frames=n_frames, attachment_events=[event], body_motion=body_motion,
+        initial_center=np.zeros(3), initial_rotation=true_rotation,
+        object_position_fn=object_position_fn, skeleton=skeleton, object_radius=0.15,
+    )
+    resolved = result["resolved_events"][0]
+    assert np.allclose(resolved["ref_center"], joint_world[snap_frame, joint_idx, :3, 3], atol=1e-6)

@@ -53,6 +53,11 @@ LEFT_WRIST, RIGHT_WRIST = 20, 21
 # any finger's own first knuckle would do equally well, middle was picked
 # arbitrarily for being roughly central.
 LEFT_MIDDLE1, RIGHT_MIDDLE1 = 28, 43
+# Index/pinky first knuckles, used only by `palm_normal_direction` below --
+# these two specifically (not e.g. middle/ring) because they're the widest
+# lateral spread across the palm, giving the most numerically stable normal.
+LEFT_INDEX1, RIGHT_INDEX1 = 25, 40
+LEFT_PINKY1, RIGHT_PINKY1 = 31, 46
 
 
 def _global_joint_rotations(local_rotmats: torch.Tensor, parents: list[int]) -> torch.Tensor:
@@ -216,6 +221,63 @@ def rest_hand_direction(wrist_joint: int, middle1_joint: int) -> np.ndarray:
     rest_joints, _ = smplx_rest_joints_and_parents()
     v = rest_joints[middle1_joint] - rest_joints[wrist_joint]
     return (v / np.linalg.norm(v)).astype(np.float32)
+
+
+def palm_normal_direction(wrist_joint: int, index1_joint: int, pinky1_joint: int, mirror: bool) -> np.ndarray:
+    """Unit vector perpendicular to the palm (the plane spanned by the
+    wrist->index-knuckle and wrist->pinky-knuckle rest-pose vectors) --
+    roughly the direction a held object nestles into when the fingers curl
+    around it, unlike `rest_hand_direction` (which points along the fingers
+    when *extended*, not the grip direction of a curled hand). Derived
+    purely from SMPL-X's own rest-pose hand geometry, not fit to any
+    particular clip; cross-checked against real reference points across
+    several grip events and found ~59 degrees closer to the real grip
+    direction on average than `rest_hand_direction` was (see `hoi_object_
+    pose.py`'s `GRIP_NORMAL_SCALE` comment for the offset this pairs with).
+
+    `mirror` corrects for a real chirality flip, confirmed on that same
+    data: a cross product's sign encodes handedness, so the identical
+    `index1_joint`/`pinky1_joint` order that reads correctly on one hand
+    reads ~180 degrees backwards on its mirror-image counterpart. Pass
+    `mirror=False` for the hand the un-mirrored convention (`cross(pinky,
+    index)`) was validated against, `mirror=True` for its mirror image --
+    concretely, `(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)` /
+    `(RIGHT_WRIST, RIGHT_INDEX1, RIGHT_PINKY1, mirror=True)`.
+    """
+    rest_joints, _ = smplx_rest_joints_and_parents()
+    wrist = rest_joints[wrist_joint]
+    v_index = rest_joints[index1_joint] - wrist
+    v_pinky = rest_joints[pinky1_joint] - wrist
+    normal = np.cross(v_index, v_pinky) if mirror else np.cross(v_pinky, v_index)
+    return (normal / np.linalg.norm(normal)).astype(np.float32)
+
+
+def palm_distal_direction(wrist_joint: int, index1_joint: int, pinky1_joint: int, middle1_joint: int) -> np.ndarray:
+    """Unit vector from the wrist toward the middle knuckle (see `rest_hand_
+    direction`), re-orthogonalized against the palm normal (the plane spanned
+    by wrist->index-knuckle/wrist->pinky-knuckle) so the two form a clean
+    basis for a held object's offset (see `hoi_object_pose.py`, which
+    combines a distance along each). Without this correction the raw
+    wrist->middle-knuckle vector isn't exactly perpendicular to the palm
+    normal (~87 degrees, not 90, in SMPL-X's own rest geometry), which would
+    leak a small stray palm-normal component into what's meant to be a purely
+    distal (along-the-hand) term.
+
+    No `mirror` parameter, unlike `palm_normal_direction` -- this function's
+    own orthogonal projection is provably invariant to the palm normal's
+    sign (`v - (v.n)n == v - (v.(-n))(-n)` for any unit `n`), so the
+    chirality correction that matters for the normal's own *direction*
+    doesn't matter here at all.
+    """
+    rest_joints, _ = smplx_rest_joints_and_parents()
+    wrist = rest_joints[wrist_joint]
+    v_index = rest_joints[index1_joint] - wrist
+    v_pinky = rest_joints[pinky1_joint] - wrist
+    normal = np.cross(v_pinky, v_index)
+    normal = normal / np.linalg.norm(normal)
+    distal_raw = rest_joints[middle1_joint] - wrist
+    orthogonal = distal_raw - np.dot(distal_raw, normal) * normal
+    return (orthogonal / np.linalg.norm(orthogonal)).astype(np.float32)
 
 
 def reject_hand_swung_past_forearm(
