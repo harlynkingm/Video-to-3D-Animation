@@ -52,6 +52,7 @@ cmd = "vulture pipeline/ tests/ scripts/ .vulture_whitelist.py --min-confidence 
 python = "3.13.*"
 pytest = ">=7.0"
 scipy = "*"
+tqdm = ">=4.60.0"
 
 [feature.export.dependencies.bpy]
 version = "*"
