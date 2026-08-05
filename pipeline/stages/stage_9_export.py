@@ -34,6 +34,7 @@ import numpy as np
 from ..algorithms.object_extent_fit import KEY_KIND, KIND_BOX, KIND_CYLINDER, KIND_ELLIPSOID
 from ..helpers.amass_export_helper import write_amass_npz
 from ..helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION, root_camera_to_upright
+from ..helpers.progress_reporter import frame_progress, report_single_shot
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 
@@ -625,6 +626,7 @@ def _orient_bones_toward_children(bpy, armature) -> None:
 
     animated = _animated_bone_names(action)
     order = _hierarchy_order(armature)
+    print(f"[{StageName.STAGE_9B_ALIGN_BONES.label}] re-orienting {len(order)} bones across {len(keyframed_frames)} keyframes...")
 
     # Ground truth: every bone's own real, evaluated world *pose* transform
     # at every already-keyframed frame, captured BEFORE any edit-mode
@@ -698,7 +700,13 @@ def _orient_bones_toward_children(bpy, armature) -> None:
     # matrix underneath it, since `old_rest^-1 @ new_rest` isn't identity.
     rest_delta = {name: rest_before[name].inverted() @ armature.data.bones[name].matrix_local for name in order}
 
-    for name in order:
+    # The dominant cost of this whole function: one `scene.frame_set` (a full
+    # dependency-graph re-evaluation) per (animated bone, keyframed frame)
+    # pair -- for a long clip with a full-body rig this can run into the tens
+    # of thousands of evaluations and take minutes with nothing else printed
+    # on the way, so this loop gets its own progress bar (reusing the same
+    # helper the per-frame pipeline stages use, just counting bones instead).
+    for name in frame_progress(order, total=len(order), label=StageName.STAGE_9B_ALIGN_BONES.label, unit="bone"):
         pose_bone = armature.pose.bones[name]
         rotation_path = _rotation_keyframe_data_path(pose_bone)
         delta = rest_delta[name]
@@ -891,8 +899,9 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # continuity fix, which has to see the final keyframe set: deleting a run
     # is one of its two real triggers, and it rewrites keyframe values, so
     # anything that reinserts keyframes afterward would undo it.
-    _delete_unreliable_root_keyframes(bpy, armature, motion[_KEY_ROOT_MOTION_UNRELIABLE])
-    _fix_rotation_hemisphere_continuity(armature)
+    with report_single_shot(f"[{StageName.STAGE_9_EXPORT.label}] cleaning up motion and rotation continuity"):
+        _delete_unreliable_root_keyframes(bpy, armature, motion[_KEY_ROOT_MOTION_UNRELIABLE])
+        _fix_rotation_hemisphere_continuity(armature)
 
     object_shape_path = runRecord.stages[StageName.STAGE_6_ALIGN_SCENE_SCALE].outputs.get(_OBJECT_SHAPE_OUTPUT_KEY)
     output_path = Path(runRecord.progress_dir) / OUTPUT_BLEND_FILENAME
@@ -914,7 +923,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         obj = _add_object_mesh(bpy, object_shape)
         held_mask = _held_frame_mask(n_frames, attachment_events)
         _keyframe_held_object_pose(obj, translations, rotations, held_mask, pelvis_rest, floor_offset)
-        for event in attachment_events:
+        for event in frame_progress(attachment_events, total=len(attachment_events),
+                                     label=StageName.STAGE_9C_ATTACH_TRACKED_OBJECT.label, unit="event"):
             _reset_object_base_transform(obj, event["start_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _reset_object_base_transform(obj, event["end_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset)
@@ -925,7 +935,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # saving so the file doesn't open with the playhead sitting wherever that
     # process happened to leave it.
     bpy.context.scene.frame_set(0)
-    bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
+    with report_single_shot(f"[{StageName.STAGE_9_EXPORT.label}] saving {output_path.name}"):
+        bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
 
     # The run's own overall deliverable (docs/PROGRESS_SCHEMA.md's own
     # `RunOutputs.final_blend`), distinct from this stage's own `outputs`

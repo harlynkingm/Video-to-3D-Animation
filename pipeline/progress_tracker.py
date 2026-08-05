@@ -49,6 +49,8 @@ class StageName(enum.StrEnum):
     STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect object interactions", 7
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interactions", 8
     STAGE_9_EXPORT = "export", "stage 9: export animation", 9
+    STAGE_9B_ALIGN_BONES = "align_bones", "stage 9: align bones for export", 9
+    STAGE_9C_ATTACH_TRACKED_OBJECT = "attach_tracked_object", "stage 9: attach object for export", 9
 
 def ordered_stages() -> list[StageName]:
     """One `StageName` per distinct `.stage_number`, in ascending stage-number
