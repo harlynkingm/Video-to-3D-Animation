@@ -115,27 +115,43 @@ def _point_to_cylinder_surface_distance(points_local: np.ndarray, radius: float,
 
 
 def _fit_cylinder(points: np.ndarray) -> tuple[dict, float]:
-    """PCA-oriented cylinder: local axis 0 (the principal axis with the largest
-    spread, since `_pca_frame`'s SVD orders them descending) is the cylinder's
-    length; radius is the median cross-section distance from that axis (robust
-    to a few outlier depth points, same choice `_fit_ellipsoid` makes)."""
+    """PCA-oriented cylinder. Local axis 0 (the cylinder's length) is picked
+    from the two axes *not* aligned with the camera's own viewing direction
+    (`_depth_axis_index`), whichever of those two has the larger point-cloud
+    spread -- comparing only the two lateral axes, never the depth axis
+    itself, since depth noise can otherwise spread the cloud further along
+    the depth axis than the object's real length, getting mistaken for it.
+    Radius is the median cross-section distance from the length axis
+    (robust to a few outlier depth points, same choice `_fit_ellipsoid`
+    makes). Both are typically overwritten by `correct_cylinder_extent_
+    from_mask` right after -- see that function's own docstring for why the
+    raw point-cloud spread isn't trusted for either dimension, only for the
+    length axis's *direction*."""
     centroid, rotation, local = _pca_frame(points)
-    axial = local[:, 0]
+    depth_idx = _depth_axis_index(rotation)
+    length_idx, radial_idx = sorted(
+        (i for i in range(3) if i != depth_idx),
+        key=lambda i: local[:, i].max() - local[:, i].min(),
+        reverse=True,
+    )
+
+    axial = local[:, length_idx]
     half_height = (axial.max() - axial.min()) / 2
     axial_center_offset = (axial.max() + axial.min()) / 2
-    center = centroid + rotation @ np.array([axial_center_offset, 0.0, 0.0])
+    center = centroid + rotation[:, length_idx] * axial_center_offset
 
-    local_centered = local.copy()
+    radius = float(np.median(np.sqrt(local[:, radial_idx] ** 2 + local[:, depth_idx] ** 2)))
+
+    reordered_rotation = rotation[:, [length_idx, radial_idx, depth_idx]]
+    local_centered = local[:, [length_idx, radial_idx, depth_idx]].copy()
     local_centered[:, 0] -= axial_center_offset
-    radius = float(np.median(np.linalg.norm(local_centered[:, 1:3], axis=1)))
-
     residual = float(np.mean(_point_to_cylinder_surface_distance(local_centered, radius, half_height)))
     descriptor = {
         KEY_KIND: KIND_CYLINDER,
         "center": center.tolist(),
         "radius": radius,
         "half_height": half_height,
-        "rotation": rotation.tolist(),  # (3, 3), object-local -> body-space; local axis 0 = length
+        "rotation": reordered_rotation.tolist(),  # (3, 3), object-local -> body-space; local axis 0 = length
     }
     return descriptor, residual
 
@@ -290,8 +306,10 @@ def correct_lateral_axes_from_mask(descriptor: dict, mask_extent_m: tuple[float,
     are currently stored as "lateral", so it should see these better,
     directly-measured values, not the original std-based ones.
 
-    Same cylinder exception as `correct_foreshortened_axis`, same reason --
-    returned unchanged.
+    Cylinder is returned unchanged here -- it has its own sibling function,
+    `correct_cylinder_extent_from_mask`, since it only exposes two size
+    fields (`radius`/`half_height`) rather than three, so the "which fields
+    are lateral" bookkeeping this function does doesn't apply as-is.
     """
     kind = descriptor[KEY_KIND]
     if kind == KIND_CYLINDER:
@@ -314,39 +332,38 @@ def correct_lateral_axes_from_mask(descriptor: dict, mask_extent_m: tuple[float,
     return corrected
 
 
-def correct_cylinder_radius_from_mask(descriptor: dict, mask_extent_m: tuple[float, float], scale_xy: float) -> dict:
-    """Cylinder's own sibling to `correct_lateral_axes_from_mask`. Unlike
-    box/ellipsoid, cylinder doesn't get two independent lateral fields to
-    correct -- `_fit_cylinder`'s own `radius` already blends both radial
-    directions into a single median distance, subject to the same visible-
-    hemisphere density bias `mask_metric_extent`'s own docstring describes,
-    just for a 2D circular cross-section instead of a 3D sphere.
+def correct_cylinder_extent_from_mask(descriptor: dict, mask_extent_m: tuple[float, float], scale_xy: float) -> dict:
+    """Cylinder's own sibling to `correct_lateral_axes_from_mask` -- but
+    unlike box/ellipsoid (which keep their depth-axis size and only replace
+    it via `correct_foreshortened_axis`'s harmonic-mean formula), this
+    replaces *both* of the cylinder's size fields, `half_height` and
+    `radius`, directly from the mask. A cylinder only ever exposes two size
+    numbers, and `_fit_cylinder` already excludes the depth axis entirely
+    when picking which two axes they come from (see that function's own
+    docstring) -- so there's no third, depth-derived value worth preserving
+    here the way there is for box/ellipsoid.
 
-    For a roughly side-on view (the cylinder's own length axis close to
-    perpendicular to the camera), the mask's own *smaller* oriented-
-    bounding-box dimension is assumed to be the object's visible diameter,
-    its larger dimension assumed to be length (left untouched here) -- a
-    reasonable default for a handheld cylindrical object, not a geometric
-    guarantee.
-
-    Checked against real reference dimensions: overestimates diameter by
-    ~14-20% on a small (under 10cm), glossy object, and the error gets
-    slightly worse (not better) at a higher DA3 `process_res`, ruling out
-    mask-pixel precision as the cause -- most likely a depth-estimation
-    bias on small, low-texture, reflective surfaces. No fix implemented;
-    treat this correction as approximate for small reflective objects.
-
-    `half_height` is *not* corrected here (unlike box/ellipsoid's own depth
-    axis, `correct_foreshortened_axis` explicitly skips cylinder too) -- an
-    open approximation.
+    Checked against real reference dimensions: the point-cloud-derived
+    radius overestimates a small, glossy object's diameter by ~14-20%, most
+    likely a depth-estimation bias on small, low-texture, reflective
+    surfaces (ruled out mask-pixel precision -- the error got slightly
+    worse, not better, at a higher DA3 `process_res`). The same bias can
+    inflate `half_height` far worse, up to badly mistaking the depth axis
+    itself for the length axis (see `_fit_cylinder`). The mask's own pixel
+    extent carries no such bias -- assumed here to be the object's true
+    width/length as long as the view is roughly front-on or side-on (a
+    reasonable default for a handheld object, not a geometric guarantee),
+    the larger of the two mask dimensions becoming `half_height` and the
+    smaller becoming `radius`.
     """
     if descriptor[KEY_KIND] != KIND_CYLINDER:
         return descriptor
 
     w_m, h_m = mask_extent_m
-    radius = min(w_m, h_m) / (2 * scale_xy)
+    half_height, radius = sorted((w_m / (2 * scale_xy), h_m / (2 * scale_xy)), reverse=True)
 
     corrected = dict(descriptor)
+    corrected["half_height"] = half_height
     corrected["radius"] = radius
     return corrected
 
@@ -366,11 +383,11 @@ def correct_foreshortened_axis(descriptor: dict) -> dict:
     -- a book's thickness follows its short edge, not its long one). Center
     and rotation are untouched, only the one corrected axis's size changes.
 
-    Cylinder is returned unchanged: `_fit_cylinder`'s own `radius` already
-    blends both radial directions into a single measurement, so there's no
-    separate lateral value left to correct from without changing that fit's
-    own math -- a known, open approximation, not silently "fixed" by an
-    unjustified guess.
+    Cylinder is returned unchanged: it only ever exposes two size fields
+    (`radius`/`half_height`), both of which `_fit_cylinder` already assigns
+    from the two axes *not* aligned with the camera (see that function's own
+    docstring) -- there's no third, depth-axis-aligned field left over here
+    to foreshorten-correct the way box/ellipsoid's third axis is.
     """
     kind = descriptor[KEY_KIND]
     if kind == KIND_CYLINDER:
@@ -414,9 +431,11 @@ def correct_center_depth(descriptor: dict) -> dict:
     Exact for a sphere/ellipsoid under this sampling model; an approximation
     for box (whose near-facing surface is flatter than a dome, so the real
     correction is somewhat larger for a face-on view), applied anyway as a
-    reasonable first pass. Skipped for cylinder, same reason as the other
-    two corrections: no independently-identified depth-axis size to work
-    from here either.
+    reasonable first pass. Skipped for cylinder: `_fit_cylinder` does now
+    identify its own depth axis (see that function's own docstring), but the
+    2/3-of-radius derivation above is specific to a sphere's hemisphere, not
+    yet verified for a cylinder's curved surface -- left unimplemented
+    rather than reusing an unverified formula.
 
     Run this *after* `correct_foreshortened_axis` and after any multi-frame
     size aggregation -- the shift should use the most trustworthy size
@@ -538,13 +557,12 @@ def mask_solidity(mask: np.ndarray) -> float:
 
 def equivalent_radius(descriptor: dict) -> float:
     """A single rotation-invariant "effective size" for any fitted shape kind
-    -- the geometric mean of its own size dimensions, so a caller aggregating
-    size estimates across independently-oriented per-frame fits (see
-    `rescale_shape`) never has to resolve which axis in one frame's fit
-    corresponds to which axis in another's (PCA's own axis assignment has no
-    stable answer frame to frame for a near-symmetric object -- the same
-    problem this project already hit once for orientation, in the free-
-    tracking rotation-instability fix)."""
+    -- the geometric mean of its own size dimensions, useful for a caller
+    that just needs one overall scale without resolving which axis in one
+    frame's fit corresponds to which axis in another's (PCA's own axis
+    assignment has no stable answer frame to frame for a near-symmetric
+    object -- the same problem this project already hit once for
+    orientation, in the free-tracking rotation-instability fix)."""
     kind = descriptor[KEY_KIND]
     if kind == KIND_BOX:
         hx, hy, hz = descriptor["half_extents"]
@@ -556,26 +574,6 @@ def equivalent_radius(descriptor: dict) -> float:
         radius, half_height = descriptor["radius"], descriptor["half_height"]
         return float((radius * radius * half_height) ** (1 / 3))
     raise ValueError(f"unknown shape kind: {kind!r}")
-
-
-def rescale_shape(descriptor: dict, factor: float) -> dict:
-    """Copy of `descriptor` with its own size field(s) scaled by `factor` --
-    center, rotation, and kind are untouched, only the dimensions change.
-    Pairs with `equivalent_radius`: `rescale_shape(d, target / equivalent_
-    radius(d))` corrects `d`'s overall size to `target` while keeping its own
-    fitted proportions and orientation."""
-    kind = descriptor[KEY_KIND]
-    scaled = dict(descriptor)
-    if kind == KIND_BOX:
-        scaled["half_extents"] = [x * factor for x in descriptor["half_extents"]]
-    elif kind == KIND_ELLIPSOID:
-        scaled["semi_axes"] = [x * factor for x in descriptor["semi_axes"]]
-    elif kind == KIND_CYLINDER:
-        scaled["radius"] = descriptor["radius"] * factor
-        scaled["half_height"] = descriptor["half_height"] * factor
-    else:
-        raise ValueError(f"unknown shape kind: {kind!r}")
-    return scaled
 
 
 def sample_shape_surface(descriptor: dict, points_per_line: int = 20) -> np.ndarray:

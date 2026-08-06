@@ -36,19 +36,14 @@ from ..adapters.gvhmr.gvhmr_adapter import (
 from ..adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from ..algorithms.depth_unprojection import scale_intrinsics_to_resolution, unproject_depth_to_points
 from ..algorithms.object_extent_fit import (
-    KEY_KIND,
-    KIND_ELLIPSOID,
-    MIN_OBJECT_POINTS,
     correct_center_depth,
-    correct_cylinder_radius_from_mask,
+    correct_cylinder_extent_from_mask,
     correct_foreshortened_axis,
     correct_lateral_axes_from_mask,
-    equivalent_radius,
     fit_object_shape,
     mask_circularity,
     mask_metric_extent,
     mask_solidity,
-    rescale_shape,
     sample_shape_surface,
 )
 from ..algorithms.similarity_transform import fit_scene_scale
@@ -242,15 +237,21 @@ def _score_frames_by_mask(masks_path: str, score_fn) -> list[tuple[float, int]]:
     return scored
 
 
-def _select_shape_candidate_frames(masks_path: str, n_candidates: int, shape_kind: str) -> list[int]:
+def _select_shape_candidate_frames(masks_path: str, n_candidates: int) -> list[int]:
     """Ranks every frame with a real object mask by how clean/unoccluded its
-    2D silhouette looks, for `run()`'s own multi-frame size-aggregation pass
-    below -- `mask_circularity` for a round (ellipsoid) object, since it
-    catches both occlusion and motion blur there, or `mask_solidity` for a
-    box/cylinder, which only catches occlusion (see that function's own
-    docstring for why circularity doesn't generalize to non-round shapes)."""
-    score_fn = mask_circularity if shape_kind == KIND_ELLIPSOID else mask_solidity
-    scored = _score_frames_by_mask(masks_path, score_fn)
+    2D silhouette looks, for `run()`'s own multi-frame proportions-
+    aggregation pass below -- always via `mask_solidity`, which (per its own
+    docstring) reads close to 1.0 for any clean, unoccluded convex silhouette
+    regardless of shape kind. `mask_circularity` is deliberately not used
+    here even for an ellipsoid: the final fitted `kind` can read "ellipsoid"
+    either because `_resolve_auto_shape_hint` confirmed the object is
+    genuinely round somewhere in the clip, or just because `fit_object_shape`
+    AUTO's residual comparison happened to favor it for a non-round object at
+    the anchor -- and for a non-round object, circularity isn't a "how clean
+    is this frame" signal at all (confirmed on a real clip: it ranked a
+    frame with a badly inflated mask measurement as the single cleanest one,
+    while `mask_solidity` correctly excluded it)."""
+    scored = _score_frames_by_mask(masks_path, mask_solidity)
     return [frame for _, frame in scored[:n_candidates]]
 
 
@@ -290,40 +291,39 @@ def _resolve_auto_shape_hint(masks_path: str) -> ObjectShapeHint:
     return ObjectShapeHint.AUTO
 
 
-def _aggregate_object_shape_size(
+def _aggregate_object_shape_proportions(
     object_shape: dict,
-    scale: np.ndarray,
-    translation: np.ndarray,
+    scale_xy: float,
     K_native: np.ndarray,
     native_hw: tuple[int, int],
     frame_paths: list[Path],
     stage_1_outputs: dict,
     n_candidates: int,
 ) -> dict:
-    """Corrects `object_shape`'s overall SIZE (not its shape/orientation,
-    which stay from the single anchor-frame fit) using the median equivalent
-    radius across several independently re-measured candidate frames --
-    confirmed on a real clip that a single anchor frame's own fit can be
-    badly wrong (a motion-blurred frame over-estimated size, an occluded one
-    under-estimated it) regardless of which anchor-selection heuristic
-    picked it. Median specifically: real measurements showed errors in both
-    directions, so a robust central estimate rejects outliers on either
-    side, unlike a mean (still dragged by outliers) or a max (assumes
-    occlusion only ever shrinks, which motion blur alone already disproves).
+    """Corrects `object_shape`'s own proportions (not its orientation or
+    center, which stay from the anchor frame's fit -- those describe *where*
+    the object sits relative to the body at one reference moment, not
+    something a differently-chosen frame could stand in for) using the
+    median of several candidate frames' own directly-measured 2D mask
+    extents, ranked by how unoccluded they look
+    (`_select_shape_candidate_frames`) -- the same per-frame correction
+    `correct_lateral_axes_from_mask`/`correct_cylinder_extent_from_mask`
+    already apply using just the anchor's own mask, just aggregated across
+    several frames instead of trusting whichever one happens to be the
+    anchor. Median specifically, not mean or max: a handheld object's mask
+    is occluded to very different degrees frame to frame, so a robust
+    central estimate is needed against errors in either direction, not just
+    against overestimation.
 
     Falls back to `object_shape` unchanged if fewer than 2 candidate frames
-    yield a usable fit (e.g. the object is barely ever cleanly visible) --
-    not enough independent samples to trust a median over the anchor's own
-    single measurement.
+    yield a usable mask measurement (e.g. the object is barely ever cleanly
+    visible) -- not enough independent samples to trust a median over the
+    anchor's own single measurement.
     """
-    shape_kind = object_shape[KEY_KIND]
-    candidate_frames = _select_shape_candidate_frames(
-        stage_1_outputs[OUTPUT_OBJECT_MASKS], n_candidates, shape_kind
-    )
+    candidate_frames = _select_shape_candidate_frames(stage_1_outputs[OUTPUT_OBJECT_MASKS], n_candidates)
     focal_length_px = K_native[0, 0]
-    shape_hint = ObjectShapeHint(shape_kind)
 
-    candidate_radii = []
+    majors, minors = [], []
     depth_adapter = DepthAnything3Adapter()
     depth_adapter.load()
     try:
@@ -335,26 +335,22 @@ def _aggregate_object_shape_size(
             candidate_mask = _load_mask_at_depth_res(
                 stage_1_outputs[OUTPUT_OBJECT_MASKS], frame, candidate_depth.shape
             )
-            candidate_points = _object_points_in_body_space(
-                candidate_depth, candidate_K, candidate_mask, scale, translation
-            )
-            if len(candidate_points) < MIN_OBJECT_POINTS:
-                continue
-            candidate_shape = fit_object_shape(candidate_points, shape_hint)
             mask_extent = mask_metric_extent(candidate_mask, candidate_depth, candidate_K)
-            if mask_extent is not None:
-                candidate_shape = correct_lateral_axes_from_mask(candidate_shape, mask_extent, scale[0])
-                candidate_shape = correct_cylinder_radius_from_mask(candidate_shape, mask_extent, scale[0])
-            candidate_shape = correct_foreshortened_axis(candidate_shape)
-            candidate_radii.append(equivalent_radius(candidate_shape))
+            if mask_extent is None:
+                continue
+            major, minor = sorted(mask_extent, reverse=True)
+            majors.append(major)
+            minors.append(minor)
     finally:
         depth_adapter.unload()
 
-    if len(candidate_radii) < 2:
+    if len(majors) < 2:
         return object_shape
 
-    target_radius = float(np.median(candidate_radii))
-    return rescale_shape(object_shape, target_radius / equivalent_radius(object_shape))
+    median_extent_m = (float(np.median(majors)), float(np.median(minors)))
+    object_shape = correct_lateral_axes_from_mask(object_shape, median_extent_m, scale_xy)
+    object_shape = correct_cylinder_extent_from_mask(object_shape, median_extent_m, scale_xy)
+    return correct_foreshortened_axis(object_shape)
 
 
 def run(runRecord: RunRecord) -> dict[str, str]:
@@ -391,7 +387,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             mask_extent = mask_metric_extent(object_mask, depth, K)
             if mask_extent is not None:
                 object_shape = correct_lateral_axes_from_mask(object_shape, mask_extent, scale[0])
-                object_shape = correct_cylinder_radius_from_mask(object_shape, mask_extent, scale[0])
+                object_shape = correct_cylinder_extent_from_mask(object_shape, mask_extent, scale[0])
             object_shape = correct_foreshortened_axis(object_shape)
             pelvis_rest = _pelvis_rest_position(motion[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BETAS][anchor])
 
@@ -399,8 +395,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         frames_dir = Path(runRecord.stages[StageName.STAGE_0_INGEST_VIDEO].outputs[FRAMES_DIR_OUTPUT_KEY])
         frame_paths = sorted(frames_dir.glob("*.jpg"))
         K_native = np.array(runRecord.scene.intrinsics_K)
-        object_shape = _aggregate_object_shape_size(
-            object_shape, scale, translation, K_native, native_hw, frame_paths, stage_1_outputs,
+        object_shape = _aggregate_object_shape_proportions(
+            object_shape, scale[0], K_native, native_hw, frame_paths, stage_1_outputs,
             runRecord.input.object_shape_candidate_frames,
         )
         object_shape = correct_center_depth(object_shape)

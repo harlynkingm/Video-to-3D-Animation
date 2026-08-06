@@ -14,7 +14,7 @@ from pipeline.algorithms.object_extent_fit import (
     _depth_axis_index,
     _reject_depth_outliers,
     correct_center_depth,
-    correct_cylinder_radius_from_mask,
+    correct_cylinder_extent_from_mask,
     correct_foreshortened_axis,
     correct_lateral_axes_from_mask,
     equivalent_radius,
@@ -23,7 +23,6 @@ from pipeline.algorithms.object_extent_fit import (
     mask_circularity,
     mask_metric_extent,
     mask_solidity,
-    rescale_shape,
     sample_shape_surface,
 )
 from pipeline.progress_tracker import ObjectShapeHint
@@ -117,6 +116,30 @@ def test_cylinder_fit_recovers_known_dimensions():
     assert np.allclose(descriptor["center"], center, atol=0.02)
     assert abs(descriptor["radius"] - radius) < 0.01
     assert abs(descriptor["half_height"] - half_height) < 0.02
+
+
+def test_cylinder_fit_ignores_depth_axis_noise_when_picking_the_length_axis():
+    """The real bug this guards against: a small/distant/reflective object's
+    DA3 depth can be noisier than the object's own real length, spreading
+    the point cloud further along the camera's own viewing direction (world
+    Z here, identity rotation) than along the object's true length axis. The
+    old "largest spread wins, no matter which axis" rule would have picked
+    that noisy depth axis as the cylinder's length; excluding the depth axis
+    from the comparison (see `_fit_cylinder`'s own docstring) should keep
+    the length axis on the real one (world X) regardless."""
+    center = np.array([0.0, 0.0, 2.0])
+    radius = 0.04
+    half_height = 0.08
+    points = _cylinder_point_cloud(center, np.eye(3), radius, half_height)
+
+    rng = np.random.default_rng(4)
+    points = points.copy()
+    points[:, 2] += rng.normal(scale=0.15, size=len(points))  # depth noise bigger than the real length
+
+    descriptor = fit_object_shape(points, shape_hint=ObjectShapeHint.CYLINDER)
+
+    length_axis = np.array(descriptor["rotation"])[:, 0]
+    assert abs(length_axis[0]) > 0.9  # still ~world X, not swallowed by the Z noise
 
 
 def test_auto_picks_cylinder_for_a_bottle_shaped_cloud():
@@ -328,42 +351,6 @@ def test_equivalent_radius_covers_box_and_cylinder_kinds():
 
     cylinder = {"kind": KIND_CYLINDER, "radius": 0.05, "half_height": 0.2}
     assert np.isclose(equivalent_radius(cylinder), (0.05 * 0.05 * 0.2) ** (1 / 3))
-
-
-def test_rescale_shape_preserves_center_rotation_and_kind():
-    descriptor = {
-        "kind": KIND_ELLIPSOID,
-        "center": [1.0, 2.0, 3.0],
-        "semi_axes": [0.1, 0.2, 0.3],
-        "rotation": np.eye(3).tolist(),
-    }
-    rescaled = rescale_shape(descriptor, factor=2.0)
-    assert rescaled["kind"] == descriptor["kind"]
-    assert rescaled["center"] == descriptor["center"]
-    assert rescaled["rotation"] == descriptor["rotation"]
-    assert np.allclose(rescaled["semi_axes"], [0.2, 0.4, 0.6])
-
-
-def test_rescale_shape_round_trips_through_equivalent_radius():
-    """The whole point of pairing these two functions: correcting a fitted
-    shape's overall size to some externally-measured target radius, without
-    needing to touch its own fitted proportions or orientation."""
-    descriptor = {"kind": KIND_ELLIPSOID, "semi_axes": [0.6, 0.2, 0.15]}
-    target_radius = 0.12
-    factor = target_radius / equivalent_radius(descriptor)
-    rescaled = rescale_shape(descriptor, factor)
-    assert np.isclose(equivalent_radius(rescaled), target_radius)
-    # Proportions between axes are preserved -- only overall scale changed.
-    original_ratios = np.array(descriptor["semi_axes"]) / descriptor["semi_axes"][0]
-    rescaled_ratios = np.array(rescaled["semi_axes"]) / rescaled["semi_axes"][0]
-    assert np.allclose(original_ratios, rescaled_ratios)
-
-
-def test_rescale_shape_scales_both_cylinder_dimensions():
-    descriptor = {"kind": KIND_CYLINDER, "radius": 0.05, "half_height": 0.2}
-    rescaled = rescale_shape(descriptor, factor=1.5)
-    assert np.isclose(rescaled["radius"], 0.075)
-    assert np.isclose(rescaled["half_height"], 0.3)
 
 
 def _box_mask(size: int = 200, w: int = 100, h: int = 60) -> np.ndarray:
@@ -613,35 +600,36 @@ def test_correct_center_depth_leaves_cylinder_unchanged():
     assert corrected == descriptor
 
 
-def test_correct_cylinder_radius_from_mask_uses_the_smaller_mask_dimension():
+def test_correct_cylinder_extent_from_mask_uses_larger_dim_for_length_smaller_for_radius():
     descriptor = {
         "kind": KIND_CYLINDER,
         "center": [0.0, 0.0, 0.0],
-        "radius": 0.02,  # a stand-in for a badly-biased point-cloud radius
-        "half_height": 0.2,
+        "radius": 0.02,  # stand-ins for a badly-biased point-cloud fit
+        "half_height": 5.0,
         "rotation": np.eye(3).tolist(),
     }
-    # 0.10m = diameter (radius 0.05), 0.5m = length -- order shouldn't matter.
-    corrected = correct_cylinder_radius_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
+    # 0.10m = diameter (radius 0.05), 0.5m = length (half_height 0.25) -- order shouldn't matter.
+    corrected = correct_cylinder_extent_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
     assert np.isclose(corrected["radius"], 0.05)
-    assert corrected["half_height"] == 0.2  # untouched, a documented open approximation
+    assert np.isclose(corrected["half_height"], 0.25)
     assert corrected["center"] == descriptor["center"]
     assert corrected["rotation"] == descriptor["rotation"]
 
 
-def test_correct_cylinder_radius_from_mask_divides_by_scale_xy():
+def test_correct_cylinder_extent_from_mask_divides_by_scale_xy():
     descriptor = {
         "kind": KIND_CYLINDER, "center": [0.0, 0.0, 0.0], "radius": 0.02,
-        "half_height": 0.2, "rotation": np.eye(3).tolist(),
+        "half_height": 5.0, "rotation": np.eye(3).tolist(),
     }
-    corrected = correct_cylinder_radius_from_mask(descriptor, (0.5, 0.10), scale_xy=2.0)
+    corrected = correct_cylinder_extent_from_mask(descriptor, (0.5, 0.10), scale_xy=2.0)
     assert np.isclose(corrected["radius"], 0.025)  # 0.10 / 2 / 2.0
+    assert np.isclose(corrected["half_height"], 0.125)  # 0.5 / 2 / 2.0
 
 
-def test_correct_cylinder_radius_from_mask_ignores_non_cylinder_shapes():
+def test_correct_cylinder_extent_from_mask_ignores_non_cylinder_shapes():
     descriptor = {
         "kind": KIND_ELLIPSOID, "center": [0.0, 0.0, 0.0],
         "semi_axes": [0.1, 0.1, 0.1], "rotation": np.eye(3).tolist(),
     }
-    corrected = correct_cylinder_radius_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
+    corrected = correct_cylinder_extent_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
     assert corrected == descriptor

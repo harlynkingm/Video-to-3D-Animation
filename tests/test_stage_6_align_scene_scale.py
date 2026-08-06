@@ -17,7 +17,6 @@ import numpy as np
 import torch
 
 from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks
-from pipeline.algorithms.object_extent_fit import KIND_BOX, KIND_ELLIPSOID
 from pipeline.algorithms.similarity_transform import _fit_anisotropic_scale, fit_scene_scale
 from pipeline.progress_tracker import ObjectShapeHint
 from pipeline.stages.stage_6_align_scene_scale import _resolve_auto_shape_hint, _select_shape_candidate_frames
@@ -191,7 +190,10 @@ def _save_packed_masks(masks_by_frame: list[np.ndarray], path) -> None:
     torch.save({KEY_PACKED_MASKS: pack_masks(stacked)}, path)
 
 
-def test_select_shape_candidate_frames_ranks_by_circularity_for_ellipsoid_kind(tmp_path):
+def test_select_shape_candidate_frames_ranks_a_notched_circle_below_the_clean_one(tmp_path):
+    """Solidity is used for every shape kind, including a round object -- a
+    notch (e.g. a gripping hand) breaks convexity the same way regardless of
+    what the object's silhouette should otherwise look like."""
     clean_circle = _disk_mask(radius=40)
     notched_circle = clean_circle.copy()
     notched_circle[70:100, 70:100] = 0  # bites into the circle from an edge-adjacent area
@@ -199,11 +201,11 @@ def test_select_shape_candidate_frames_ranks_by_circularity_for_ellipsoid_kind(t
     masks_path = tmp_path / "object.pt"
     _save_packed_masks([notched_circle, clean_circle], masks_path)
 
-    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2, shape_kind=KIND_ELLIPSOID)
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2)
     assert candidates[0] == 1  # the clean circle (frame 1) ranks above the notched one (frame 0)
 
 
-def test_select_shape_candidate_frames_ranks_by_solidity_for_box_kind(tmp_path):
+def test_select_shape_candidate_frames_ranks_a_notched_box_below_the_clean_one(tmp_path):
     clean_box = _box_mask()
     notched_box = clean_box.copy()
     notched_box[70:80, 90:110] = 0  # a real boundary concavity, see test_object_extent_fit.py
@@ -211,7 +213,7 @@ def test_select_shape_candidate_frames_ranks_by_solidity_for_box_kind(tmp_path):
     masks_path = tmp_path / "object.pt"
     _save_packed_masks([notched_box, clean_box], masks_path)
 
-    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2, shape_kind=KIND_BOX)
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2)
     assert candidates[0] == 1  # the clean box (frame 1) ranks above the notched one (frame 0)
 
 
@@ -222,7 +224,7 @@ def test_select_shape_candidate_frames_excludes_empty_frames(tmp_path):
     masks_path = tmp_path / "object.pt"
     _save_packed_masks([empty, real, empty], masks_path)
 
-    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=5, shape_kind=KIND_ELLIPSOID)
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=5)
     assert candidates == [1]
 
 
@@ -231,7 +233,7 @@ def test_select_shape_candidate_frames_respects_n_candidates_limit(tmp_path):
     masks_path = tmp_path / "object.pt"
     _save_packed_masks(masks, masks_path)
 
-    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2, shape_kind=KIND_ELLIPSOID)
+    candidates = _select_shape_candidate_frames(str(masks_path), n_candidates=2)
     assert len(candidates) == 2
 
 

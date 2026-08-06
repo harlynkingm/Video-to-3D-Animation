@@ -223,13 +223,14 @@ class RunInput:
     # anchor-frame-selection heuristics (largest mask area, visual stillness,
     # highest 2D mask circularity) each produced a wrong overall size (over-
     # elongated or flattened-to-a-disc). `align_scene_scale` corrects the
-    # anchor fit's overall SIZE (not its shape/orientation, which stay from
-    # the anchor) using the median equivalent-radius (see
-    # `object_extent_fit.equivalent_radius`) across this many independently
-    # re-fit candidate frames, ranked by mask circularity -- median specifically
-    # because real measurements showed errors in both directions (blur
-    # inflates, occlusion shrinks), so a robust central estimate rejects
-    # outliers either way, unlike mean or max. First-pass value, one clip.
+    # anchor fit's own proportions (not its orientation/center, which stay
+    # from the anchor) using the median of this many independently-measured
+    # candidate frames' own 2D mask extents (see
+    # `stage_6_align_scene_scale._aggregate_object_shape_proportions`),
+    # ranked by how unoccluded they look -- median specifically because real
+    # measurements showed errors in both directions (blur inflates,
+    # occlusion shrinks), so a robust central estimate rejects outliers
+    # either way, unlike mean or max. First-pass value, one clip.
     object_shape_candidate_frames: int = 15
 
     # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
