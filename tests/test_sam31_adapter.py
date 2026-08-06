@@ -83,14 +83,98 @@ def test_uses_whichever_slot_is_active_even_if_a_different_slot_scores_higher():
     assert best_score == 0.93  # highest score among CONTRIBUTING slots, both did here
 
 
-def test_prefers_higher_scoring_slot_when_both_active_the_same_frame():
+def test_prefers_spatial_continuity_over_a_higher_scoring_slot():
+    """Once a slot has been chosen, a *different* slot becoming active the
+    same frame must not win just for having a higher fixed score -- it
+    should only win by sitting closer to the previous frame's own chosen
+    position. `_slot_pattern` gives each slot a fixed, distinct position, so
+    slot 0 (already winning, and at the same position every frame) stays
+    closer to itself than slot 1 is, despite slot 1's higher score."""
     packed = _make_packed([
         [True, True],
         [False, True],
     ])
     merged, _ = _stitch_tracked_slots(packed, scores=[0.5, 0.9], max_bridge_frames=0)
     assert torch.equal(_merged_frame(merged, 0), _slot_pattern(0))  # only slot 0 active
-    assert torch.equal(_merged_frame(merged, 1), _slot_pattern(1))  # both active, slot 1 scores higher
+    assert torch.equal(_merged_frame(merged, 1), _slot_pattern(0))  # both active, but slot 0 is the continuation
+
+
+def test_falls_back_to_score_when_multiple_slots_are_active_with_no_prior_frame():
+    """No previous chosen position exists yet at the very first active
+    frame -- continuity has nothing to compare against, so this one case
+    still falls back to the higher fixed score, matching the only
+    reasonable behavior when the two candidates are otherwise equally
+    unproven."""
+    packed = _make_packed([
+        [True, True],
+        [True, True],
+    ])
+    merged, _ = _stitch_tracked_slots(packed, scores=[0.5, 0.9], max_bridge_frames=0)
+    assert torch.equal(_merged_frame(merged, 0), _slot_pattern(1))  # both active, no prior frame -> higher score
+    assert torch.equal(_merged_frame(merged, 1), _slot_pattern(1))  # continuity now keeps the same winner
+
+
+def _block_pattern(canvas_h: int, canvas_w: int, row: int, col: int, size: int = 3) -> torch.Tensor:
+    m = torch.zeros(canvas_h, canvas_w, dtype=torch.bool)
+    m[row:row + size, col:col + size] = True
+    return m
+
+
+def test_rejects_a_spurious_large_jump_in_favor_of_the_continuing_object():
+    """The real failure this was built to catch: a second, unrelated,
+    unmoving real-world object matches the same text prompt and gets its
+    own slot, active only from frame 1 onward (frame 0 has only the real
+    object, establishing continuity the same way a real clip's own object
+    is tracked alone for a while before a decoy ever appears). Even though
+    the decoy's own fixed score is higher, its mask sits far from where the
+    genuinely-tracked object has been every frame -- continuity must keep
+    following the real (here, slowly drifting) object instead of jumping to
+    it once both are simultaneously active."""
+    canvas_h, canvas_w = 20, 80
+    real_positions = [(5, 5), (5, 8), (5, 11), (5, 14)]  # small, gradual real motion
+    decoy_position = (15, 60)  # far away, higher score, active from frame 1 on
+
+    masks = torch.zeros(len(real_positions), 2, canvas_h, canvas_w, dtype=torch.bool)
+    for f, (row, col) in enumerate(real_positions):
+        masks[f, 0] = _block_pattern(canvas_h, canvas_w, row, col)
+        if f > 0:
+            masks[f, 1] = _block_pattern(canvas_h, canvas_w, *decoy_position)
+    packed = pack_masks(masks)
+
+    merged, _ = _stitch_tracked_slots(packed, scores=[0.4, 0.95], max_bridge_frames=0)
+    for f, (row, col) in enumerate(real_positions):
+        assert torch.equal(_merged_frame(merged, f), _block_pattern(canvas_h, canvas_w, row, col)), f"frame {f}"
+
+
+def test_a_lone_implausibly_far_candidate_is_treated_as_a_gap_not_accepted():
+    """The real remaining failure mode a multi-slot-only continuity check
+    misses: the genuinely-tracked object drops its own detection for a
+    single frame (motion blur mid-throw, in the real case this was found
+    against) while an unrelated decoy slot is the *only* other thing
+    active. A lone candidate must still be checked against continuity, not
+    accepted unconditionally -- otherwise the decoy silently becomes the
+    new continuity anchor and never lets go. Real object at frames 0-1 and
+    3 (a one-frame dropout at frame 2, where only the far decoy is active,
+    followed by a real reappearance near its own last position); bridging
+    (`max_bridge_frames=1`) should paper over the rejected gap frame with
+    the real object's own last-known mask, not the decoy's."""
+    canvas_h, canvas_w = 300, 400  # large enough for a >MAX_PLAUSIBLE_JUMP_PX real distance
+    real_position = (10, 10)
+    decoy_position = (250, 300)
+
+    masks = torch.zeros(4, 2, canvas_h, canvas_w, dtype=torch.bool)
+    masks[0, 0] = _block_pattern(canvas_h, canvas_w, *real_position)
+    masks[1, 0] = _block_pattern(canvas_h, canvas_w, *real_position)
+    masks[2, 1] = _block_pattern(canvas_h, canvas_w, *decoy_position)  # only the decoy this frame
+    masks[3, 0] = _block_pattern(canvas_h, canvas_w, *real_position)
+    packed = pack_masks(masks)
+
+    merged, _ = _stitch_tracked_slots(packed, scores=[0.4, 0.95], max_bridge_frames=1)
+    real_mask = _block_pattern(canvas_h, canvas_w, *real_position)
+    assert torch.equal(_merged_frame(merged, 0), real_mask)
+    assert torch.equal(_merged_frame(merged, 1), real_mask)
+    assert torch.equal(_merged_frame(merged, 2), real_mask)  # bridged from frame 1, not the decoy
+    assert torch.equal(_merged_frame(merged, 3), real_mask)
 
 
 def test_bridges_a_short_interior_gap_by_holding_the_previous_winner():

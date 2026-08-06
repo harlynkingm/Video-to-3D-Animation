@@ -25,6 +25,7 @@ loading the checkpoint into VRAM twice, which is what this project's original
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import cv2
@@ -36,7 +37,7 @@ from pipeline.progress_tracker import StageName
 from ...algorithms.contact_detection import contiguous_true_runs
 from .sam31_clip_text import Sam31TextTower, encode_prompt, load_tokenizer
 from .sam31_detector import Sam31Detector
-from .sam31_tracker import KEY_MASKS, KEY_N_FRAMES, KEY_PACKED_MASKS, KEY_SCORES, Sam31Tracker
+from .sam31_tracker import KEY_MASKS, KEY_N_FRAMES, KEY_PACKED_MASKS, KEY_SCORES, Sam31Tracker, unpack_masks
 from .sam31_vitdet_backbone import Sam31VisionBackbone, TrackerMode
 
 # Repo root is 3 levels up from this file (sam31/ -> adapters/ -> pipeline/ -> root).
@@ -127,25 +128,47 @@ class _LazyFrameLoader:
         return torch.stack(frames)
 
 
+# How far (pixels) a chosen mask's own centroid may move between two
+# consecutive resolved frames before being treated as a different, wrongly-
+# matched object rather than the same one continuing to move -- confirmed
+# on real footage that a genuine identity switch jumps 900+ pixels in a
+# single frame, while even the fastest real motion seen (an object mid-
+# throw) stayed under 35px/frame. A wide margin either direction, not
+# independently calibrated per clip/resolution -- a fast enough real throw
+# could in principle still exceed it and get wrongly treated as a gap
+# (left to `max_bridge_frames` to paper over), same tradeoff any
+# continuity-based check has.
+MAX_PLAUSIBLE_JUMP_PX = 200.0
+
+
+def _mask_centroid(packed_frame_slot_mask: torch.Tensor) -> tuple[float, float]:
+    """(x, y) pixel centroid of a single already-known-nonempty packed (H,
+    W//8) mask."""
+    ys, xs = torch.nonzero(unpack_masks(packed_frame_slot_mask), as_tuple=True)
+    return float(xs.float().mean()), float(ys.float().mean())
+
+
 def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_bridge_frames: int) -> tuple[torch.Tensor, float]:
     """Merge `track_video_with_detection`'s multiplex result for a singular
-    prompt ("a basketball") into one object's per-frame mask sequence,
-    working directly on the bit-packed representation (never fully
-    unpacking -- a real clip's accumulated slot count can OOM otherwise).
+    prompt ("a basketball") into one object's per-frame mask sequence.
 
     The tracker can lose and re-detect the same physical object several
-    times in one clip; each re-detection becomes its own multiplex slot
-    with its own (first-detection) confidence, even though it's the same
-    object still existing.
+    times in one clip, each re-detection landing as its own multiplex slot;
+    a second, unrelated real-world object can also independently match the
+    same prompt and get its own slot.
 
-    Per frame: use whichever slot has a nonempty mask there -- at most one
-    does in the common case, but if more than one slot is genuinely active
-    the same frame (e.g. a second person briefly matching "a tennis
-    player"), keep the higher-scoring one for that frame. Then bridge any
-    interior gap (no slot active at all -- a brief re-occlusion, not a
-    second instance) of at most `max_bridge_frames` by holding the previous
-    frame's chosen mask forward; longer gaps and leading/trailing runs stay
-    empty, same convention as `motion_smoothing.cap_long_gaps_with_hold`.
+    Per frame: among slots with a nonempty mask, pick whichever centroid is
+    closest to the previously chosen frame's centroid -- not whichever has
+    the higher fixed (first-detection) score, which can favor a completely
+    different, unmoving object over the genuinely-tracked one. Even a lone
+    active slot is checked this way: if it's farther than `MAX_PLAUSIBLE_
+    JUMP_PX` from the last chosen position, the frame is left as a gap
+    rather than accepted, since a lone wrong slot is exactly how one would
+    otherwise permanently take over. Falls back to the higher score only at
+    the very first active frame, with no prior position to compare against.
+    Gaps of at most `max_bridge_frames` are then bridged by holding the
+    previous frame's mask forward, same convention as `motion_smoothing.
+    cap_long_gaps_with_hold`.
 
     Returns (merged (N, 1, H, W//8) packed masks, the highest score among
     slots that actually contributed a frame).
@@ -154,12 +177,29 @@ def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_b
     scores_t = torch.tensor(scores, dtype=torch.float32)
 
     active = torch.stack([packed_masks[:, s].reshape(n_frames, -1).any(dim=1).bool() for s in range(n_obj)])  # (n_obj, N)
-    any_active = active.any(dim=0)
-    masked_scores = torch.where(active, scores_t.unsqueeze(1), torch.full_like(scores_t.unsqueeze(1), float("-inf")))
+
     winner = torch.full((n_frames,), -1, dtype=torch.long)
-    winner[any_active] = masked_scores[:, any_active].argmax(dim=0)
+    prev_centroid: tuple[float, float] | None = None
+    for f in range(n_frames):
+        candidates = torch.nonzero(active[:, f], as_tuple=True)[0].tolist()
+        if not candidates:
+            continue
+
+        if prev_centroid is None:
+            chosen = candidates[int(scores_t[candidates].argmax())]
+            winner[f] = chosen
+            prev_centroid = _mask_centroid(packed_masks[f, chosen])
+            continue
+
+        centroids = {s: _mask_centroid(packed_masks[f, s]) for s in candidates}
+        chosen = min(candidates, key=lambda s: math.dist(centroids[s], prev_centroid))
+        if math.dist(centroids[chosen], prev_centroid) > MAX_PLAUSIBLE_JUMP_PX:
+            continue  # every candidate implausibly far -- leave this frame a gap for bridging to fill
+        winner[f] = chosen
+        prev_centroid = centroids[chosen]
 
     merged = torch.zeros(n_frames, 1, *packed_masks.shape[2:], dtype=packed_masks.dtype)
+    any_active = winner >= 0
     frame_idx = torch.nonzero(any_active, as_tuple=True)[0]
     merged[frame_idx, 0] = packed_masks[frame_idx, winner[frame_idx]]
 
