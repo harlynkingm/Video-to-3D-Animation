@@ -92,7 +92,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     # object's real per-frame pose) already transitively guarantees both are
     # complete by the time it finishes: directly via align_scene_scale, and
     # via annotate_contacts -> retarget_hands.
-    StageName.STAGE_9_EXPORT: [
+    StageName.STAGE_10_EXPORT: [
         StageName.STAGE_8_OPTIMIZE_HOI,
     ],
 }

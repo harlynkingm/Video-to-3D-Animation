@@ -153,7 +153,7 @@ def candidate_joint_indices(region: str) -> list[int]:
     return REGION_JOINTS[region]
 
 
-# stage 8/9's own rigid-attachment joint for a region -- almost always
+# stage 8/10's own rigid-attachment joint for a region -- almost always
 # REGION_JOINTS[region][-1] (see hoi_object_pose.py's own NUM_BODY_JOINTS
 # comment: every real REGION_JOINTS attachment joint falls within
 # SmplxSkeleton's 22-joint body scope). "head_top" is the one exception: its

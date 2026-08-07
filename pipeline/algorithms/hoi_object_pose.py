@@ -137,11 +137,11 @@ def disambiguate_rotation(fresh_rotation: np.ndarray, reference_rotation: np.nda
 
 
 # "Up" in this module's own incam/body space (GVHMR's raw camera-space,
-# X-right/Y-down/Z-forward -- see stage_9_export.py's own module docstring):
+# X-right/Y-down/Z-forward -- see stage_10_export.py's own module docstring):
 # the same -Y_cam convention already established for the root's own
 # camera-to-upright correction (`CAMERA_TO_BVH_ROOT_ROTATION`'s own comment),
 # reused here rather than re-derived, so an object snapped "upright" by this
-# module ends up actually upright once stage 9 applies that same conversion
+# module ends up actually upright once stage 10 applies that same conversion
 # to the whole scene.
 _INCAM_UP = np.array([0.0, -1.0, 0.0])
 
@@ -181,7 +181,7 @@ def _joint_world_transforms(body_motion: dict, skeleton) -> np.ndarray:
     `gvhmr_forward_kinematics.forward_kinematics`, using each frame's own
     `global_orient`/`body_pose` axis-angle values for the per-joint rotation
     and `transl` for the root's own per-frame world position (SMPL-X's own
-    convention, confirmed empirically during stage 9's own work: the root's
+    convention, confirmed empirically during stage 10's own work: the root's
     world position is `transl + pelvis_rest`, unaffected by `global_orient`
     itself -- rotation only matters for joints further down the chain).
     """

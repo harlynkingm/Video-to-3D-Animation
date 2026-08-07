@@ -48,11 +48,12 @@ class StageName(enum.StrEnum):
     STAGE_6B_SAMPLE_OBJECT_SHAPE = "sample_object_shape", "stage 6: detect object shape", 6
     STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect object interactions", 7
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interactions", 8
-    STAGE_9_EXPORT = "export", "stage 9: export animation", 9
-    STAGE_9B_ALIGN_BONES = "align_bones", "stage 9: align bones for export", 9
-    STAGE_9C_CONTINUITY = "continuity_fix", "stage 9: clean up motion and rotation continuity", 9
-    STAGE_9D_ATTACH_TRACKED_OBJECT = "attach_tracked_object", "stage 9: attach object for export", 9
-    STAGE_9E_SAVE_FILE = "save_file", "stage 9: save exported file", 9
+    STAGE_9_CAPTURE_FACE = "capture_face", "stage 9: capture face", 9
+    STAGE_10_EXPORT = "export", "stage 10: export animation", 10
+    STAGE_10B_ALIGN_BONES = "align_bones", "stage 10: align bones for export", 10
+    STAGE_10C_CONTINUITY = "continuity_fix", "stage 10: clean up motion and rotation continuity", 10
+    STAGE_10D_ATTACH_TRACKED_OBJECT = "attach_tracked_object", "stage 10: attach object for export", 10
+    STAGE_10E_SAVE_FILE = "save_file", "stage 10: save exported file", 10
 
 def ordered_stages() -> list[StageName]:
     """One `StageName` per distinct `.stage_number`, in ascending stage-number

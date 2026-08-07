@@ -38,7 +38,7 @@ from ..helpers.progress_reporter import frame_progress, report_single_shot
 from ..pipeline_stage_base import cli_entrypoint
 from ..progress_tracker import RunRecord, StageName
 
-EXPORT_DIRNAME = f"stage{StageName.STAGE_9_EXPORT.stage_number}_export"
+EXPORT_DIRNAME = f"stage{StageName.STAGE_10_EXPORT.stage_number}_export"
 BODY_AMASS_FILENAME = "body.npz"
 OUTPUT_BLEND_FILENAME = "output.blend"
 
@@ -626,7 +626,7 @@ def _orient_bones_toward_children(bpy, armature) -> None:
 
     animated = _animated_bone_names(action)
     order = _hierarchy_order(armature)
-    print(f"[{StageName.STAGE_9B_ALIGN_BONES.label}] re-orienting {len(order)} bones across {len(keyframed_frames)} keyframes...")
+    print(f"[{StageName.STAGE_10B_ALIGN_BONES.label}] re-orienting {len(order)} bones across {len(keyframed_frames)} keyframes...")
 
     # Ground truth: every bone's own real, evaluated world *pose* transform
     # at every already-keyframed frame, captured BEFORE any edit-mode
@@ -706,7 +706,7 @@ def _orient_bones_toward_children(bpy, armature) -> None:
     # of thousands of evaluations and take minutes with nothing else printed
     # on the way, so this loop gets its own progress bar (reusing the same
     # helper the per-frame pipeline stages use, just counting bones instead).
-    for name in frame_progress(order, total=len(order), label=StageName.STAGE_9B_ALIGN_BONES.label, unit="bone"):
+    for name in frame_progress(order, total=len(order), label=StageName.STAGE_10B_ALIGN_BONES.label, unit="bone"):
         pose_bone = armature.pose.bones[name]
         rotation_path = _rotation_keyframe_data_path(pose_bone)
         delta = rest_delta[name]
@@ -848,7 +848,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     import bpy
     import addon_utils
 
-    print(f"[{StageName.STAGE_9_EXPORT.label}] running...")
+    print(f"[{StageName.STAGE_10_EXPORT.label}] running...")
 
     addon_utils.enable(_ADDON_MODULE_NAME, default_set=True, persistent=True)
 
@@ -899,7 +899,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # continuity fix, which has to see the final keyframe set: deleting a run
     # is one of its two real triggers, and it rewrites keyframe values, so
     # anything that reinserts keyframes afterward would undo it.
-    with report_single_shot(StageName.STAGE_9C_CONTINUITY.label):
+    with report_single_shot(StageName.STAGE_10C_CONTINUITY.label):
         _delete_unreliable_root_keyframes(bpy, armature, motion[_KEY_ROOT_MOTION_UNRELIABLE])
         _fix_rotation_hemisphere_continuity(armature)
 
@@ -924,7 +924,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         held_mask = _held_frame_mask(n_frames, attachment_events)
         _keyframe_held_object_pose(obj, translations, rotations, held_mask, pelvis_rest, floor_offset)
         for event in frame_progress(attachment_events, total=len(attachment_events),
-                                     label=StageName.STAGE_9D_ATTACH_TRACKED_OBJECT.label, unit="event"):
+                                     label=StageName.STAGE_10D_ATTACH_TRACKED_OBJECT.label, unit="event"):
             _reset_object_base_transform(obj, event["start_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _reset_object_base_transform(obj, event["end_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset)
@@ -935,7 +935,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # saving so the file doesn't open with the playhead sitting wherever that
     # process happened to leave it.
     bpy.context.scene.frame_set(0)
-    with report_single_shot(StageName.STAGE_9E_SAVE_FILE.label):
+    with report_single_shot(StageName.STAGE_10E_SAVE_FILE.label):
         bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
 
     # The run's own overall deliverable (`RunOutputs.final_blend`),
@@ -943,10 +943,10 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # caller find the final file without knowing which stage produced it.
     runRecord.outputs.final_blend = str(output_path)
 
-    print(f"[{StageName.STAGE_9_EXPORT.label}] done")
+    print(f"[{StageName.STAGE_10_EXPORT.label}] done")
 
     return {OUTPUT_BLEND: str(output_path)}
 
 
 if __name__ == "__main__":
-    cli_entrypoint(run, stage_name=StageName.STAGE_9_EXPORT)
+    cli_entrypoint(run, stage_name=StageName.STAGE_10_EXPORT)

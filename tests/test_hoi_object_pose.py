@@ -218,7 +218,7 @@ def test_resolved_events_carries_the_joint_anchored_center_and_raw_rotation():
     own center, deliberately wrong here to prove it's ignored) and
     `ref_rotation` (the object's *own* measured orientation, snapped
     upright), so a caller can re-derive the offset itself in whatever space
-    it needs (e.g. stage 9 does this in Blender's own live coordinate
+    it needs (e.g. stage 10 does this in Blender's own live coordinate
     space)."""
     n_frames = 10
     body_motion = _fake_body_motion(n_frames)

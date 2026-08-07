@@ -7,7 +7,7 @@ given (stage 5's retarget preview). Higher-level tests
 call paths end to end but only check structure; these check the actual
 position values written for each mode. Also covers `root_camera_to_upright`,
 shared by every consumer that reorients GVHMR's own incam root into this same
-upright frame (stage 9's export, stage 2's `--render-motion-preview`).
+upright frame (stage 10's export, stage 2's `--render-motion-preview`).
 """
 
 from __future__ import annotations

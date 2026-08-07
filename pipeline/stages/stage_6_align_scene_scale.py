@@ -86,7 +86,7 @@ KEY_SCALE = "scale"
 KEY_TRANSLATION = "translation"
 KEY_N_CORRESPONDENCES = "n_correspondences"
 # Only present when an object was tracked -- see _pelvis_rest_position's own
-# docstring for why stage 9's object placement needs this.
+# docstring for why stage 10's object placement needs this.
 KEY_PELVIS_REST = "pelvis_rest_incam"
 
 # scene_preview.ply color coding, so the elements are visually separable.
@@ -142,7 +142,7 @@ def _pelvis_rest_position(betas: torch.Tensor) -> np.ndarray:
     unchanged). A skeleton joint's own world position already accounts for
     this automatically via forward kinematics; a standalone point that isn't
     part of the kinematic chain (the fitted object's own `center`) needs this
-    pivot explicitly to undergo the *same* rigid transform stage 9 applies to
+    pivot explicitly to undergo the *same* rigid transform stage 10 applies to
     the body -- see that stage's `_object_shape_to_blender_world`.
     """
     import smplx

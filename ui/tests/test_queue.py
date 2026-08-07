@@ -60,10 +60,10 @@ def test_summarize_run_form_state_includes_stage_range_when_not_default():
 
 
 def test_summarize_run_form_state_says_all_stages_instead_of_a_specific_range_when_default():
-    lines = summarize_run_form_state(_state(start_stage=0, stop_stage=9))
+    lines = summarize_run_form_state(_state(start_stage=0, stop_stage=10))
 
     assert "all stages" in lines[0]
-    assert "0-9" not in lines[0]
+    assert "0-10" not in lines[0]
 
 
 def test_summarize_run_form_state_includes_object_shape_when_not_auto():
@@ -127,7 +127,7 @@ def _run_record(**stage_statuses: StageStatus) -> RunRecord:
 
 def test_compute_queue_progress_nothing_started():
     queue = [
-        QueueItem(state=_state(destination_folder="a", start_stage=0, stop_stage=9)),
+        QueueItem(state=_state(destination_folder="a", start_stage=0, stop_stage=10)),
         QueueItem(state=_state(destination_folder="b", start_stage=0, stop_stage=4)),
     ]
     progress = compute_queue_progress(queue, current_index=None, current_run_record=None)
@@ -139,8 +139,8 @@ def test_compute_queue_progress_nothing_started():
 
 def test_compute_queue_progress_one_complete_one_running():
     queue = [
-        QueueItem(state=_state(destination_folder="a", start_stage=0, stop_stage=9), status=QueueItemStatus.COMPLETE),
-        QueueItem(state=_state(destination_folder="b", start_stage=0, stop_stage=9), status=QueueItemStatus.RUNNING),
+        QueueItem(state=_state(destination_folder="a", start_stage=0, stop_stage=10), status=QueueItemStatus.COMPLETE),
+        QueueItem(state=_state(destination_folder="b", start_stage=0, stop_stage=10), status=QueueItemStatus.RUNNING),
     ]
     run_record = _run_record(ingest_video=StageStatus.COMPLETE, mask_and_track=StageStatus.RUNNING)
     progress = compute_queue_progress(queue, current_index=1, current_run_record=run_record)

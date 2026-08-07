@@ -11,7 +11,7 @@ gate reading the pose as plausible. A real wrist rarely exceeds ~90 degrees
 here; this project's own SMPL-X rest pose reads under 10.
 
 Run inside the `export` pixi environment, pointing at a run directory that
-already has `output.blend` (i.e. has completed stage 9):
+already has `output.blend` (i.e. has completed stage 10):
 
     pixi run -e export python scripts/measure_wrist_forearm_angle.py runs/my_clip
 
@@ -109,7 +109,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Measure the real wrist-vs-forearm bone angle in an exported output.blend"
     )
-    parser.add_argument("run_dir", type=Path, help="Run directory containing output.blend (i.e. stage 9 has run)")
+    parser.add_argument("run_dir", type=Path, help="Run directory containing output.blend (i.e. stage 10 has run)")
     parser.add_argument(
         "--threshold-deg",
         type=float,
@@ -120,7 +120,7 @@ def main() -> None:
 
     blend_path = args.run_dir / OUTPUT_BLEND_FILENAME
     if not blend_path.exists():
-        raise SystemExit(f"{blend_path} not found -- has stage 9 (export) run for this directory?")
+        raise SystemExit(f"{blend_path} not found -- has stage 10 (export) run for this directory?")
 
     ok = measure(blend_path, args.threshold_deg)
     sys.exit(0 if ok else 1)

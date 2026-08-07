@@ -58,6 +58,9 @@ from .progress_tracker import (
 
 ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 
+# The last stage `pipeline.run` will actually execute
+MAX_ORDERED_STAGE_NUMBER = max(s.stage_number for s in ORDERED_STAGES)
+
 # repo root is 1 level up from this file (pipeline/ -> root) -- needed so
 # subprocess stages find pixi.toml regardless of the caller's cwd.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -110,24 +113,23 @@ def _run_export_subprocess(progress_dir: Path, force: bool) -> None:
     subprocess resolves the right interpreter the same way a person would
     run it manually.
     """
-    cmd = ["pixi", "run", "-e", "export", "python", "-m", stage_module_name(StageName.STAGE_9_EXPORT),
+    cmd = ["pixi", "run", "-e", "export", "python", "-m", stage_module_name(StageName.STAGE_10_EXPORT),
            "--output-dir", str(progress_dir)]
     if force:
         cmd.append("--force")
-    _run_subprocess_tolerating_crash_after_success(cmd, progress_dir, StageName.STAGE_9_EXPORT)
+    _run_subprocess_tolerating_crash_after_success(cmd, progress_dir, StageName.STAGE_10_EXPORT)
 
 
 def run_pipeline(runRecord: RunRecord, start_on_stage: int | None = None, stop_after_stage: int | None = None, force_all: bool = False) -> None:
     first_stage_number = 0
     if start_on_stage is not None:
         first_stage_number = start_on_stage
-    max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
     if stop_after_stage is None:
-        last_stage_number = max_stage_number
+        last_stage_number = MAX_ORDERED_STAGE_NUMBER
     else:
-        if stop_after_stage > max_stage_number:
-            print(f"Only stages 0-{max_stage_number} are implemented; running through stage {max_stage_number}")
-        last_stage_number = min(stop_after_stage, max_stage_number)
+        if stop_after_stage > MAX_ORDERED_STAGE_NUMBER:
+            print(f"Only stages 0-{MAX_ORDERED_STAGE_NUMBER} are implemented; running through stage {MAX_ORDERED_STAGE_NUMBER}")
+        last_stage_number = min(stop_after_stage, MAX_ORDERED_STAGE_NUMBER)
 
     # Assumes ORDERED_STAGES is declared in ascending stage-number order
     # (true today) so a number exceeding the bound can short-circuit the
@@ -137,7 +139,7 @@ def run_pipeline(runRecord: RunRecord, start_on_stage: int | None = None, stop_a
             continue
         if stage_name.stage_number > last_stage_number:
             break
-        if stage_name == StageName.STAGE_9_EXPORT:
+        if stage_name == StageName.STAGE_10_EXPORT:
             _run_export_subprocess(Path(runRecord.progress_dir), force_all)
         else:
             _run_stage_subprocess(stage_name, Path(runRecord.progress_dir), force_all)
@@ -181,20 +183,19 @@ def main() -> None:
     add_run_input_arguments(parser, required=not resuming)
     args = parser.parse_args()
 
-    max_stage_number = max(s.stage_number for s in ORDERED_STAGES)
     starting_stage = 0
-    ending_stage = max_stage_number
+    ending_stage = MAX_ORDERED_STAGE_NUMBER
     if args.start_on_stage is not None:
         if args.start_on_stage < 0:
             parser.error("--start-on-stage must be >= 0")
-        elif args.start_on_stage > max_stage_number:
-            parser.error(f"--start-on-stage must be <= {max_stage_number}")
+        elif args.start_on_stage > MAX_ORDERED_STAGE_NUMBER:
+            parser.error(f"--start-on-stage must be <= {MAX_ORDERED_STAGE_NUMBER}")
         starting_stage = args.start_on_stage
     if args.stop_after_stage is not None:
         if args.stop_after_stage < 0:
             parser.error("--stop-after-stage must be >= 0")
-        elif args.stop_after_stage > max_stage_number:
-            parser.error(f"--stop-after-stage must be <= {max_stage_number}")
+        elif args.stop_after_stage > MAX_ORDERED_STAGE_NUMBER:
+            parser.error(f"--stop-after-stage must be <= {MAX_ORDERED_STAGE_NUMBER}")
         elif args.start_on_stage is not None and args.stop_after_stage < args.start_on_stage:
             parser.error("--stop-after-stage must be >= --start-on-stage")
         ending_stage = args.stop_after_stage

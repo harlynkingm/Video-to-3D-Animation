@@ -139,7 +139,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy` <br> `motion/human_motion.pt` <br> `masks/human.pt` <br> `masks/object.pt` (optional) | `scale/scene_scale.json` <br> `scale/object_shape.json` (if an object was tracked) <br> `scale/scene_preview.ply` (optional) |
 | 7. Annotate contacts | `stage_7_annotate_contacts` | `retarget/retargeted_motion.pt` <br> `masks/object.pt` | `contacts/contact_events.json` <br> `contacts/contacts_preview/*.jpg` (optional) |
 | 8. Optimize human-object interaction | `stage_8_optimize_hoi` | `contacts/contact_events.json` <br> `scale/object_shape.json` <br> `scale/scene_scale.json` <br> `retarget/retargeted_motion.pt` | `hoi/object_pose.pt` <br> `hoi/object_pose.npz` |
-| 9. Export animation | `stage_9_export` | `retarget/retargeted_motion.npz` <br> `scale/object_shape.json` (if an object was tracked) <br> `hoi/object_pose.npz` (if an object was tracked) | `output.blend` |
+| 10. Export animation | `stage_10_export` | `retarget/retargeted_motion.npz` <br> `scale/object_shape.json` (if an object was tracked) <br> `hoi/object_pose.npz` (if an object was tracked) | `output.blend` |
 
 </details>
 
@@ -314,10 +314,10 @@ pixi run -e main python -m pipeline.stages.stage_8_optimize_hoi -o runs/my_clip
 
 If an object was tracked, attach it to a body region if a hold was detected for a duration of time. Writes the object positional animation to `runs/my_clip/stage8_interaction/object_pose.npz`
 
-### Stage 9. Export
+### Stage 10. Export
 
 ```bash
-pixi run -e export python -m pipeline.stages.stage_9_export -o runs/my_clip
+pixi run -e export python -m pipeline.stages.stage_10_export -o runs/my_clip
 ```
 
 Combine the body+hands motion with the animated object into a single `runs/my_clip/output.blend` file.
@@ -378,7 +378,7 @@ If you want to tune the amount of smoothing, edit these fields in the run's `pro
 pixi run test
 ```
 
-Stage 9's tests (`tests/test_stage_9_export.py`) need the `bpy` module and only run under the `export` environment. To run either environment's tests:
+Stage 10's tests (`tests/test_stage_10_export.py`) need the `bpy` module and only run under the `export` environment. To run either environment's tests:
 
 ```bash
 pixi run -e main python -m pytest tests/

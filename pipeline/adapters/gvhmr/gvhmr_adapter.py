@@ -109,7 +109,7 @@ KEY_PRED_SMPL_PARAMS_GLOBAL = "pred_smpl_params_global"
 # the corrected `pred_smpl_params_incam[KEY_TRANSL]` as normal.
 KEY_TRANSL_INCAM_RAW = "transl_incam_raw"
 # (N,) bool -- True where pp_bridge_low_confidence_root_motion judged the
-# root's own tracked motion unreliable and bridged it. Stage 9's export uses
+# root's own tracked motion unreliable and bridged it. Stage 10's export uses
 # this to delete the pelvis bone's real Blender keyframes at these frames
 # (see that function's own docstring for why); every stage in between still
 # uses the bridged transl/global_orient values above as normal.
@@ -338,7 +338,7 @@ class GVHMRAdapter:
         outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BODY_POSE] = body_pose_ik
 
         # incam is what every stage past this one actually consumes (see
-        # stage_9_export.py's own module docstring) -- pp_static_joint_cam's
+        # stage_10_export.py's own module docstring) -- pp_static_joint_cam's
         # correction above only ever reaches the vestigial `global` frame, so
         # incam's own translation needs its own equivalent fix. The
         # pre-correction value is kept separately (KEY_TRANSL_INCAM_RAW) for

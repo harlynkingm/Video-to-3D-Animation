@@ -1,8 +1,8 @@
-"""Stage 9 (export) tests: fast pure-numpy tests of the AMASS-preparation
+"""Stage 10 (export) tests: fast pure-numpy tests of the AMASS-preparation
 logic (always run, no bpy needed) plus a real bpy smoke test gated behind
 `bpy` importability, since this stage only ever actually runs in the
 separate `export` pixi environment. Run the real one with:
-`pixi run -e export python -m pytest tests/test_stage_9_export.py -v`.
+`pixi run -e export python -m pytest tests/test_stage_10_export.py -v`.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import pytest
 
 from pipeline.helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
 from pipeline.progress_tracker import RunInput, RunRecord, SceneInfo, StageName, StageRecord
-from pipeline.stages.stage_9_export import (
+from pipeline.stages.stage_10_export import (
     OUTPUT_BLEND,
     _FIRST_MOTION_BLENDER_FRAME,
     _REST_POSE_YAW_RADIANS,
@@ -54,7 +54,7 @@ if HAS_BPY:
         *and* after each test, rather than trusting `run()`'s own single
         clear at the start, is what actually made the suite order-independent.
         """
-        from pipeline.stages.stage_9_export import _clear_scene
+        from pipeline.stages.stage_10_export import _clear_scene
         _clear_scene(bpy)
         yield
         _clear_scene(bpy)
@@ -465,7 +465,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
     corrupted this test's own otherwise-correct output). Not worth chasing
     further: it's purely a test-harness artifact, since every real invocation
     of this stage is its own fresh subprocess (`pixi run -e export python
-    -m pipeline.stages.stage_9_export`) that never shares bpy state with a
+    -m pipeline.stages.stage_10_export`) that never shares bpy state with a
     prior run to begin with -- so making *this* test match that same
     real-world shape sidesteps the whole class of bug rather than chasing an
     uncharacterized one.
@@ -493,7 +493,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
     # docstring). The attachment event below (right wrist, joint_idx=21)
     # covers frames 20-40; these array values are never actually read for
     # that range (see `_held_frame_mask`) -- left flat here specifically so
-    # that if stage 9 ever regressed to reading them for attached frames
+    # that if stage 10 ever regressed to reading them for attached frames
     # too, the check below (which compares against the *live* wrist bone,
     # not this array) would catch it by disagreeing wildly.
     held_value = np.array([5.0, 5.0, 5.0])
@@ -528,7 +528,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
         [
             sys.executable, "-c",
             "from pipeline.progress_tracker import RunRecord\n"
-            "from pipeline.stages.stage_9_export import run\n"
+            "from pipeline.stages.stage_10_export import run\n"
             f"run(RunRecord.load(r{str(tmp_path)!r}))\n",
         ],
         cwd=Path(__file__).resolve().parents[1],
@@ -538,7 +538,7 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
 
     import bpy
 
-    from pipeline.stages.stage_9_export import OBJECT_MESH_PREFIX
+    from pipeline.stages.stage_10_export import OBJECT_MESH_PREFIX
 
     # A real save->reopen round trip (not just reading the live in-memory
     # scene, which the subprocess above doesn't share with this process

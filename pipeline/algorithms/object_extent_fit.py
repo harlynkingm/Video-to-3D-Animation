@@ -514,7 +514,7 @@ def mask_circularity(mask: np.ndarray) -> float:
     occluded sliver can still look roughly round), just a free, cheap,
     real filter used ahead of a robust multi-frame combine, not in place
     of one. Returns 0.0 for an empty or degenerate mask."""
-    import cv2  # local: cv2 isn't installed in stage 9's own (bpy-only) env,
+    import cv2  # local: cv2 isn't installed in stage 10's own (bpy-only) env,
     # which imports this module for its KEY_KIND/KIND_* constants alone
 
     contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)

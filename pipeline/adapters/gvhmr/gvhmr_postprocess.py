@@ -188,7 +188,7 @@ def pp_bridge_low_confidence_root_motion(pred_smpl_params: dict, pose_confidence
 
     Returns `(bridged_params, label)` -- `label` (the same (B, T) bool from
     `_unreliable_pose_label`) is returned too, not just used internally, so
-    stage 9's own export can delete the pelvis bone's real Blender keyframes
+    stage 10's own export can delete the pelvis bone's real Blender keyframes
     at these frames instead of just baking this function's own interpolated
     numbers into them: the values computed here still matter for every
     stage between this one and export (stage 6's scale fit, stage 7's contact
@@ -278,7 +278,7 @@ def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
     camera cross-check (that function's `cp_diff` correction is inherently a
     global-vs-incam agreement check with no incam-only equivalent, and isn't
     needed here). This is the fix that actually reaches a real run: every
-    stage past stage 2 consumes incam exclusively (see stage_9_export.py's own
+    stage past stage 2 consumes incam exclusively (see stage_10_export.py's own
     module docstring), so `pp_static_joint_cam`'s identical-looking correction
     on `global` never reaches anything downstream -- `global` is vestigial
     past this point, feeding only one optional debug preview.
@@ -297,7 +297,7 @@ def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
     leaves the ground (the correction doesn't). No whole-clip "put on the
     ground" snap is applied here either -- that step assumes a gravity-
     aligned, floored world incam doesn't have; the equivalent already exists,
-    correctly, downstream in stage_9_export.py's own `_lowest_foot_z`/
+    correctly, downstream in stage_10_export.py's own `_lowest_foot_z`/
     `floor_offset`.
     """
     pred_smpl_params_incam = outputs["pred_smpl_params_incam"]

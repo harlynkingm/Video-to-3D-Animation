@@ -91,7 +91,7 @@ def test_root_motion_unreliable_mask_has_correct_shape_and_dtype(stage_2_result)
     # Real, well-tracked test clip -- expect nothing flagged (see the real-clip
     # confidence sweeps in docs/ARCHITECTURE.md's own low-confidence-bridge
     # section), but the field itself must exist with the right shape/dtype
-    # regardless, since stage 5/9 both read it unconditionally.
+    # regardless, since stage 5/10 both read it unconditionally.
     result = _load_motion(stage_2_result)
     mask = result[KEY_ROOT_MOTION_UNRELIABLE]
     assert mask.shape == (TEST_VIDEO_FRAME_COUNT,)
@@ -109,9 +109,9 @@ def test_motion_preview_npz_is_a_valid_amass_file(stage_2_result):
 
 
 def test_motion_preview_uses_incam_reoriented_upright(stage_2_result):
-    # The preview must show what actually ships (incam, per stage 9's own
+    # The preview must show what actually ships (incam, per stage 10's own
     # export), not the vestigial "global" frame -- reoriented the identical
-    # way stage 9 reorients it, not a separately-derived transform.
+    # way stage 10 reorients it, not a separately-derived transform.
     result = _load_motion(stage_2_result)
     incam = result[KEY_PRED_SMPL_PARAMS_INCAM]
     expected_orient, expected_transl = root_camera_to_upright(

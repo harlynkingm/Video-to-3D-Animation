@@ -12,7 +12,7 @@ _.forward
 
 # Blender (bpy) API attributes -- set on a bpy object/struct and read by
 # Blender's own C-level code, never from Python; every `unused attribute`
-# hit in pipeline/stages/stage_9_export.py and tests/test_stage_9_export.py
+# hit in pipeline/stages/stage_10_export.py and tests/test_stage_10_export.py
 # is this (rotation_euler, interpolation, subtarget, inverse_matrix,
 # influence, active, use_connect).
 _.rotation_euler
@@ -25,7 +25,7 @@ _.use_connect
 
 # pytest conventions: a module-level `pytestmark` is read by pytest's own
 # collection machinery, not literal code; an `autouse=True` fixture (e.g.
-# test_stage_9_export.py's `_isolated_bpy_scene`) runs for every test in the
+# test_stage_10_export.py's `_isolated_bpy_scene`) runs for every test in the
 # file without ever being referenced by name.
 pytestmark
 _isolated_bpy_scene

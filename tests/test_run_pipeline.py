@@ -55,11 +55,11 @@ def _fake_run_stage_subprocess(calls: list[StageName]):
 
 def _fake_run_export_subprocess(calls: list[StageName]):
     """Same idea as `_fake_run_stage_subprocess`, for `_run_export_subprocess`
-    (the separate `pixi run -e export` dispatch stage 9 needs)."""
+    (the separate `pixi run -e export` dispatch stage 10 needs)."""
     def fake(progress_dir: Path, force: bool) -> None:
-        calls.append(StageName.STAGE_9_EXPORT)
+        calls.append(StageName.STAGE_10_EXPORT)
         runRecord = RunRecord.load(progress_dir)
-        runRecord.mark_progress(StageName.STAGE_9_EXPORT, StageStatus.COMPLETE, outputs={})
+        runRecord.mark_progress(StageName.STAGE_10_EXPORT, StageStatus.COMPLETE, outputs={})
     return fake
 
 
@@ -286,7 +286,7 @@ pytestmark_end_to_end = pytest.mark.skipif(
 def test_pipeline_run_end_to_end(tmp_path):
     """Capped at stage 7 -- `export` needs `bpy` from a separate pixi
     environment this test's own `main`-env interpreter can't provide (see
-    `tests/test_stage_9_export.py` for its own dedicated coverage)."""
+    `tests/test_stage_10_export.py` for its own dedicated coverage)."""
     run_dir = tmp_path / "run"
     result = subprocess.run(
         [

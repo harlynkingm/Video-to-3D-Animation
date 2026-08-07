@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 from pipeline.progress_tracker import RunRecord, StageName, StageStatus
-from pipeline.run import ORDERED_STAGES
+from pipeline.run import MAX_ORDERED_STAGE_NUMBER, ORDERED_STAGES
 
 # ui/ -> repo root, matching pipeline/run.py's own _REPO_ROOT (pipeline/ -> repo root).
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +40,7 @@ class RunFormState:
     is_image_sequence: bool = False
     source_fps: float | None = None
     start_stage: int = 0
-    stop_stage: int = 9
+    stop_stage: int = MAX_ORDERED_STAGE_NUMBER
     object_shape: str = "auto"
     force_all: bool = False
     render_previews: bool = False
@@ -161,7 +161,7 @@ class PipelineRunner(QObject):
         # early "Found an existing run..." print was arriving after every
         # stage's output, only flushed at process exit). PYTHONUNBUFFERED
         # forces unbuffered stdout/stderr for this process AND everything it
-        # subprocess.run()s in turn (stages 0-8 directly, stage 9 through its
+        # subprocess.run()s in turn (stages 0-8 directly, stage 10 through its
         # `pixi run -e export ...` wrapper), since env vars inherit down the
         # whole chain -- restoring live output without touching pipeline code.
         env = QProcessEnvironment.systemEnvironment()

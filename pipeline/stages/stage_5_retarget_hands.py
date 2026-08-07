@@ -75,7 +75,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     body_pose = _as_f32_tensor(incam[KEY_BODY_POSE])  # (F, 63)
     betas = _as_f32_tensor(incam[KEY_BETAS])
     transl = _as_f32_tensor(incam[KEY_TRANSL])
-    # Pure passthrough -- unrelated to hand retargeting, but export (stage 9)
+    # Pure passthrough -- unrelated to hand retargeting, but export (stage 10)
     # needs it and reads this stage's own npz output, not stage 2's directly.
     root_motion_unreliable = motion[KEY_ROOT_MOTION_UNRELIABLE]  # (F,) bool
 

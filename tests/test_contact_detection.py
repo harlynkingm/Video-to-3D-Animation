@@ -85,7 +85,7 @@ def test_head_top_joint_index_does_not_collide_with_any_real_region_joint():
 
 
 def test_attachment_joint_index_redirects_head_top_to_the_real_head_joint():
-    """stage 8/9 rigidly attach to a real skeletal bone -- head_top's own
+    """stage 8/10 rigidly attach to a real skeletal bone -- head_top's own
     REGION_JOINTS entry (a synthetic mesh-vertex index) has no such bone, so
     attachment_joint_index must redirect it to HEAD_JOINT instead (the same
     one the "head" region already uses), not return the raw vertex index."""

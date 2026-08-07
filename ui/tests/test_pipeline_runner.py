@@ -32,7 +32,7 @@ def test_build_run_argv_basic_video_run():
     assert "--focal-length-mm" in argv and argv[argv.index("--focal-length-mm") + 1] == "26.0"
     assert "--sensor-width-mm" in argv and argv[argv.index("--sensor-width-mm") + 1] == "36.0"
     assert "--start-on-stage" in argv and argv[argv.index("--start-on-stage") + 1] == "0"
-    assert "--stop-after-stage" in argv and argv[argv.index("--stop-after-stage") + 1] == "9"
+    assert "--stop-after-stage" in argv and argv[argv.index("--stop-after-stage") + 1] == "10"
     assert "--object-shape-hint" in argv and argv[argv.index("--object-shape-hint") + 1] == "auto"
     assert "--object-prompt" not in argv
     assert "--source-fps" not in argv
@@ -109,7 +109,7 @@ def _run_record(**stage_statuses: StageStatus) -> RunRecord:
 
 
 def test_compute_stage_progress_nothing_started():
-    progress = compute_stage_progress(_run_record(), start_stage=0, stop_stage=9)
+    progress = compute_stage_progress(_run_record(), start_stage=0, stop_stage=10)
 
     assert progress.completed == 0
     assert progress.total == 10
@@ -123,7 +123,7 @@ def test_compute_stage_progress_partial_complete_and_running():
             mask_and_track=StageStatus.COMPLETE,
             estimate_human_motion=StageStatus.RUNNING,
         ),
-        start_stage=0, stop_stage=9,
+        start_stage=0, stop_stage=10,
     )
 
     assert progress.completed == 2
@@ -136,7 +136,7 @@ def test_compute_stage_progress_partial_complete_and_running():
 def test_compute_stage_progress_respects_stage_range():
     # Every stage complete, but only a 3-stage sub-range was actually run.
     progress = compute_stage_progress(
-        _run_record(**{stage.value: StageStatus.COMPLETE for stage in StageName if stage.stage_number <= 9}),
+        _run_record(**{stage.value: StageStatus.COMPLETE for stage in StageName if stage.stage_number <= 10}),
         start_stage=2, stop_stage=4,
     )
 
@@ -148,7 +148,7 @@ def test_compute_stage_progress_respects_stage_range():
 def test_compute_stage_progress_reports_failure():
     progress = compute_stage_progress(
         _run_record(ingest_video=StageStatus.COMPLETE, mask_and_track=StageStatus.FAILED),
-        start_stage=0, stop_stage=9,
+        start_stage=0, stop_stage=10,
     )
 
     assert StageName.STAGE_1_MASK_AND_TRACK.label in progress.status_text

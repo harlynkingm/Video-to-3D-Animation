@@ -1,7 +1,7 @@
 """Writes a standard AMASS-format `.npz` -- the exact input format the
 already-installed `jtesch/smplx_blender_addon`'s "Add Animation" operator
 expects, whether the caller is a preview (stage 2, body only) or a real
-export (stage 9, body + hands).
+export (stage 10, body + hands).
 """
 
 from __future__ import annotations

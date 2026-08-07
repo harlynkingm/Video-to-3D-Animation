@@ -74,7 +74,7 @@ def root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tup
     see `camera_to_upright_rotation_matrix`/`camera_to_upright_translation`
     for the actual reorientation math this composes. Shared by every
     consumer that has to hand GVHMR's own incam root to something expecting
-    an upright/gravity-aligned one -- stage 9's own export and stage 2's
+    an upright/gravity-aligned one -- stage 10's own export and stage 2's
     `--render-motion-preview` both need this exact correction."""
     root_matrix = camera_to_upright_rotation_matrix(Rotation.from_rotvec(global_orient).as_matrix())
     corrected_orient = Rotation.from_matrix(root_matrix).as_rotvec()

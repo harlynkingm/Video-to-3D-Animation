@@ -46,11 +46,11 @@ driver-less machine only ever imports `stage_0_ingest_video` (needs no heavy
 ML libraries) for real.
 
 `torch` itself is deferred the same way, for the same reason at one level up:
-`tests/test_stage_9_export.py` runs under the separate `export` pixi
+`tests/test_stage_10_export.py` runs under the separate `export` pixi
 environment, which has no torch installed at all (kept minimal on purpose --
 see `pixi.toml`), but pytest loads this conftest.py regardless of which test
 file it's collecting. A missing torch only actually matters to the fixtures
-below that call `torch.cuda.is_available()`, none of which stage 9's own
+below that call `torch.cuda.is_available()`, none of which stage 10's own
 tests ever request.
 """
 

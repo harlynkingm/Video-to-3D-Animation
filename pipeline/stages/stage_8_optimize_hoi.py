@@ -9,11 +9,11 @@ fit), run it, write the result.
 
 Stays in the same incam/body-metric space as every upstream stage (5-7) and
 `object_shape.json` -- no camera-to-upright pivot correction here, that's
-purely a stage-9 export concern.
+purely a stage-10 export concern.
 
 A run without a tracked object (human-only) has nothing for this stage to
 solve -- writes an all-identity, all-flagged-low-confidence pose sequence
-rather than skipping the stage's own output entirely, so stage 9's eventual
+rather than skipping the stage's own output entirely, so stage 10's eventual
 consumption of this file doesn't need a separate no-object code path.
 """
 
@@ -281,7 +281,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # hoi_object_pose.compute_object_pose_sequence's own docstring) needs a
     # live parent/constraint relationship to the joint, not the baked
     # translation/rotation above -- this is the raw per-event reference data
-    # that lets a caller (stage 9) build one. A plain JSON, not part of the
+    # that lets a caller (stage 10) build one. A plain JSON, not part of the
     # .pt/.npz above: an irregular-length list of small per-event records,
     # not a fixed-size per-frame array.
     attachment_events_path = hoi_dir / ATTACHMENT_EVENTS_FILENAME

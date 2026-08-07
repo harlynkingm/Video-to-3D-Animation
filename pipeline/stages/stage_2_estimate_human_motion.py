@@ -7,7 +7,7 @@ just stage 0's frames -- see `gvhmr_adapter.py`'s module docstring for why no
 mask-to-video conversion is needed anywhere in this step.
 
 If `RunInput.render_motion_preview` is set, also writes an AMASS-format `.npz`
-of the incam motion, reoriented upright the same way stage 9's own export
+of the incam motion, reoriented upright the same way stage 10's own export
 does (`bvh_export.root_camera_to_upright`) -- importable into Blender via the
 already-installed `jtesch/smplx_blender_addon`'s own "Add Animation" operator
 (`anim_format="AMASS"`) for visual verification against a real, correctly-shaped

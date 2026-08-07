@@ -1,4 +1,4 @@
-"""Runs `tests/test_stage_9_export.py` (the only test file needing the
+"""Runs `tests/test_stage_10_export.py` (the only test file needing the
 `export` pixi environment's own bpy) as a child process, and reports the
 *real* pass/fail result from its `--junit-xml` report rather than the
 child's own exit code.
@@ -22,7 +22,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-TEST_FILE = "tests/test_stage_9_export.py"
+TEST_FILE = "tests/test_stage_10_export.py"
 
 
 def main() -> int:

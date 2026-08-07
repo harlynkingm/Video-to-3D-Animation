@@ -112,7 +112,7 @@ def test_scene_scale_output_is_plausible(stage_6_result):
     assert data["n_correspondences"] >= 200
 
     # This test clip always has a tracked object (see conftest.py's
-    # OBJECT_PROMPT), so stage 9's sub-phase B pivot needs this too.
+    # OBJECT_PROMPT), so stage 10's sub-phase B pivot needs this too.
     pelvis_rest = np.array(data["pelvis_rest_incam"])
     assert pelvis_rest.shape == (3,)
     assert np.isfinite(pelvis_rest).all()

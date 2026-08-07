@@ -107,7 +107,7 @@ def test_ordered_stages_has_one_entry_per_stage_number_in_ascending_order():
 
     assert numbers == sorted(numbers)
     assert len(numbers) == len(set(numbers))  # no stage_number repeated
-    assert numbers == list(range(10))  # stages 0-9, no gaps
+    assert numbers == list(range(11))  # stages 0-10, no gaps
 
 
 def test_ordered_stages_prefers_each_stage_own_top_level_member():
@@ -124,7 +124,8 @@ def test_ordered_stages_prefers_each_stage_own_top_level_member():
 def test_stage_by_number_finds_the_boundary_and_a_middle_stage():
     assert stage_by_number(0) == StageName.STAGE_0_INGEST_VIDEO
     assert stage_by_number(4) == StageName.STAGE_4_ESTIMATE_HANDS
-    assert stage_by_number(9) == StageName.STAGE_9_EXPORT
+    assert stage_by_number(9) == StageName.STAGE_9_CAPTURE_FACE
+    assert stage_by_number(10) == StageName.STAGE_10_EXPORT
 
 
 def test_stage_by_number_also_prefers_the_top_level_member():
@@ -134,4 +135,4 @@ def test_stage_by_number_also_prefers_the_top_level_member():
 
 def test_stage_by_number_returns_none_when_out_of_range():
     assert stage_by_number(-1) is None
-    assert stage_by_number(10) is None
+    assert stage_by_number(11) is None
