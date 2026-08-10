@@ -65,7 +65,13 @@ def cli_entrypoint(run: Callable[[RunRecord], dict[str, str]], stage_name: Stage
     parser.add_argument("-f", "--force", action="store_true", help="Re-run even if this stage is already marked complete")
     args = parser.parse_args()
 
+    # A stage run directly (not via `pipeline.run`/`update_run`, both of which
+    # already call this themselves) is otherwise the one load path with no
+    # chance to migrate an old progress.json before `run_stage` below looks up
+    # `self.stages[stage_name]`. A genuinely new stage that predates this run
+    # would KeyError there instead of just getting a fresh PENDING record.
     runRecord = RunRecord.load(args.progress_dir)
+    runRecord.update_schema()
 
     try:
         run_stage(runRecord, run, stage_name, force=args.force)

@@ -77,6 +77,97 @@ def stage_by_number(stage_number: int) -> StageName | None:
     """
     return next((stage for stage in ordered_stages() if stage.stage_number == stage_number), None)
 
+
+# The pipeline's dependency DAG. Stages not yet implemented are included here too
+# (as pending, never-run records) so the full chain is visible in `progress.json`
+# from the start, and so a later stage's `depends_on` doesn't need editing in once
+# its own file is finally written.
+STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
+    StageName.STAGE_0_INGEST_VIDEO: [],
+    StageName.STAGE_1_MASK_AND_TRACK: [StageName.STAGE_0_INGEST_VIDEO],
+    StageName.STAGE_2_ESTIMATE_HUMAN_MOTION: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
+    StageName.STAGE_3_ESTIMATE_DEPTH: [StageName.STAGE_0_INGEST_VIDEO, StageName.STAGE_1_MASK_AND_TRACK],
+    # estimate_hands needs the person mask (stage 1) to locate the person, its
+    # own ViTPose pass to locate the hands, AND the body motion (stage 2): a
+    # hand is an extension of the arm, not an independent tracked object, and
+    # stage 4 checks every raw wrist estimate against GVHMR's own elbow
+    # orientation for biomechanical plausibility before its own smoothing runs
+    # (see stage_4_estimate_hands.py's module docstring). This is a real
+    # kinematic dependency, not just an implementation convenience, so hands and
+    # body motion no longer run in parallel.
+    StageName.STAGE_4_ESTIMATE_HANDS: [
+        StageName.STAGE_0_INGEST_VIDEO,
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+    ],
+    # retarget_hands attaches the stage-4 hands onto the stage-2 body -- it needs
+    # both, and nothing else.
+    StageName.STAGE_5_RETARGET_HANDS: [
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+        StageName.STAGE_4_ESTIMATE_HANDS,
+    ],
+    # align_scene_scale's eventual DAG position routes its SMPL-X input through
+    # retarget_hands, but scene *scale* only needs the body's overall size,
+    # which the body-only estimate_human_motion already gives -- so it depends
+    # on that directly and does not wait on the (not-yet-built) hand stages.
+    StageName.STAGE_6_ALIGN_SCENE_SCALE: [
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+        StageName.STAGE_3_ESTIMATE_DEPTH,
+    ],
+    # annotate_contacts detects hand-to-object proximity in 2D image space,
+    # using the retargeted hand joints (stage 5) and the object's own 2D mask
+    # (stage 1) -- deliberately NOT align_scene_scale's 3D object primitive or
+    # real-world depth, since GVHMR's own Z estimate is measurably unreliable
+    # for a reaching/foreshortened arm and an animation only needs the hand and
+    # object to agree with each other in their own shared space, not with
+    # absolute ground truth (see contact_detection.py's module docstring). Also
+    # reads stage 2 directly (not just transitively via stage 5) for its own
+    # pre-foot-lock incam translation -- see stage_7_annotate_contacts.py's own
+    # module docstring for why contact detection wants that instead of stage
+    # 5's (foot-lock-corrected) translation.
+    StageName.STAGE_7_ANNOTATE_CONTACTS: [
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+        StageName.STAGE_5_RETARGET_HANDS,
+    ],
+    # optimize_hoi solves the tracked object's own per-frame pose: rigidly
+    # attached to a body joint during a qualifying contact event (needs
+    # annotate_contacts), against the object's fitted shape and the scale/
+    # translation that reconciles depth with the body (needs
+    # align_scene_scale). It never touches retarget_hands directly -- the
+    # body/hand motion is trusted as-is, not refined.
+    StageName.STAGE_8_OPTIMIZE_HOI: [
+        StageName.STAGE_6_ALIGN_SCENE_SCALE,
+        StageName.STAGE_7_ANNOTATE_CONTACTS,
+    ],
+    # capture_face locates the face itself (its own ViTPose pass, same as
+    # DECA/MICA/MediaPipe each doing their own crop) so frames + the human
+    # mask are its only *required* inputs. Not a data dependency beyond
+    # stage 2 itself; dict insertion order alone is what makes it run before
+    # export.
+    StageName.STAGE_9_CAPTURE_FACE: [
+        StageName.STAGE_0_INGEST_VIDEO,
+        StageName.STAGE_1_MASK_AND_TRACK,
+        StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
+    ],
+    # export also reads retarget_hands' body motion (stage 5) and
+    # align_scene_scale's object shape (stage 6) directly, but doesn't list
+    # either here -- optimize_hoi (its only real dependency now, for the
+    # object's real per-frame pose) already transitively guarantees both are
+    # complete by the time it finishes: directly via align_scene_scale, and
+    # via annotate_contacts -> retarget_hands. capture_face IS listed
+    # directly, though: it's a DAG sibling of optimize_hoi (nothing upstream
+    # of export transitively depends on it), and export now reads its
+    # face_motion.npz output (jaw pose + bridge-1-mapped expression) whenever
+    # face capture wasn't skipped.
+    StageName.STAGE_10_EXPORT: [
+        StageName.STAGE_8_OPTIMIZE_HOI,
+        StageName.STAGE_9_CAPTURE_FACE,
+    ],
+}
+
+
 class StageStatus(enum.StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -651,4 +742,33 @@ class RunRecord:
         record.error = error
         if outputs is not None:
             record.outputs = outputs
+        self.save()
+
+    def update_schema(self) -> None:
+        """Migrates this record's `stages` dict to the current `STAGE_DEPENDS_ON`
+        DAG in place -- adds a record (defaulted to PENDING) for any stage the
+        current code knows about that this run predates, and refreshes
+        `depends_on` for every stage (the DAG can change after a stage's own
+        record was first written). Never touches an existing record's own
+        status/outputs/error, and never removes a stage this run has a record
+        for even if the current DAG no longer lists it, so no recorded
+        progress is ever discarded. A stale, no-longer-listed stage's record
+        just sits unread -- nothing keys off `self.stages` except by a
+        `StageName` the current DAG still knows about.
+
+        Deliberately NOT called from `load()` itself: this saves (see below),
+        and `load()` must stay a pure read with no disk side effect. Callers that
+        load a record to actually *act* on it (`update_run`, `pipeline.run`,
+        `pipeline_stage_base.cli_entrypoint`) call this explicitly instead, once,
+        right after their own `load()` -- safe there because each is a one-shot
+        call at the start of a single process's lifetime, not a poll.
+        """
+        for stage, deps in STAGE_DEPENDS_ON.items():
+            depends_on = [dep.value for dep in deps]
+            if stage.value in self.stages:
+                self.stages[stage.value].depends_on = depends_on
+            else:
+                self.stages[stage.value] = StageRecord(depends_on=depends_on)
+
+        self.schema_version = SCHEMA_VERSION
         self.save()

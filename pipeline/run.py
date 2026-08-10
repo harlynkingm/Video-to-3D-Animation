@@ -7,8 +7,8 @@ pipeline.stages.stage_{number}_{name} --output-dir ...`), dynamically named
 off the existing `stage_{number}_{StageName.value}` file-naming convention --
 so as later stages get real files following that same convention, this loop
 picks them up automatically; the only thing that needs updating is
-`create_run.STAGE_DEPENDS_ON`, which is already the existing convention for
-registering a new stage.
+`progress_tracker.STAGE_DEPENDS_ON`, which is already the existing convention
+for registering a new stage.
 
 Stages are deliberately NOT called in-process one after another. Some of the
 heavier models here (SAM 3.1, GVHMR, HAMER) are separately-compiled
@@ -40,9 +40,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .create_run import STAGE_DEPENDS_ON, create_run
+from .create_run import create_run
 from .progress_tracker import (
     PROGRESS_JSON_NAME,
+    STAGE_DEPENDS_ON,
     NewRunID,
     RunRecord,
     StageName,
@@ -205,6 +206,7 @@ def main() -> None:
         print(f"Found an existing run at {progress_dir}")
         runRecord = RunRecord.load(progress_dir)
         runRecord.input = apply_run_input_overrides(runRecord.input, args)
+        runRecord.update_schema()
         if args.force_all:
             for stage_number in range(starting_stage, ending_stage + 1):
                 stage_name = stage_by_number(stage_number)

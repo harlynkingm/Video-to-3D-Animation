@@ -26,13 +26,10 @@ import argparse
 import shutil
 from pathlib import Path
 
-from .create_run import STAGE_DEPENDS_ON
 from .progress_tracker import (
     PROGRESS_JSON_NAME,
-    SCHEMA_VERSION,
     RunRecord,
     RunLocation,
-    StageRecord,
     add_dataclass_cli_arguments,
     add_run_input_arguments,
     apply_run_input_overrides,
@@ -52,20 +49,7 @@ def update_run(progress_dir: Path, args: argparse.Namespace) -> RunRecord:
 
     runRecord.input = apply_run_input_overrides(runRecord.input, args)
 
-    # Add any stage the current DAG knows about that this run predates; for a
-    # stage that already has a record, only refresh its depends_on (the DAG
-    # can change after a stage's own file is written -- see
-    # create_run.STAGE_DEPENDS_ON's own comments for real examples of this).
-    # Never touches an existing record's status/outputs/error.
-    for stage, deps in STAGE_DEPENDS_ON.items():
-        depends_on = [dep.value for dep in deps]
-        if stage.value in runRecord.stages:
-            runRecord.stages[stage.value].depends_on = depends_on
-        else:
-            runRecord.stages[stage.value] = StageRecord(depends_on=depends_on)
-
-    runRecord.schema_version = SCHEMA_VERSION
-    runRecord.save()
+    runRecord.update_schema()
     return runRecord
 
 

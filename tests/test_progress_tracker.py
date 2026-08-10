@@ -4,19 +4,38 @@ needed, always runs.
 
 from __future__ import annotations
 
+import argparse
 import json
 
 from conftest import TEST_VIDEO_PATH, make_run_input
 from pipeline.create_run import create_run
 from pipeline.progress_tracker import (
+    SCHEMA_VERSION,
+    STAGE_DEPENDS_ON,
+    RunInput,
     RunRecord,
     StageName,
+    StageRecord,
     StageStatus,
+    add_run_input_arguments,
+    apply_run_input_overrides,
     ordered_stages,
+    run_input_from_args,
     stage_by_number,
     validate_camera_input,
     validate_video_input,
 )
+
+_BASE_ARGV = [
+    "--input-video", "v.mp4", "--human-prompt", "a person",
+    "--focal-length-mm", "26", "--sensor-width-mm", "36",
+]
+
+
+def _parse_run_input(extra_argv: list[str]) -> RunInput:
+    parser = argparse.ArgumentParser()
+    add_run_input_arguments(parser)
+    return run_input_from_args(parser.parse_args(_BASE_ARGV + extra_argv))
 
 
 def test_validate_camera_input_accepts_focal_length_path():
@@ -99,6 +118,74 @@ def test_load_defaults_missing_timestamps_to_zero(tmp_path):
     reloaded = RunRecord.load(runRecord.progress_dir)
     assert reloaded.created_at == 0.0
     assert reloaded.updated_at == 0.0
+
+
+def test_update_schema_adds_a_stage_the_run_predates(tmp_path):
+    # Simulates an old progress.json written before a stage existed in the
+    # DAG at all -- create_run() itself always writes every stage the current
+    # DAG knows about, so drop one afterward to reproduce that shape.
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    del runRecord.stages[StageName.STAGE_9_CAPTURE_FACE.value]
+
+    runRecord.update_schema()
+
+    added = runRecord.stages[StageName.STAGE_9_CAPTURE_FACE.value]
+    assert added.status == StageStatus.PENDING
+    assert added.depends_on == [dep.value for dep in STAGE_DEPENDS_ON[StageName.STAGE_9_CAPTURE_FACE]]
+
+
+def test_update_schema_refreshes_depends_on_for_an_existing_stage(tmp_path):
+    # The DAG can change after a stage's own record was first written (see
+    # STAGE_DEPENDS_ON's own comment for real examples) -- update_schema
+    # must overwrite a stale depends_on, not just leave whatever a stage
+    # happened to be created with.
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.stages[StageName.STAGE_9_CAPTURE_FACE.value].depends_on = ["some_stale_dependency"]
+
+    runRecord.update_schema()
+
+    current = [dep.value for dep in STAGE_DEPENDS_ON[StageName.STAGE_9_CAPTURE_FACE]]
+    assert runRecord.stages[StageName.STAGE_9_CAPTURE_FACE.value].depends_on == current
+
+
+def test_update_schema_never_touches_an_existing_stage_own_progress(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.mark_progress(
+        StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs={"frames": "frames.mp4"},
+    )
+
+    runRecord.update_schema()
+
+    record = runRecord.stages[StageName.STAGE_0_INGEST_VIDEO.value]
+    assert record.status == StageStatus.COMPLETE
+    assert record.outputs == {"frames": "frames.mp4"}
+    assert record.error is None
+
+
+def test_update_schema_never_discards_a_stage_no_longer_in_the_dag(tmp_path):
+    # A stage this run has a real record for but the current code no longer
+    # lists (e.g. a renamed/removed stage) must survive -- no recorded
+    # progress should ever be silently dropped by a schema migration.
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.stages["some_removed_stage"] = StageRecord(status=StageStatus.COMPLETE)
+
+    runRecord.update_schema()
+
+    assert runRecord.stages["some_removed_stage"].status == StageStatus.COMPLETE
+
+
+def test_update_schema_bumps_schema_version_and_persists_to_disk(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.schema_version = 0  # simulate a run written by an older schema
+
+    runRecord.update_schema()
+    assert runRecord.schema_version == SCHEMA_VERSION
+
+    # update_schema() saves internally -- confirm the migration actually
+    # reached disk, not just the in-memory object.
+    reloaded = RunRecord.load(runRecord.progress_dir)
+    assert reloaded.schema_version == SCHEMA_VERSION
+    assert StageName.STAGE_9_CAPTURE_FACE.value in reloaded.stages
 
 
 def test_ordered_stages_has_one_entry_per_stage_number_in_ascending_order():

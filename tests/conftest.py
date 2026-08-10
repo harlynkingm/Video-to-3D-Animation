@@ -260,8 +260,8 @@ def stage_7_result(
     # Needs stage 5's retargeted motion + stage 1's object mask, plus (now)
     # stage 2's own pre-foot-lock translation directly -- see
     # stage_7_annotate_contacts.py's own module docstring for why, and
-    # create_run.STAGE_DEPENDS_ON's comment for why this deliberately doesn't
-    # wait on align_scene_scale (stage 6). `stage_2_result` is listed
+    # progress_tracker.STAGE_DEPENDS_ON's comment for why this deliberately
+    # doesn't wait on align_scene_scale (stage 6). `stage_2_result` is listed
     # explicitly even though `stage_5_result` already depends on it
     # transitively, since stage 7 now genuinely reads stage 2's own output.
     if not SMPLX_MODEL_PATH.exists():
