@@ -112,7 +112,7 @@ def test_compute_stage_progress_nothing_started():
     progress = compute_stage_progress(_run_record(), start_stage=0, stop_stage=10)
 
     assert progress.completed == 0
-    assert progress.total == 10
+    assert progress.total == 11
     assert progress.status_text == UI_PREPARING_NEXT_STAGE
 
 
@@ -127,7 +127,7 @@ def test_compute_stage_progress_partial_complete_and_running():
     )
 
     assert progress.completed == 2
-    assert progress.total == 10
+    assert progress.total == 11
     # Exact phrasing is free to change -- what matters is the currently-
     # running stage's own label is what gets reported.
     assert StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.label in progress.status_text

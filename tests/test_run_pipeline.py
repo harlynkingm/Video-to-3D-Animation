@@ -261,6 +261,57 @@ def test_main_applies_an_override_flag_when_resuming(tmp_path, monkeypatch, caps
     assert reloaded.input.video_path == str(TEST_VIDEO_PATH)  # untouched fields carry over
 
 
+def test_main_force_all_resets_completed_stages_with_a_single_save(tmp_path, monkeypatch, capsys):
+    """Regression test: resetting every in-range stage to PENDING for
+    --force-all used to call RunRecord.save() once per stage (via
+    mark_progress()) plus once more right after, a tight burst of
+    back-to-back atomic renames on the same progress.json that's been
+    observed to intermittently fail on Windows with a PermissionError
+    (WinError 5). Save count should be fixed (load's own update_schema()
+    save, plus the trailing save()), not scale with how many stages are
+    reset, so this resets every implemented stage (the full default range)
+    rather than just one or two, which wouldn't distinguish the fixed version
+    from the original per-stage-save bug.
+    """
+    progress_dir = tmp_path / "run"
+    original = create_run(
+        progress_dir,
+        RunInput(
+            video_path=str(TEST_VIDEO_PATH), human_prompt=HUMAN_PROMPT,
+            focal_length_mm=FOCAL_LENGTH_MM, sensor_width_mm=SENSOR_WIDTH_MM,
+        ),
+        run_id="original-run-id",
+    )
+    original.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs={"fake": "output"})
+    original.mark_progress(StageName.STAGE_1_MASK_AND_TRACK, StageStatus.FAILED, error="boom")
+
+    save_calls = []
+    real_save = RunRecord.save
+
+    def counting_save(self):
+        save_calls.append(1)
+        real_save(self)
+
+    monkeypatch.setattr(RunRecord, "save", counting_save)
+    monkeypatch.setattr(
+        run_pipeline_module, "run_pipeline",
+        lambda progress, start_on_stage=None, stop_after_stage=None, force_all=False: None,
+    )
+    monkeypatch.setattr(sys, "argv", ["run.py", "--output-dir", str(progress_dir), "--force-all"])
+
+    run_pipeline_module.main()
+    capsys.readouterr()
+
+    # update_schema()'s own save() + the trailing save() -- not one more per
+    # stage reset, even though every implemented stage just got reset.
+    assert len(save_calls) == 2
+
+    reloaded = RunRecord.load(progress_dir)
+    assert reloaded.stages[StageName.STAGE_0_INGEST_VIDEO].status == StageStatus.PENDING
+    assert reloaded.stages[StageName.STAGE_1_MASK_AND_TRACK].status == StageStatus.PENDING
+    assert reloaded.stages[StageName.STAGE_1_MASK_AND_TRACK].error is None
+
+
 def test_main_still_requires_run_input_flags_for_a_fresh_run(tmp_path, monkeypatch):
     """The other half of the regression: creating a genuinely new run must
     still fail fast with a clear argparse error when the required flags are

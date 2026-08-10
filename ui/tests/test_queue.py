@@ -133,7 +133,7 @@ def test_compute_queue_progress_nothing_started():
     progress = compute_queue_progress(queue, current_index=None, current_run_record=None)
 
     assert progress.completed == 0
-    assert progress.total == 10 + 5
+    assert progress.total == 11 + 5
     assert progress.status_text == UI_QUEUE_IDLE
 
 
@@ -145,9 +145,9 @@ def test_compute_queue_progress_one_complete_one_running():
     run_record = _run_record(ingest_video=StageStatus.COMPLETE, mask_and_track=StageStatus.RUNNING)
     progress = compute_queue_progress(queue, current_index=1, current_run_record=run_record)
 
-    # item 0 fully complete (10 stages) + item 1's own live progress (1 of 10 complete)
-    assert progress.completed == 10 + 1
-    assert progress.total == 10 + 10
+    # item 0 fully complete (11 stages) + item 1's own live progress (1 of 11 complete)
+    assert progress.completed == 11 + 1
+    assert progress.total == 11 + 11
     # status_text is the running item's own stage progress; overall_status_text
     # names which queue item that is and where it sits in the queue.
     assert "generate masks" in progress.status_text

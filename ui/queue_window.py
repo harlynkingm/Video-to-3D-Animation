@@ -177,6 +177,9 @@ class QueueWindow(QWidget):
         self.progress_timer.setInterval(PROGRESS_POLL_INTERVAL_MS)
         self.progress_timer.timeout.connect(self._on_progress_tick)
 
+        # See _refresh_list's own comment. Must exist before list_widget
+        # does, since constructing/showing it can fire a resize immediately.
+        self._refreshing = False
         self.list_widget = _QueueListWidget(on_resize=self._refresh_list)
         self.list_widget.currentRowChanged.connect(self.update_interactive_state)
 
@@ -275,39 +278,55 @@ class QueueWindow(QWidget):
         return current.data(Qt.ItemDataRole.UserRole)
 
     def _refresh_list(self, select: QueueItem | None = None) -> None:
-        # By default, re-select whatever was already selected (a refresh can
-        # be triggered by all sorts of things -- a resize, an item finishing
-        # -- that shouldn't disturb the user's current selection). Callers
-        # that want a specific item selected instead (add_item(), for the
-        # newly-added one) pass it explicitly.
-        selected = select if select is not None else self._selected_queue_item()
-        self.list_widget.clear()
-        # The description label word-wraps, so its (and therefore the whole
-        # row's) required height depends on exactly how wide it'll actually
-        # be rendered -- constrain each row to the viewport's width *before*
-        # asking for its sizeHint(), or Qt computes the height for some other
-        # (usually much wider, unwrapped) width and rows end up too short.
-        row_width = self.list_widget.viewport().width()
-        for item in self.queue_runner.queue:
-            title = Path(item.state.destination_folder).name or item.state.destination_folder
-            description = summarize_run_form_state(item.state)[0]
-            color = None
-            if item.status == QueueItemStatus.COMPLETE:
-                color = _COMPLETE_COLOR
-            elif item.status == QueueItemStatus.FAILED:
-                color = _FAILED_COLOR
-            row_widget = _QueueListItemWidget(_STATUS_PREFIX[item.status], title, description, color)
-            if row_width > 0:
-                row_widget.setFixedWidth(row_width)
+        # Re-entrancy guard: clear()+addItem() below can itself trigger the
+        # viewport to gain/lose its scrollbar mid-rebuild, which fires
+        # _QueueListWidget.resizeEvent -> this same method again. Without this
+        # guard that nested call's clear() deletes the QListWidgetItems the
+        # outer call is still holding, and the outer call's next
+        # setItemWidget()/setCurrentItem() on one of them crashes with
+        # "Internal C++ object already deleted". The nested call is simply
+        # dropped -- the outer call is already about to rebuild every row
+        # against the current (post-resize) viewport width anyway.
+        if self._refreshing:
+            return
+        self._refreshing = True
+        try:
+            # By default, re-select whatever was already selected (a refresh
+            # can be triggered by all sorts of things -- a resize, an item
+            # finishing -- that shouldn't disturb the user's current
+            # selection). Callers that want a specific item selected instead
+            # (add_item(), for the newly-added one) pass it explicitly.
+            selected = select if select is not None else self._selected_queue_item()
+            self.list_widget.clear()
+            # The description label word-wraps, so its (and therefore the
+            # whole row's) required height depends on exactly how wide it'll
+            # actually be rendered -- constrain each row to the viewport's
+            # width *before* asking for its sizeHint(), or Qt computes the
+            # height for some other (usually much wider, unwrapped) width and
+            # rows end up too short.
+            row_width = self.list_widget.viewport().width()
+            for item in self.queue_runner.queue:
+                title = Path(item.state.destination_folder).name or item.state.destination_folder
+                description = summarize_run_form_state(item.state)[0]
+                color = None
+                if item.status == QueueItemStatus.COMPLETE:
+                    color = _COMPLETE_COLOR
+                elif item.status == QueueItemStatus.FAILED:
+                    color = _FAILED_COLOR
+                row_widget = _QueueListItemWidget(_STATUS_PREFIX[item.status], title, description, color)
+                if row_width > 0:
+                    row_widget.setFixedWidth(row_width)
 
-            list_item = QListWidgetItem()
-            list_item.setData(Qt.ItemDataRole.UserRole, item)
-            list_item.setSizeHint(row_widget.sizeHint())
-            self.list_widget.addItem(list_item)
-            self.list_widget.setItemWidget(list_item, row_widget)
+                list_item = QListWidgetItem()
+                list_item.setData(Qt.ItemDataRole.UserRole, item)
+                list_item.setSizeHint(row_widget.sizeHint())
+                self.list_widget.addItem(list_item)
+                self.list_widget.setItemWidget(list_item, row_widget)
 
-            if item is selected:
-                self.list_widget.setCurrentItem(list_item)
+                if item is selected:
+                    self.list_widget.setCurrentItem(list_item)
+        finally:
+            self._refreshing = False
         self.update_interactive_state()
 
     # -- button handlers ------------------------------------------------

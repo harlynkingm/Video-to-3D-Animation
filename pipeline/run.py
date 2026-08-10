@@ -208,10 +208,15 @@ def main() -> None:
         runRecord.input = apply_run_input_overrides(runRecord.input, args)
         runRecord.update_schema()
         if args.force_all:
+            # Mutates each stage's record directly rather than going through
+            # mark_progress() (which would call save(), a full write +
+            # atomic rename once per stage)
             for stage_number in range(starting_stage, ending_stage + 1):
                 stage_name = stage_by_number(stage_number)
                 if stage_name is not None:
-                    runRecord.mark_progress(stage_name, StageStatus.PENDING)
+                    record = runRecord.stages[stage_name]
+                    record.status = StageStatus.PENDING
+                    record.error = None
         runRecord.save()
     else:
         run_input = run_input_from_args(args)
