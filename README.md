@@ -16,21 +16,24 @@ Run any script from this project with `pixi run -e <environment> python ...`
 <details>
 <summary>Pixi Environment Details</summary>
 
-Installing pixi sets up two environments for this project, each pinned to **Python 3.13**:
+Installing pixi sets up three environments for this project, each pinned to its own Python version:
 
-- `main` handles most pipeline stages (SAM 3.1, GVHMR, etc.), including a CUDA 12.8 build of PyTorch.
-- `export` is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
+- `main` (Python 3.13) handles most pipeline stages (SAM 3.1, GVHMR, face capture, etc.), including a CUDA 12.8 build of PyTorch.
+- `export` (Python 3.13) is kept separate because it depends on `bpy` (Blender's Python API), which requires its own exact Python version independent of the rest of the stack.
+- `flame-convert` (Python 3.10) is a one-time-use environment for `scripts/convert_flame_model.py` and is never imported by pipeline code. It exists because the officially-released FLAME model is a `chumpy`-pickled `.pkl`, and `chumpy` needs numpy <1.24 and Python <=3.10
 </details>
 
 ## Setup
 
 ### 1. Download 3D body models
 
-**These three steps must be done by hand.** SMPL-X and MANO are projects that sit behind free registration and license acceptance on their respective sites, and cannot be auto-downloaded. If you skip this section, stages that require a body or hand model will fail.
+**These steps must be done by hand.** SMPL-X, MANO, and FLAME are projects that sit behind free registration and license acceptance on their respective sites, and cannot be auto-downloaded. If you skip this section, stages that require a body, hand, or face model will fail.
 
 1. **SMPL-X**: register at [smpl-x.is.tue.mpg.de](https://smpl-x.is.tue.mpg.de) (free), download the model files, and place `SMPLX_NEUTRAL.npz` in `body_models/smplx/SMPLX_NEUTRAL.npz`
 2. **MANO** (hand model, required by stage 4): register at [mano.is.tue.mpg.de](https://mano.is.tue.mpg.de) (free), download the models zip file, and place `MANO_RIGHT.pkl` in `body_models/mano/MANO_RIGHT.pkl`
-3. **Blender addon**: install [`jtesch/smplx_blender_addon`](https://gitlab.tuebingen.mpg.de/jtesch/smplx_blender_addon) from GitLab (Blender 4.2+)
+3. **FLAME 2020** (face model, required by the face-capture stage): register at [flame.is.tue.mpg.de](https://flame.is.tue.mpg.de) (get the **FLAME 2020** download specifically, not the newer FLAME 2023 "Open Model"), and place `generic_model.pkl` in `body_models/flame/generic_model.pkl`
+4. **SMPL-X↔FLAME vertex correspondence** (also required by the face-capture stage): from the same [smpl-x.is.tue.mpg.de](https://smpl-x.is.tue.mpg.de) Downloads page, download the "Correspondences" zip and place `SMPL-X__FLAME_vertex_ids.npy` at `body_models/correspondences/SMPL-X__FLAME_vertex_ids.npy`
+5. **Blender addon**: install [`jtesch/smplx_blender_addon`](https://gitlab.tuebingen.mpg.de/jtesch/smplx_blender_addon) from GitLab (Blender 4.2+)
 
 ### 2. Download model checkpoints
 
@@ -40,7 +43,7 @@ After `pixi install` and downloading the body models, the quickest way to get ev
 bash scripts/download_checkpoints.sh
 ```
 
-This downloads SAM 3.1, ViTPose, HMR2, and GVHMR from HuggingFace and converts the HaMeR checkpoint to a safetensors file, placing everything in `checkpoints/`. It skips files you already have and reminds you about the registration-gated body models that it can't fetch, if you don't have them downloaded.
+This downloads SAM 3.1, ViTPose, HMR2, GVHMR, and MediaPipe's FaceLandmarker from HuggingFace/Google, converts the HaMeR checkpoint to a safetensors file, fetches DECA and MICA from Google Drive, converts DECA and MICA to safetensors, fetches FLAME's static landmark embedding, and converts the FLAME model (if you've placed `generic_model.pkl` in the right place). Everything is downloaded into `checkpoints/` and `body_models/`. It skips files you already have and reminds you about the registration-gated files it can't fetch, if you don't have them downloaded.
 
 Once setup is complete, the pipeline runs fully offline.
 
@@ -55,6 +58,10 @@ If you want, you can download each file into `checkpoints/` yourself.
 | `hmr2.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~2.7GB |
 | `gvhmr.safetensors` | [huggingface.co/apozz/motion-capture-safetensors](https://huggingface.co/apozz/motion-capture-safetensors) | ~163MB |
 | `hamer_demo_data.tar.gz` | [cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz](https://www.cs.utexas.edu/~pavlakos/hamer/data/hamer_demo_data.tar.gz) | ~6GB |
+| `checkpoints/deca/deca_model.tar` | [DECA's official repo](https://github.com/yfeng95/DECA) (Google Drive) | ~414MB |
+| `checkpoints/mica/mica.tar` | [MICA's official repo](https://github.com/Zielon/MICA) (Google Drive) | ~480MB |
+| `checkpoints/face_landmarker.task` | [storage.googleapis.com/mediapipe-models](https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task) | ~4MB |
+| `body_models/flame/flame_static_embedding.pkl` | [github.com/soubhiksanyal/RingNet](https://github.com/soubhiksanyal/RingNet/raw/master/flame_model/flame_static_embedding.pkl) | ~4KB |
 
 The ~6GB `hamer_demo_data.tar.gz` download is temporary and can be deleted after checkpoint conversion. Convert it to the smaller ~2.6GB checkpoint using the following script:
 
@@ -62,7 +69,24 @@ The ~6GB `hamer_demo_data.tar.gz` download is temporary and can be deleted after
 pixi run -e main python scripts/convert_hamer_checkpoint.py path/to/hamer_demo_data.tar.gz
 ```
 
+Similarly, once `body_models/flame/generic_model.pkl` is in place (step 3 above), convert it to the `.npz` file the pipeline actually reads using this script:
+
+```bash
+pixi run -e flame-convert python scripts/convert_flame_model.py
+```
+
+This writes `body_models/flame/FLAME_NEUTRAL.npz`, using a separate `flame-convert` pixi environment (Python 3.10) rather than `main` for reasons listed in "Pixi Environment Details" above.
+
+DECA and MICA, if manually downloaded, need to be converted to `.safetensors` files located in the `/checkpoints` directory.
+
+```bash
+pixi run -e main python scripts/convert_deca_checkpoint.py checkpoints/deca/deca_model.tar
+pixi run -e main python scripts/convert_mica_checkpoint.py checkpoints/mica/mica.tar
+```
+
 There is an additional ~1.3GB Depth-Anything-3 checkpoint which is automatically downloaded when [stage 3]((#stage-3-estimate-depth)) runs for the first time.
+
+All of the above is handled automatically by running `download_checkpoints.sh`
 </details>
 
 ## Quick Start
@@ -108,6 +132,7 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--anchor-frame-override` | No | auto-selected | Forces a specific frame index as the "anchor" frame instead of letting stage 1 pick the frame with the clearest view of the object. |
 | `--start-on-stage` | No | runs every implemented stage | Starts the run on the given stage number, inclusive -- e.g. `4` starts the run on stage 4. |
 | `--stop-after-stage` | No | runs every implemented stage | Stops after the given stage number, inclusive -- e.g. `5` runs stages 0-5 and stops before stage 6. Can be combined with `--start-on-stage` to only run a range, and can be combined with `--force-all` to force-rerun a range. |
+| `--skip-face-capture` | No | off (face capture runs by default) | Disables stage 9 (face capture) entirely -- no `face_params.npz`/`face_motion.npz`. See [stage 9](#stage-9-capture-face) below. |
 | `--render-previews` | No | off | Enables every `--render-*-preview` flag below at once. |
 | `--render-mask-previews` | No | off | Stage 1 also writes black/white JPEG mask previews for visual spot-checking. See [stage 1](#stage-1-mask-and-track) below. |
 | `--render-motion-preview` | No | off | Stage 2 also writes an AMASS `.npz` importable into Blender for visual spot-checking. See [stage 2](#stage-2-estimate-human-motion) below. |
@@ -139,6 +164,7 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 6. Align scene scale | `stage_6_align_scene_scale` | `depth/anchor_depth.npy` <br> `motion/human_motion.pt` <br> `masks/human.pt` <br> `masks/object.pt` (optional) | `scale/scene_scale.json` <br> `scale/object_shape.json` (if an object was tracked) <br> `scale/scene_preview.ply` (optional) |
 | 7. Annotate contacts | `stage_7_annotate_contacts` | `retarget/retargeted_motion.pt` <br> `masks/object.pt` | `contacts/contact_events.json` <br> `contacts/contacts_preview/*.jpg` (optional) |
 | 8. Optimize human-object interaction | `stage_8_optimize_hoi` | `contacts/contact_events.json` <br> `scale/object_shape.json` <br> `scale/scene_scale.json` <br> `retarget/retargeted_motion.pt` | `hoi/object_pose.pt` <br> `hoi/object_pose.npz` |
+| 9. Face capture | `stage_9_capture_face` | `frames/*.jpg` <br> `masks/human.pt` | `face/face_params.npz` (raw DECA/MICA/MediaPipe output) <br> `face/face_motion.npz` (fitted FLAME parameters) |
 | 10. Export animation | `stage_10_export` | `retarget/retargeted_motion.npz` <br> `scale/object_shape.json` (if an object was tracked) <br> `hoi/object_pose.npz` (if an object was tracked) | `output.blend` |
 
 </details>

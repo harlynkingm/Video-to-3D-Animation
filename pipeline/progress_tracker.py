@@ -48,7 +48,7 @@ class StageName(enum.StrEnum):
     STAGE_6B_SAMPLE_OBJECT_SHAPE = "sample_object_shape", "stage 6: detect object shape", 6
     STAGE_7_ANNOTATE_CONTACTS = "annotate_contacts", "stage 7: detect object interactions", 7
     STAGE_8_OPTIMIZE_HOI = "optimize_hoi", "stage 8: optimize object interactions", 8
-    STAGE_9_CAPTURE_FACE = "capture_face", "stage 9: capture face", 9
+    STAGE_9_CAPTURE_FACE = "capture_face", "stage 9: face capture", 9
     STAGE_10_EXPORT = "export", "stage 10: export animation", 10
     STAGE_10B_ALIGN_BONES = "align_bones", "stage 10: align bones for export", 10
     STAGE_10C_CONTINUITY = "continuity_fix", "stage 10: clean up motion and rotation continuity", 10
@@ -99,6 +99,7 @@ def cli_field(
     help: str = "",
     required: bool = False,
     bool_flag: bool = False,
+    is_render_preview: bool = True,
     value_type: Callable[[str], Any] = str,
     choices: list[str] | None = None,
     parse: Callable[[str], Any] | None = None,
@@ -115,8 +116,8 @@ def cli_field(
 
     `bool_flag=True` fields (`RunInput`'s `--render-*-preview` flags) double
     as `--render-previews`-shorthand members automatically in
-    `run_input_from_args` -- every current boolean field is a preview flag,
-    so there's no separate marker for that.
+    `run_input_from_args`/`apply_run_input_overrides`. `is_render_preview=False`
+    excludes a boolean field from that sweep
 
     `parse`, if given, converts the raw parsed string into the field's real
     type (e.g. `ObjectShapeHint`). It's applied by `build_dataclass_from_args`/
@@ -126,6 +127,7 @@ def cli_field(
     """
     metadata = {"cli": {
         "flag": flag, "short_flag": short_flag, "help": help, "required": required, "bool_flag": bool_flag,
+        "is_render_preview": is_render_preview,
         "value_type": value_type, "choices": choices, "parse": parse, "metavar": metavar,
     }}
     if default is MISSING:
@@ -468,7 +470,7 @@ def run_input_from_args(args: argparse.Namespace) -> RunInput:
     if args.render_previews:
         for f in fields(RunInput):
             cli = f.metadata.get("cli")
-            if cli and cli["bool_flag"]:
+            if cli and cli["bool_flag"] and cli["is_render_preview"]:
                 setattr(run_input, f.name, True)
     return run_input
 
@@ -529,8 +531,9 @@ def apply_run_input_overrides(existing: RunInput, args: argparse.Namespace) -> R
             continue
         value = resolve_cli_value(f, args)
         if cli["bool_flag"]:
-            if render_all or value is not None:
-                overrides[f.name] = bool(render_all or value)
+            forced_by_render_all = render_all and cli["is_render_preview"]
+            if forced_by_render_all or value is not None:
+                overrides[f.name] = bool(forced_by_render_all or value)
         elif value is not None:
             overrides[f.name] = value
 

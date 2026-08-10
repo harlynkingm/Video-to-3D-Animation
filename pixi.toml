@@ -111,6 +111,14 @@ addict = "*"
 # of via the CLI by hand. Lives in the same `main` env as everything else so
 # it shells out to `pipeline.run` under the exact same interpreter.
 PySide6 = ">=6.8"
+# Face-capture stage's landmark detector (FaceLandmarker task API, 478 3D
+# landmarks). Its own declared dependency is opencv-contrib-python, not
+# opencv-python-headless like the rest of this env -- confirmed to resolve
+# and coexist without a version conflict (pip/uv just installs both dists;
+# whichever's cv2/ files land last in site-packages is what actually runs),
+# verified with the full existing test suite to rule out a silent regression
+# from that swap.
+mediapipe = "*"
 
 [feature.main.pypi-dependencies.torch]
 version = "==2.8.*"
@@ -131,4 +139,34 @@ numpy = ">=2.1"
 
 [environments.main]
 features = ["main"]
+no-default-feature = true
+
+# flame-convert: a one-time-use environment, never imported by pipeline code.
+# Its only job is scripts/convert_flame_model.py, which turns the officially-
+# released FLAME 2020 model (a chumpy-pickled .pkl -- chumpy is the original
+# authors' own now-unmaintained numpy wrapper library) into a plain .npz that
+# `smplx`'s own native FLAME loader reads directly, so chumpy never needs to
+# be anywhere near the actual pipeline's `main`/`export` environments. chumpy
+# 0.70 itself needs numpy <1.24 (it imports numpy's `bool`/`int` aliases,
+# removed in 1.24) and Python <=3.10 (it calls `inspect.getargspec`, removed
+# in 3.11) to even import, and its own setup.py does a bare `import pip` at
+# build time -- incompatible with an isolated build venv, hence both `pip`
+# declared as a real conda dependency here (so that `import pip` succeeds)
+# and `no-build-isolation` below (so the build runs against this env's own
+# site-packages instead of a pip-less throwaway one).
+[feature.flame-convert.dependencies]
+python = "3.10.*"
+numpy = "1.23.*"
+pip = "*"
+setuptools = "*"
+wheel = "*"
+
+[feature.flame-convert.pypi-dependencies]
+chumpy = "==0.70"
+
+[feature.flame-convert.pypi-options]
+no-build-isolation = ["chumpy"]
+
+[environments.flame-convert]
+features = ["flame-convert"]
 no-default-feature = true

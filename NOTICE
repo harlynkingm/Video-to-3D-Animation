@@ -24,3 +24,35 @@ The ViT feature-extractor backbone GVHMR builds on (HMR2 / 4D-Humans,
 https://github.com/shubham-goel/4D-Humans) is MIT-licensed, and ViTPose
 (https://github.com/ViTAE-Transformer/ViTPose) is Apache 2.0 — neither
 carries a use restriction of its own.
+
+## Face capture (DECA / MICA / FLAME)
+
+DECA (https://github.com/yfeng95/DECA) and MICA (https://github.com/Zielon/MICA)
+checkpoint weights, and the FLAME 2020 body model itself
+(https://flame.is.tue.mpg.de) — not the newer FLAME 2023 "Open Model", which is
+CC-BY-4.0 and permits commercial use — are all under MPI's standard model
+license: non-commercial scientific research, education, or artistic projects
+only; no pornographic, defamatory, or surveillance use regardless of
+commercial status; single-user, non-transferable; attribution required in any
+publication. Treat the face-capture stage, and anything built on its output,
+as research/personal use only, same as GVHMR above, unless you have separately
+obtained commercial rights (DECA: ps-license@tue.mpg.de, MICA:
+justus.thies@tuebingen.mpg.de, FLAME: ps-license@tue.mpg.de).
+
+FLAME's static landmark embedding (body_models/flame/flame_static_embedding.pkl,
+sourced from https://github.com/soubhiksanyal/RingNet) is separately MIT
+licensed — fixed index/barycentric-coordinate metadata, not model weights, so
+it carries none of the restrictions above.
+
+MICA's identity backbone is a clean-room port of IResNet-100, the ArcFace
+architecture from the `insightface` project (MIT,
+https://github.com/deepinsight/insightface) — no restriction of its own.
+The MediaPipe<->Dlib-68 landmark index correspondence
+(pipeline/adapters/face_landmarks/mp2dlib.py) is ported from Peizhi Yan's
+`Mediapipe_2_Dlib_Landmarks` (https://github.com/PeizhiYan/Mediapipe_2_Dlib_Landmarks),
+also used by `flame-head-tracker`; it's fixed index data, not a model.
+
+## MediaPipe FaceLandmarker
+
+checkpoints/face_landmarker.task is Google's own model, Apache 2.0
+(https://github.com/google-ai-edge/mediapipe), no use restriction.
