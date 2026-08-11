@@ -315,3 +315,23 @@ def test_pp_bridge_low_confidence_root_motion_is_a_noop_when_nothing_is_flagged(
     assert not label.any()
     for key in params:
         assert torch.allclose(bridged[key], params[key])
+
+
+def test_pp_bridge_low_confidence_root_motion_handles_a_never_confident_clip():
+    """Regression guard for a real crash: a shoulders-up clip framed for
+    face capture gives GVHMR's whole-body pose network almost no
+    real body to see. Confidence never once crosses POSE_CONF_SEED across
+    the entire clip, so `valid` is all-False for that person and the old
+    `fill_invalid(transl_np, valid[b])` call raised (`np.interp` on an empty
+    sample-point array). There's no reliable frame to bridge from or to, so
+    the whole clip should come back marked unreliable with transl/
+    global_orient left exactly as GVHMR produced them"""
+    n_frames = 8
+    params = _framewise_pose_params(n_frames)
+    confidence = torch.full((1, n_frames), POSE_CONF_SEED - 0.1)
+
+    bridged, label = pp_bridge_low_confidence_root_motion(params, confidence)
+
+    assert label.all()
+    assert torch.allclose(bridged["transl"], params["transl"])
+    assert torch.allclose(bridged["global_orient"], params["global_orient"])
