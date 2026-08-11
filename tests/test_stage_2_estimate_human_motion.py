@@ -88,10 +88,9 @@ def test_incam_translation_raw_is_saved_separately_from_the_corrected_one(stage_
 
 
 def test_root_motion_unreliable_mask_has_correct_shape_and_dtype(stage_2_result):
-    # Real, well-tracked test clip -- expect nothing flagged (see the real-clip
-    # confidence sweeps in docs/ARCHITECTURE.md's own low-confidence-bridge
-    # section), but the field itself must exist with the right shape/dtype
-    # regardless, since stage 5/10 both read it unconditionally.
+    # Real, well-tracked test clip -- expect nothing flagged, but the field
+    # itself must exist with the right shape/dtype regardless, since stage
+    # 5/10 both read it unconditionally.
     result = _load_motion(stage_2_result)
     mask = result[KEY_ROOT_MOTION_UNRELIABLE]
     assert mask.shape == (TEST_VIDEO_FRAME_COUNT,)

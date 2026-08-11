@@ -299,13 +299,12 @@ def _bone_keyframed_frames(action, bone_name: str) -> set[int]:
 
 @pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
 def test_run_deletes_pelvis_keyframes_at_unreliable_root_motion_frames(tmp_path):
-    """The user's own explicit request: rather than exporting stage 2's
-    bridged/interpolated root numbers as real keyframes, delete the pelvis
-    bone's own keyframes at those frames entirely, so Blender's own curve
-    interpolation bridges the resulting gap live -- exactly mirroring how
-    the user had already fixed an earlier export by hand (deleting the
-    pelvis bone's keyframes in Blender and letting it interpolate). Every
-    other bone must be completely unaffected."""
+    """Rather than exporting stage 2's bridged/interpolated root numbers as
+    real keyframes, delete the pelvis bone's own keyframes at those frames
+    entirely, so Blender's own curve interpolation bridges the resulting gap
+    live -- the same fix a Blender artist would apply by hand (deleting the
+    pelvis bone's keyframes and letting it interpolate). Every other bone
+    must be completely unaffected."""
     import bpy
 
     n_frames = 10

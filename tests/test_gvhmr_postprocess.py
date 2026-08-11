@@ -255,8 +255,8 @@ def test_pp_bridge_low_confidence_root_motion_interpolates_an_interior_run():
     expected_orient = Rotation.from_quat(quats).as_rotvec()
     assert np.allclose(bridged["global_orient"][0].numpy(), expected_orient, atol=1e-6)
 
-    # body_pose: the user's own explicit request -- never touched, even
-    # during the flagged run.
+    # body_pose is out of scope for root-motion bridging by design -- never
+    # touched, even during the flagged run.
     assert torch.allclose(bridged["body_pose"], params["body_pose"])
 
 

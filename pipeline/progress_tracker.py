@@ -159,7 +159,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     # via annotate_contacts -> retarget_hands. capture_face IS listed
     # directly, though: it's a DAG sibling of optimize_hoi (nothing upstream
     # of export transitively depends on it), and export now reads its
-    # face_motion.npz output (jaw pose + bridge-1-mapped expression) whenever
+    # face_motion.npz output (jaw pose + SMPL-X-mapped expression) whenever
     # face capture wasn't skipped.
     StageName.STAGE_10_EXPORT: [
         StageName.STAGE_8_OPTIMIZE_HOI,

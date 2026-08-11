@@ -298,7 +298,7 @@ def test_head_top_event_attaches_to_the_real_head_joint_not_its_own_mesh_vertex_
 
 
 def test_held_before_the_first_event_matches_its_own_reference_pose():
-    """Regression test for a real bug the user found reviewing a real
+    """Regression test for a real bug found reviewing a real
     export: an earlier design measured a separate "early resting position"
     for the period before the first event, independent of that event's own
     reference measurement -- two independent depth reads of the same
