@@ -16,7 +16,10 @@ from pipeline.algorithms.motion_smoothing import (
     cap_long_gaps_with_hold,
     decimate_rotation_sequence,
     decimate_translation_sequence,
+    fill_invalid,
     one_euro_filter_rotation_sequence,
+    one_euro_filter_sequence,
+    smooth_position_sequence,
     smooth_rotation_sequence,
     smooth_translation_sequence,
 )
@@ -93,6 +96,36 @@ def test_interior_gap_interpolates_between_endpoints():
     assert -0.9 < mid[0] < 0.9
     assert mid[0] != pytest.approx(1.0, abs=0.05)
     assert mid[0] != pytest.approx(-1.0, abs=0.05)
+
+
+def test_position_smoothing_reduces_jitter_and_preserves_motion():
+    rng = np.random.default_rng(3)
+    n = 60
+    t = np.linspace(0, 1, n)
+    # Simulate 2D landmarks: (T, 51, 2), a slow sweep plus per-point jitter.
+    clean = np.zeros((n, 51, 2))
+    clean[:, :, 0] = 20.0 * np.sin(2 * np.pi * t)[:, None]
+    noisy = clean + rng.normal(0, 2.0, clean.shape)
+
+    smoothed = smooth_position_sequence(noisy, window=11)
+
+    assert smoothed.shape == noisy.shape
+    assert _jitter_energy(smoothed) < 0.3 * _jitter_energy(noisy)
+    assert np.abs(smoothed - clean).mean() < np.abs(noisy - clean).mean()
+
+
+def test_position_smoothing_gap_interpolates_between_endpoints():
+    n = 40
+    seq = np.zeros((n, 51, 2))
+    seq[:15] = 10.0
+    seq[25:] = -10.0
+    valid = np.ones(n, bool)
+    valid[15:25] = False
+
+    smoothed = smooth_position_sequence(seq, window=5, valid=valid)
+
+    mid = smoothed[20, 0, 0]
+    assert -9.0 < mid < 9.0
 
 
 def test_trailing_gap_freezes_at_last_known_pose():
@@ -286,6 +319,32 @@ def test_short_sequence_is_returned_unchanged_by_decimate():
     assert np.array_equal(decimate_rotation_sequence(seq, tolerance_deg=2.0), seq)
 
 
+def test_fill_invalid_zero_valid_frames_returns_unchanged():
+    """Regression guard for a real crash: a shoulders-up clip framed for
+    face capture left GVHMR's own whole-body pose confidence at
+    zero on every single frame, so `pp_bridge_low_confidence_root_motion`
+    called `fill_invalid` with an all-False `valid` -- `np.interp` raises on
+    an empty sample-point array in that case. There is no single real value
+    left to hold at either, so the honest degenerate case is to return the
+    input unchanged rather than raise or fabricate a default."""
+    values = np.random.default_rng(0).normal(size=(20, 3))
+    valid = np.zeros(20, dtype=bool)
+    assert np.array_equal(fill_invalid(values, valid), values)
+
+
+def test_fill_invalid_interpolates_interior_and_holds_boundary():
+    values = np.zeros((10, 1))
+    values[0] = 1.0
+    values[9] = 5.0
+    valid = np.zeros(10, dtype=bool)
+    valid[0] = valid[9] = True
+
+    filled = fill_invalid(values, valid)
+    assert filled[0, 0] == 1.0
+    assert filled[9, 0] == 5.0
+    assert filled[4, 0] == pytest.approx(1.0 + (5.0 - 1.0) * 4 / 9)
+
+
 def test_decimate_zero_valid_frames_returns_unchanged():
     """Regression guard: a hand whose wrist is rejected on every single frame
     (e.g. never once biomechanically plausible) previously crashed here --
@@ -473,5 +532,56 @@ def test_one_euro_occlusion_gap_uses_same_fill_contract():
     valid[15:25] = False
 
     filtered = one_euro_filter_rotation_sequence(rest, fps=30.0, min_cutoff_hz=0.3, beta=0.3, valid=valid)
+    mid = filtered[20]
+    assert -0.9 < mid[0] < 0.9  # interpolated, not frozen at either endpoint
+
+
+def test_one_euro_linear_collapses_noise_on_a_stationary_signal():
+    """Linear counterpart to `one_euro_filter_rotation_sequence`'s own noise
+    test -- a static true value plus per-frame noise (e.g. FLAME `expression`
+    coefficients while the face is at rest) should be smoothed hard."""
+    rng = np.random.default_rng(7)
+    n = 200
+    base = np.full(5, 0.3)
+    seq = base + rng.normal(0, 0.15, (n, 5))
+
+    filtered = one_euro_filter_sequence(seq, fps=30.0, min_cutoff_hz=0.3, beta=0.3)
+
+    assert _jitter_energy(filtered) < 0.1 * _jitter_energy(seq)
+
+
+def test_one_euro_linear_tracks_real_transient_with_low_lag():
+    """A real, fast, brief transient (a blink-shaped dip in one channel) must
+    come through close to its true depth, not be smeared flat the way a
+    heavier fixed-window filter would -- the whole reason this replaced a
+    single global smoothing weight for FLAME's jaw/expression output."""
+    n = 60
+    seq = np.zeros((n, 3))
+    seq[:25, 0] = 0.0
+    seq[25:30, 0] = -2.0  # a brief, real, fast dip (blink-like)
+    seq[30:, 0] = 0.0
+
+    filtered = one_euro_filter_sequence(seq, fps=30.0, min_cutoff_hz=0.3, beta=4.0)
+
+    # The dip's own minimum should stay close to the true -2.0 depth, not be
+    # flattened toward 0 the way a heavy fixed-strength smoother would.
+    assert filtered[:, 0].min() < -1.5
+
+
+def test_one_euro_linear_constant_input_stays_constant():
+    const = np.tile([0.5, -0.3, 1.2], (40, 1))
+    filtered = one_euro_filter_sequence(const, fps=30.0, min_cutoff_hz=0.3, beta=0.3)
+    assert np.allclose(filtered, const, atol=1e-6)
+
+
+def test_one_euro_linear_occlusion_gap_uses_same_fill_contract():
+    n = 40
+    rest = np.zeros((n, 3))
+    rest[:15] = 1.0
+    rest[25:] = -1.0
+    valid = np.ones(n, bool)
+    valid[15:25] = False
+
+    filtered = one_euro_filter_sequence(rest, fps=30.0, min_cutoff_hz=0.3, beta=0.3, valid=valid)
     mid = filtered[20]
     assert -0.9 < mid[0] < 0.9  # interpolated, not frozen at either endpoint

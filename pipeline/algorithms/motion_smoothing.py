@@ -72,7 +72,14 @@ def fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     to interpolate toward, so `np.interp` holds it constant at the one real
     value it does have (`left`/`right` default to `fp[0]`/`fp[-1]`) -- a freeze,
     not a fabricated guess. This is the caller's actual occlusion contract, not
-    just an internal filtering detail, so downstream code depends on it."""
+    just an internal filtering detail, so downstream code depends on it.
+
+    Degenerate case, the same contract taken to its limit: if `valid` is False
+    for the *entire* clip, there is no single real value left to hold at
+    either, so `values` is returned unchanged rather than raising (`np.interp`
+    itself errors on an empty sample-point array) or fabricating a default."""
+    if not valid.any():
+        return values.copy()
     frame_idx = np.arange(values.shape[0])
     valid_idx = frame_idx[valid]
     filled = values.copy()
@@ -303,6 +310,64 @@ def one_euro_filter_rotation_sequence(
     return out.reshape(original_shape).astype(axis_angle.dtype, copy=False)
 
 
+def one_euro_filter_sequence(
+    values: np.ndarray,
+    fps: float,
+    min_cutoff_hz: float,
+    beta: float,
+    dcutoff_hz: float = DEFAULT_ONE_EURO_DCUTOFF_HZ,
+    valid: np.ndarray | None = None,
+) -> np.ndarray:
+    """Linear-vector counterpart to `one_euro_filter_rotation_sequence`, for
+    per-frame quantities that aren't rotations (e.g. FLAME's PCA `expression`
+    coefficients) -- same adaptive heavy-at-rest/loose-while-moving behavior,
+    exponential blending in place of slerp.
+
+    Shares the parent filter's own reasoning for using one scalar speed to
+    drive every channel at once (`||smoothed velocity vector||`, not a
+    per-channel adaptive cutoff): filtering each channel independently would
+    let e.g. one PCA component's own noise floor pick a different cutoff than
+    its neighbors on the same frame, reintroducing the per-component
+    distortion the shared-speed design exists to avoid.
+
+    Args:
+        values: (T, C).
+        fps: sample rate (frames/sec). min_cutoff_hz: cutoff at zero speed
+            (lower = smoother at rest). beta: how fast the cutoff rises with
+            speed. dcutoff_hz: fixed cutoff for the speed estimate itself.
+        valid: optional (T,) bool, gap-filled first (`fill_invalid`).
+
+    Returns the same shape/dtype, unchanged if fewer than 2 (valid) frames.
+    """
+    values = np.asarray(values)
+    n_frames = values.shape[0]
+    if n_frames < 2:
+        return values
+
+    if valid is not None:
+        valid = np.asarray(valid, dtype=bool)
+        if int(valid.sum()) < 2:
+            return values
+        values = fill_invalid(values, valid)
+
+    dt = 1.0 / fps
+    speed_alpha = _one_euro_alpha(dcutoff_hz, dt)
+
+    velocity = (values[1:] - values[:-1]) / dt  # (T-1, C)
+
+    filtered = np.empty_like(values)
+    filtered[0] = values[0]
+    smoothed_velocity = np.zeros(values.shape[1])
+    for t in range(1, n_frames):
+        smoothed_velocity = speed_alpha * velocity[t - 1] + (1.0 - speed_alpha) * smoothed_velocity
+        speed = float(np.linalg.norm(smoothed_velocity))
+
+        value_alpha = _one_euro_alpha(min_cutoff_hz + beta * speed, dt)
+        filtered[t] = value_alpha * values[t] + (1.0 - value_alpha) * filtered[t - 1]
+
+    return filtered.astype(values.dtype, copy=False)
+
+
 def _rdp_knot_indices(n_frames: int, tol: float, fit, error) -> np.ndarray:
     """Ramer-Douglas-Peucker knot selection, generalized over what "straight-line
     fit" and "deviation" mean -- the same recursive tree shared by both rotation
@@ -456,6 +521,44 @@ def decimate_translation_sequence(transl: np.ndarray, tolerance_m: float) -> np.
     knot_mask = np.zeros(n_frames, dtype=bool)
     knot_mask[knots] = True
     return fill_invalid(transl, knot_mask).astype(transl.dtype, copy=False)
+
+
+def smooth_position_sequence(
+    positions: np.ndarray, window: int, polyorder: int = DEFAULT_POLYORDER, valid: np.ndarray | None = None
+) -> np.ndarray:
+    """Smooth a per-frame Euclidean/pixel-position sequence
+    with a centered Savitzky-Golay filter -- no quaternion
+    reprojection needed afterward, unlike `smooth_rotation_sequence`, so this
+    is a single vectorized `savgol_filter` call over all flattened trailing
+    dims at once. Shares this module's gap-handling (`fill_invalid`) and
+    window-clamping (`_odd_window`) with the rotation/translation smoothers.
+
+    positions: (T, ...), trailing dims flattened for filtering and restored
+    on return. valid: optional (T,) bool, gap-filled before filtering exactly
+    like `smooth_rotation_sequence` (interior gaps interpolated, leading/
+    trailing gaps held).
+
+    Returns the same shape/dtype, unchanged if the clip is too short or
+    `valid` marks too few real frames to filter meaningfully.
+    """
+    positions = np.asarray(positions)
+    original_shape = positions.shape
+    n_frames = original_shape[0]
+    flat = positions.reshape(n_frames, -1)
+
+    w = _odd_window(window, n_frames)
+    if w is None:
+        return positions
+    poly = min(polyorder, w - 1)
+
+    if valid is not None:
+        valid = np.asarray(valid, dtype=bool)
+        if int(valid.sum()) < max(3, poly + 1):
+            return positions
+        flat = fill_invalid(flat, valid)
+
+    smoothed = savgol_filter(flat, w, poly, axis=0)
+    return smoothed.reshape(original_shape).astype(positions.dtype, copy=False)
 
 
 def smooth_translation_sequence(transl: np.ndarray, cutoff: float, order: int = DEFAULT_BUTTER_ORDER) -> np.ndarray:
