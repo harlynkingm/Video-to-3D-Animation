@@ -38,7 +38,7 @@ cmd = "pixi run -e main python -m ui"
 # see -- CLI entrypoints invoked via subprocess, dataclass fields read through
 # `dataclasses.fields()`, etc.) so re-runs don't re-flag them.
 [tasks.deadcode]
-cmd = "vulture pipeline/ tests/ scripts/ .vulture_whitelist.py --min-confidence 70"
+cmd = "pixi run -e main python -m vulture pipeline/ tests/ scripts/ .vulture_whitelist.py --min-confidence 70"
 
 [dependencies]
 
