@@ -2,7 +2,7 @@
 
 Despite the `.tar` extension (a naming convention inherited from old PyTorch
 training scripts), `deca_model.tar` is a raw `torch.save()` pickle, not an
-actual tar archive -- confirmed by its magic bytes (`\\x80\\x02`, a pickle
+actual tar archive, confirmed by its magic bytes (`\\x80\\x02`, a pickle
 protocol header) and by `torch.load` reading it directly with no extraction
 step. Its top-level dict holds `E_flame` (the coarse encoder this project
 uses), `E_detail`/`D_detail` (DECA's detail-displacement branch, unused here),

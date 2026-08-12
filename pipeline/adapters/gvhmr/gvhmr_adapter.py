@@ -9,7 +9,7 @@ Per-frame: mask -> bbox (`extract_bbox_from_numpy_mask`) -> crop -> ViTPose
 keypoints + HMR2 image feature. Whole-clip: those sequences feed
 `GVHMRTemporalTransformer` once, decoded by `EnDecoder`, then
 `pp_static_joint_cam`/`process_ik` clean up the "global" result, and
-`pp_static_joint_incam`/`pp_bridge_low_confidence_root_motion` clean up "incam" -- the
+`pp_static_joint_incam`/`pp_bridge_low_confidence_root_motion` clean up "incam", the
 first three mirror `comfyui-motioncapture/nodes/gvhmr/model.py`'s
 `Pipeline.forward`/`DemoPL.predict` call sequence; the incam-side passes are
 this project's own addition (see `gvhmr_postprocess.py`'s module docstring).
@@ -19,7 +19,7 @@ tripod-mounted, non-moving camera (see this repo's locked scope decisions), so
 this adapter never runs GVHMR's alternative moving-camera path (DPVO visual
 odometry). Two consequences, both confirmed against the real reference:
   - `cam_angvel` (the raw per-frame relative camera rotation) is the fixed
-    constant `[1, 0, 0, 0, 1, 0]` for every frame -- confirmed by tracing
+    constant `[1, 0, 0, 0, 1, 0]` for every frame, confirmed by tracing
     `inference_node.py`'s static-camera branch (`R_w2c = torch.eye(3)` always)
     through `geo_transform.compute_cam_angvel`, whose formula collapses to
     exactly this 6D-identity-rotation constant when every `R_w2c` is the same.
@@ -30,7 +30,7 @@ odometry). Two consequences, both confirmed against the real reference:
     `cam_angvel` values. With `cam_angvel` constant across frames, that
     rotation is provably the identity for every frame (verified numerically
     against the real function while writing this file, on random synthetic
-    pose data) -- so building `pred_smpl_params_global` reduces to a bare
+    pose data), so building `pred_smpl_params_global` reduces to a bare
     `global_orient_gv` roundtrip plus `rollout_local_transl_vel` +
     `get_tgtcoord_rootparam`, both of which already have their own ported,
     verified functions in `gvhmr_translation_math.py`.
@@ -73,16 +73,16 @@ GVHMR_CHECKPOINT = CHECKPOINT_DIR / "gvhmr.safetensors"
 # See this module's docstring: the only `cam_angvel` value a static camera ever produces.
 CAM_ANGVEL_RAW = torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
 # GVHMR's own checkpoint-independent normalization stats for `cam_angvel`
-# (`stats.py`'s `cam_angvel["manual"]` -- confirmed as the table actually used
+# (`stats.py`'s `cam_angvel["manual"]`, confirmed as the table actually used
 # at runtime via `Pipeline.__init__`'s `normalize_cam_angvel=True` path, not
 # its sibling `"emdb_none_test"` entry, which nothing calls).
 CAM_ANGVEL_MEAN = torch.tensor([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
 CAM_ANGVEL_STD = torch.tensor([0.001, 0.1, 0.1, 0.1, 0.001, 0.1])
 
 # HMR2's raw checkpoint bundles unrelated training-only keys (discriminator, an SMPL FK
-# loss layer) alongside the backbone/head this port actually implements -- see _load_hmr2_state.
+# loss layer) alongside the backbone/head this port actually implements, see _load_hmr2_state.
 _HMR2_KEEP_PREFIXES = ("backbone", "smpl_head")
-# The GVHMR checkpoint nests every weight under this prefix -- see _load_gvhmr_transformer_state.
+# The GVHMR checkpoint nests every weight under this prefix, see _load_gvhmr_transformer_state.
 _GVHMR_TRANSFORMER_KEY_PREFIX = "pipeline.denoiser3d."
 
 # GVHMRTemporalTransformer.forward's own output dict keys (gvhmr_transformer.py).
@@ -102,13 +102,13 @@ KEY_TRANSL = "transl"
 # infer()'s top-level output dict keys.
 KEY_PRED_SMPL_PARAMS_INCAM = "pred_smpl_params_incam"
 KEY_PRED_SMPL_PARAMS_GLOBAL = "pred_smpl_params_global"
-# incam's own translation *before* pp_static_joint_incam's drift-lock correction
-# -- kept only for stage 7's own contact detection (see that stage's module
+# incam's own translation *before* pp_static_joint_incam's drift-lock correction,
+# kept only for stage 7's own contact detection (see that stage's module
 # docstring for why 2D/depth contact matching wants the network's raw estimate,
 # not a temporally-corrected one); every other consumer of incam motion uses
 # the corrected `pred_smpl_params_incam[KEY_TRANSL]` as normal.
 KEY_TRANSL_INCAM_RAW = "transl_incam_raw"
-# (N,) bool -- True where pp_bridge_low_confidence_root_motion judged the
+# (N,) bool, True where pp_bridge_low_confidence_root_motion judged the
 # root's own tracked motion unreliable and bridged it. Stage 10's export uses
 # this to delete the pelvis bone's real Blender keyframes at these frames
 # (see that function's own docstring for why); every stage in between still
@@ -118,7 +118,7 @@ KEY_ROOT_MOTION_UNRELIABLE = "root_motion_unreliable"
 
 def _load_direct_state(path: Path) -> dict[str, torch.Tensor]:
     """ViTPose's checkpoint already uses this project's exact module names
-    (`backbone.*`/`keypoint_head.*`) with no unrelated keys mixed in -- no
+    (`backbone.*`/`keypoint_head.*`) with no unrelated keys mixed in, no
     filtering or prefix-stripping needed."""
     with safe_open(str(path), framework="pt", device="cpu") as f:
         return {key: f.get_tensor(key) for key in f.keys()}
@@ -127,7 +127,7 @@ def _load_direct_state(path: Path) -> dict[str, torch.Tensor]:
 def _load_hmr2_state(path: Path) -> dict[str, torch.Tensor]:
     """HMR2's raw checkpoint bundles unrelated training-only `discriminator.*`
     and `smpl.*` keys alongside the `backbone.*`/`smpl_head.*` this port
-    actually implements -- filtered out here, matching the reference's own
+    actually implements, filtered out here, matching the reference's own
     `load_hmr2()` behavior."""
     state = {}
     with safe_open(str(path), framework="pt", device="cpu") as f:
@@ -158,7 +158,7 @@ def extract_bbox_from_numpy_mask(mask: np.ndarray) -> tuple[int, int, int, int] 
     **The returned coordinates are in the mask's own resolution, not
     necessarily the source video's.** SAM 3.1 always produces masks at its
     own fixed working resolution (1008x1008, non-aspect-preserving stretch)
-    regardless of the input video's actual resolution -- callers cropping
+    regardless of the input video's actual resolution, callers cropping
     from the *original* frame or feeding this into camera-intrinsics math
     (which is built from the original resolution) must rescale this bbox
     first. See `_rescale_bbox_xywh` below.
@@ -175,7 +175,7 @@ def _rescale_bbox_xywh(
 ) -> tuple[int, int, int, int]:
     """Rescale a [x, y, w, h] bbox from one pixel-coordinate space to another
     (independent x/y scale factors, matching SAM 3.1's own non-aspect-preserving
-    stretch to its fixed working resolution -- see `extract_bbox_from_numpy_mask`).
+    stretch to its fixed working resolution, see `extract_bbox_from_numpy_mask`).
     """
     from_h, from_w = from_hw
     to_h, to_w = to_hw
@@ -186,7 +186,7 @@ def _rescale_bbox_xywh(
 
 class GVHMRAdapter:
     """`load()` once per stage run, `infer()` for the whole clip, `unload()`
-    before the process exits -- same VRAM-budget reasoning as `Sam31Adapter`.
+    before the process exits, same VRAM-budget reasoning as `Sam31Adapter`.
     """
 
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
@@ -233,14 +233,14 @@ class GVHMRAdapter:
         """
         Args:
             frame_paths: N per-frame image paths, as extracted by stage 0.
-            masks: (N, H, W) bool -- the human's per-frame tracked mask, already
+            masks: (N, H, W) bool, the human's per-frame tracked mask, already
                 unpacked from stage 1's bit-packed format.
             K_fullimg: (3, 3) float camera intrinsics, constant for this clip
                 (see this module's docstring for why a single K works here).
 
         Returns {"pred_smpl_params_incam": {...}, "pred_smpl_params_global": {...}},
         each a dict of (N, ...) tensors: body_pose (63), betas (10),
-        global_orient (3), transl (3) -- plus top-level KEY_TRANSL_INCAM_RAW
+        global_orient (3), transl (3), plus top-level KEY_TRANSL_INCAM_RAW
         (N, 3) and KEY_ROOT_MOTION_UNRELIABLE (N,) bool, see their own
         comments above.
         """
@@ -264,7 +264,7 @@ class GVHMRAdapter:
                     bbox_xywh = last_bbox_xywh  # briefly-occluded frame: reuse the last known bbox
                 else:
                     # Mask coordinates are in SAM 3.1's fixed working resolution, not this
-                    # frame's actual resolution -- rescale before using them against the
+                    # frame's actual resolution, rescale before using them against the
                     # real frame or camera intrinsics (both in native-resolution pixels).
                     bbox_xywh = _rescale_bbox_xywh(bbox_xywh, mask_hw, frame_rgb.shape[:2])
                 last_bbox_xywh = bbox_xywh
@@ -282,7 +282,7 @@ class GVHMRAdapter:
         bbx_xys_seq = torch.stack(bbx_xys_list).unsqueeze(0)  # (1, N, 3)
         kp2d_seq = torch.stack(kp2d_list).unsqueeze(0).float()  # (1, N, 17, 3)
         # Per-frame body-pose reliability signal for pp_hold_low_confidence_pose,
-        # below -- ViTPose already computes this confidence to decode kp2d's own
+        # below, ViTPose already computes this confidence to decode kp2d's own
         # (x, y); only the 3rd channel is otherwise unused past this point.
         pose_confidence = kp2d_seq[..., BODY_KEYPOINT_INDICES, 2].mean(dim=-1)  # (1, N)
         f_imgseq_seq = torch.stack(f_imgseq_list).unsqueeze(0)  # (1, N, 1024)
@@ -315,7 +315,7 @@ class GVHMRAdapter:
             KEY_TRANSL: compute_transl_full_cam(pred_cam, bbx_xys_seq, K_fullimg_seq),
         }
 
-        # Static-camera simplification of `get_smpl_params_w_Rt_v2` -- see this
+        # Static-camera simplification of `get_smpl_params_w_Rt_v2`, see this
         # module's docstring.
         global_orient_gv = matrix_to_axis_angle(axis_angle_to_matrix(decoded[KEY_GLOBAL_ORIENT_GV]))
         transl_global = rollout_local_transl_vel(decoded[KEY_LOCAL_TRANSL_VEL], global_orient_gv)
@@ -338,26 +338,26 @@ class GVHMRAdapter:
         outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BODY_POSE] = body_pose_ik
 
         # incam is what every stage past this one actually consumes (see
-        # stage_10_export.py's own module docstring) -- pp_static_joint_cam's
+        # stage_10_export.py's own module docstring), pp_static_joint_cam's
         # correction above only ever reaches the vestigial `global` frame, so
         # incam's own translation needs its own equivalent fix. The
         # pre-correction value is kept separately (KEY_TRANSL_INCAM_RAW) for
-        # stage 7 -- see that key's own comment above for why.
+        # stage 7, see that key's own comment above for why.
         transl_incam_raw = outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL]
         outputs[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL] = pp_static_joint_incam(outputs, self.endecoder)
 
         # Last correction: where the 2D detector itself lost track (fast/blurred
         # motion, or a pose unusual enough it can't be tracked at all), bridge
         # the pelvis's own root motion (global_orient/transl) across the bad
-        # stretch instead of showing GVHMR's erratic result there -- the other
+        # stretch instead of showing GVHMR's erratic result there, the other
         # joints (body_pose) are left alone; see the function's own docstring
         # for why. Deliberately applied after every correction above, not
-        # before -- a bridged frame substitutes an already-post-processed root
+        # before, a bridged frame substitutes an already-post-processed root
         # transform, so there's no benefit to (and some risk from) feeding bad
         # frames through the drift-lock/IK passes first. incam only, same scope
-        # as pp_static_joint_incam -- see that function's own docstring for why
+        # as pp_static_joint_incam, see that function's own docstring for why
         # `global` doesn't need the equivalent fix. transl_incam_raw (above) is
-        # captured before this point deliberately -- stage 7 wants the network's
+        # captured before this point deliberately, stage 7 wants the network's
         # true raw estimate, not this bridged one; see that key's own comment.
         outputs[KEY_PRED_SMPL_PARAMS_INCAM], root_motion_unreliable = pp_bridge_low_confidence_root_motion(
             outputs[KEY_PRED_SMPL_PARAMS_INCAM], pose_confidence

@@ -6,10 +6,10 @@ gets closer to the target, without moving the root.
 
 Ported from `comfyui-motioncapture/nodes/motion_utils/ccd_ik.py`. That file
 pulls in a handful of quaternion helpers (`qinv`/`qmul`/`qrot`/`qslerp`/
-`qbetween`) from a separate, much larger `quaternion.py` module -- ported
+`qbetween`) from a separate, much larger `quaternion.py` module, ported
 directly below as private helpers instead, since nothing else in this port
 needs a general-purpose quaternion library. Quaternions here are (w, x, y, z),
-real part first -- the same convention `gvhmr_rotation_math.py` uses, so the
+real part first, the same convention `gvhmr_rotation_math.py` uses, so the
 two mix freely.
 """
 
@@ -108,7 +108,7 @@ class CCD_IK:
 
         # Work on just this chain's joints, re-rooted at the chain's own first
         # joint (its real world transform, so the rest of the skeleton is
-        # unaffected) -- iteration below never touches index 0, so the root
+        # unaffected), iteration below never touches index 0, so the root
         # never moves.
         local_mat = local_mat.clone()[..., kinematic_chain, :, :]
         local_mat[..., 0, :, :] = global_mat[..., kinematic_chain[0], :, :]

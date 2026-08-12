@@ -1,5 +1,5 @@
 """Stage 0 regression test: extracts frames from the small test clip and
-computes camera intrinsics from real (tiny) input data. Runs anywhere -- no
+computes camera intrinsics from real (tiny) input data. Runs anywhere, no
 GPU or checkpoints needed.
 """
 
@@ -59,7 +59,7 @@ def test_intrinsics_k_bypasses_the_computed_matrix_when_given(tmp_path):
 
 
 def _write_solid_frame(path: Path, value: int, size: tuple[int, int] = (12, 16)) -> None:
-    """A tiny single-color image, distinct per `value` -- lets a test verify
+    """A tiny single-color image, distinct per `value`, lets a test verify
     which source image ended up at which output frame index."""
     height, width = size
     frame = np.full((height, width, 3), value, dtype=np.uint8)
@@ -88,7 +88,7 @@ def test_ingests_an_image_folder_instead_of_a_video(tmp_path):
 
 def test_image_folder_frames_are_written_in_filename_sorted_order(tmp_path):
     """Regression against accidental directory-iteration order (not
-    guaranteed by `Path.iterdir()`) -- output frame index must follow the
+    guaranteed by `Path.iterdir()`), output frame index must follow the
     source filenames' own sort order, not creation/insertion order."""
     image_dir = tmp_path / "frames"
     image_dir.mkdir()
@@ -109,7 +109,7 @@ def test_image_folder_frames_are_written_in_filename_sorted_order(tmp_path):
 def test_image_folder_skips_rewriting_a_frame_when_the_source_is_frames_dir_itself(tmp_path, monkeypatch):
     """Re-ingesting a run's own already-extracted input_frames/ folder in
     place (video_path pointed directly at frames_dir, already using the exact
-    zero-padded naming) should read but not rewrite each frame -- confirmed
+    zero-padded naming) should read but not rewrite each frame, confirmed
     here via a patched cv2.imwrite that fails the test if called at all."""
     run_input = make_run_input(video_path="placeholder", source_fps=24.0)
     runRecord = create_run(tmp_path / "run", run_input)
@@ -192,7 +192,7 @@ def test_image_folder_raises_when_empty(tmp_path):
 
 def test_image_folder_intrinsics_use_output_width_as_the_sensor_width(tmp_path):
     """No separate pre-rotation sensor dimension exists for a plain image
-    folder (unlike a phone video, see _resolve_rotation) -- raw_width and
+    folder (unlike a phone video, see _resolve_rotation), raw_width and
     width are the same value, so the focal length in px should come out as
     a simple focal_length_mm * (width / sensor_width_mm), no rotation-aware
     adjustment involved."""

@@ -65,7 +65,7 @@ jobs:
           PYTHONFAULTHANDLER: "1"
         run: |
           Write-Host "=== Running pytest (ui/tests) ==="
-          # Same main env -- PySide6 is already a main-env dependency, and
+          # Same main env, PySide6 is already a main-env dependency, and
           # ui/tests only covers Qt-free pure logic (Qt-dependent behavior
           # is verified manually/offscreen, not via pytest), so no display
           # or extra environment is needed here.

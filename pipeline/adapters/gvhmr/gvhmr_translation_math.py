@@ -6,8 +6,8 @@ gravity-aligned coordinate convention.
 Ported from `comfyui-motioncapture/nodes/motion_utils/hmr_global.py`,
 restricted to the two functions the actual call site
 (`gvhmr/model.py`'s `get_smpl_params_w_Rt_v2`) uses: `rollout_local_transl_vel`
-and `get_tgtcoord_rootparam`. Everything else in the source -- `get_local_transl_vel`
-and its many "alignhead"/"absy"/"absgy" variants -- is training-data-preparation
+and `get_tgtcoord_rootparam`. Everything else in the source, `get_local_transl_vel`
+and its many "alignhead"/"absy"/"absgy" variants, is training-data-preparation
 code (the forward/inverse of what's needed here, for different coordinate
 conventions never used by this project's inference path) and isn't ported.
 `get_tgtcoord_rootparam`'s `gravity_vec`/`tgt_gravity_vec` branch is dropped
@@ -44,7 +44,7 @@ def get_tgtcoord_rootparam(
         transl: (..., 3) translation, in the same frame as global_orient.
         tsf: one of `_TSF_AXISANGLE`'s keys.
     Returns:
-        (tgt_global_orient, tgt_transl, R_g2tg) -- reoriented orientation/translation
+        (tgt_global_orient, tgt_transl, R_g2tg), reoriented orientation/translation
         and the rotation matrix used, in case a caller needs it too.
     """
     aa = torch.tensor(_TSF_AXISANGLE[tsf], device=global_orient.device, dtype=global_orient.dtype)

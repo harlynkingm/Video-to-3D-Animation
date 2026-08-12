@@ -1,6 +1,6 @@
 """Camera intrinsics math: real-world lens/sensor specs -> a 3x3 K matrix.
 
-A bare focal length isn't enough to build this -- the same "35mm" lens
+A bare focal length isn't enough to build this, the same "35mm" lens
 produces a very different field of view on a phone sensor than on a
 full-frame camera. Sensor width disambiguates that.
 """
@@ -16,14 +16,14 @@ def compute_intrinsics_matrix(
 ) -> list[list[float]]:
     """Build the pinhole camera intrinsics matrix K.
 
-    `sensor_width_px` is the camera sensor's own native pixel width -- what
-    the focal-length ratio is measured against -- which is NOT always the
+    `sensor_width_px` is the camera sensor's own native pixel width, what
+    the focal-length ratio is measured against, which is NOT always the
     same as `image_width_px`/`image_height_px` (the actual output frame's
     own dimensions, used only to center the principal point). These differ
     when a frame has been rotated after capture without changing the
     physical sensor itself: a phone's "vertical video" is really landscape
     sensor data, rotated for display (see stage_0_ingest_video.py's own
-    rotation handling) -- the sensor's physical width never changes, but the
+    rotation handling), the sensor's physical width never changes, but the
     frame you're actually centering the principal point in does.
 
     Assumes square pixels and a centered principal point, which holds for

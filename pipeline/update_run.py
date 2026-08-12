@@ -1,5 +1,5 @@
 """update_run: migrates an existing run's progress.json to the current code's
-schema without discarding any recorded progress -- a completed stage's own
+schema without discarding any recorded progress, a completed stage's own
 status/outputs/error survive untouched; this only adds what's missing (a
 newer stage the run predates) and refreshes what can safely change without
 losing information (a stage's `depends_on` list, in case the DAG itself

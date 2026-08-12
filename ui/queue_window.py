@@ -1,5 +1,5 @@
 """The run queue window: a list of queued runs plus Edit/Remove/Stop/Run
-controls, a shared status/progress indicator, and a console log -- driven by
+controls, a shared status/progress indicator, and a console log, driven by
 a QueueRunner. Hides instead of closing while MainWindow is still open, so
 reopening it via MainWindow's "Add to Queue" button always shows the same
 in-memory queue for the life of the app (session-only persistence); once
@@ -65,7 +65,7 @@ _PREFIX_COLUMN_WIDTH = 20
 
 class _QueueListWidget(QListWidget):
     """A plain QListWidget doesn't reliably clear its selection when you
-    click empty space (below the last item, or between items) -- this makes
+    click empty space (below the last item, or between items), this makes
     that explicit: clicking anywhere with no item under the cursor deselects
     everything. Horizontal scrolling is disabled outright (rather than just
     relying on the description label wrapping) so a long description can
@@ -84,7 +84,7 @@ class _QueueListWidget(QListWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        # The viewport just got narrower/wider -- every row's word-wrapped
+        # The viewport just got narrower/wider, every row's word-wrapped
         # description needs to re-wrap (and its sizeHint's height needs to be
         # recomputed) at the new width, not just left as it was.
         self._on_resize()
@@ -285,22 +285,22 @@ class QueueWindow(QWidget):
         # outer call is still holding, and the outer call's next
         # setItemWidget()/setCurrentItem() on one of them crashes with
         # "Internal C++ object already deleted". The nested call is simply
-        # dropped -- the outer call is already about to rebuild every row
+        # dropped, the outer call is already about to rebuild every row
         # against the current (post-resize) viewport width anyway.
         if self._refreshing:
             return
         self._refreshing = True
         try:
             # By default, re-select whatever was already selected (a refresh
-            # can be triggered by all sorts of things -- a resize, an item
-            # finishing -- that shouldn't disturb the user's current
+            # can be triggered by all sorts of things, a resize, an item
+            # finishing, that shouldn't disturb the user's current
             # selection). Callers that want a specific item selected instead
             # (add_item(), for the newly-added one) pass it explicitly.
             selected = select if select is not None else self._selected_queue_item()
             self.list_widget.clear()
             # The description label word-wraps, so its (and therefore the
             # whole row's) required height depends on exactly how wide it'll
-            # actually be rendered -- constrain each row to the viewport's
+            # actually be rendered, constrain each row to the viewport's
             # width *before* asking for its sizeHint(), or Qt computes the
             # height for some other (usually much wider, unwrapped) width and
             # rows end up too short.
@@ -376,7 +376,7 @@ class QueueWindow(QWidget):
             try:
                 run_record = RunRecord.load(destination)
             except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
-                run_record = None  # progress.json doesn't exist yet, or is mid-write -- try again next tick
+                run_record = None  # progress.json doesn't exist yet, or is mid-write, try again next tick
         progress = compute_queue_progress(self.queue_runner.queue, index, run_record)
         self.status_indicator.apply(progress)
 
@@ -395,7 +395,7 @@ class QueueWindow(QWidget):
 
     def closeEvent(self, event) -> None:
         if self.main_window.isVisible():
-            # Main window still open -- keep the queue alive in the
+            # Main window still open, keep the queue alive in the
             # background if active, and reopening via "Add to Queue" later
             # sees the same in-memory state (this is the whole of
             # "session-only persistence": the window/queue simply outlive
@@ -403,7 +403,7 @@ class QueueWindow(QWidget):
             event.ignore()
             self.hide()
             return
-        # This is the last open window -- let it actually close (rather than
+        # This is the last open window, let it actually close (rather than
         # just hide) so Qt's quitOnLastWindowClosed can end the app, instead
         # of leaving an invisible process running forever.
         if self.queue_runner.is_running():

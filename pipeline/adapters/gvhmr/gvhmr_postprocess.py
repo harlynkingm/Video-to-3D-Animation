@@ -13,7 +13,7 @@ lost track (see its own docstring).
 Ported from `comfyui-motioncapture/nodes/gvhmr/postprocess.py`. **Only
 `pp_static_joint_cam` is ported, not `pp_static_joint`**: GVHMR's own pipeline
 picks between them based on `static_cam`, and this project is static-camera
-only (confirmed at `Pipeline.forward`'s call site) -- `pp_static_joint` is the
+only (confirmed at `Pipeline.forward`'s call site), `pp_static_joint` is the
 moving-camera variant, never reached here. `pp_static_joint_incam`/
 `pp_bridge_low_confidence_root_motion` and their helpers are this project's
 own addition, not part of that port.
@@ -42,7 +42,7 @@ STATIC_JOINT_IDS = [7, 10, 8, 11, 20, 21]
 # Hysteresis over static_conf_logits' own per-frame sigmoid confidence, same
 # seed/release/rolling-window shape as contact_detection.py's own contact
 # hysteresis (CONTACT_SEED_CONFIDENCE/CONTACT_RELEASE_CONFIDENCE/CONTACT_WINDOW)
-# -- a bare instantaneous `> 0.8` threshold chatters right at the boundary,
+#, a bare instantaneous `> 0.8` threshold chatters right at the boundary,
 # locking and unlocking single frames at a time; a rolling-max release with a
 # stricter seed only starts a lock on an unambiguous frame, then holds it
 # through neighbouring frames that dip just under 0.8 but stay above 0.5.
@@ -52,7 +52,7 @@ STATIC_CONF_WINDOW = 5
 
 # Same seed/release/rolling-window hysteresis family, applied to mean 2D
 # body-keypoint confidence (see `_unreliable_pose_label`) instead of the
-# network's own static-joint logits -- identifies runs where the *root's* own
+# network's own static-joint logits, identifies runs where the *root's* own
 # tracked motion should be distrusted (see `pp_bridge_low_confidence_root_motion`).
 # Thresholds set from a real clip's own numbers (a gymnast mid-tumble,
 # motion-blurred): mean body-joint confidence sits ~0.75 in normally-tracked
@@ -106,7 +106,7 @@ def _static_label(static_conf_logits: torch.Tensor) -> torch.Tensor:
     """(B, T, J) sigmoid-able confidence logits -> (B, T, J) bool lock state,
     hysteresis applied independently per joint (see STATIC_CONF_SEED/RELEASE/
     WINDOW above) instead of a bare instantaneous threshold, which chatters
-    right at the boundary -- reuses contact_detection.py's own seed/release/
+    right at the boundary, reuses contact_detection.py's own seed/release/
     run-finding logic (`contiguous_true_runs`), the same hysteresis family
     this project already applies to hand-object contact confidence, here
     applied per static-candidate joint instead of per contact region."""
@@ -127,10 +127,10 @@ def _static_label(static_conf_logits: torch.Tensor) -> torch.Tensor:
 def _static_joint_drift(post_j3d: torch.Tensor, static_label: torch.Tensor, zero_vertical: bool) -> torch.Tensor:
     """Per-frame-transition (B, L-1, 3) displacement to subtract from
     translation so joints the network is confident are stationary stop
-    drifting -- the shared lock math behind both `pp_static_joint_cam`
+    drifting, the shared lock math behind both `pp_static_joint_cam`
     (`zero_vertical=True`: that frame's own whole-clip floor snap already
     handles vertical placement, so per-frame vertical correction is left to
-    it) and `pp_static_joint_incam` (`zero_vertical=False` -- see that
+    it) and `pp_static_joint_incam` (`zero_vertical=False`, see that
     function's own docstring for why incam's vertical drift needs this same
     per-frame treatment instead)."""
     pred_j3d_static = post_j3d[:, :, STATIC_JOINT_IDS]
@@ -150,7 +150,7 @@ def _unreliable_pose_label(pose_confidence: torch.Tensor) -> torch.Tensor:
     above), with the comparisons flipped since this labels *low*-confidence
     runs rather than high-confidence ones: a run is only confirmed unreliable
     if confidence genuinely bottoms out somewhere inside it (POSE_CONF_SEED),
-    not merely dips near the release band -- avoids bridging over ordinary
+    not merely dips near the release band, avoids bridging over ordinary
     single-frame noise."""
     confidence = pose_confidence.cpu().numpy()
     label = np.zeros_like(confidence, dtype=bool)
@@ -166,8 +166,8 @@ def _unreliable_pose_label(pose_confidence: torch.Tensor) -> torch.Tensor:
 
 
 def pp_bridge_low_confidence_root_motion(pred_smpl_params: dict, pose_confidence: torch.Tensor) -> tuple[dict, torch.Tensor]:
-    """Bridge global_orient/transl -- the pelvis's own root orientation and
-    world position -- across any run flagged unreliable by
+    """Bridge global_orient/transl, the pelvis's own root orientation and
+    world position, across any run flagged unreliable by
     `_unreliable_pose_label`, using the identical interior-interpolate/edge-
     freeze occlusion contract `motion_smoothing.fill_invalid` already
     established for hand-tracking gaps: a run bounded by reliable frames on
@@ -178,15 +178,15 @@ def pp_bridge_low_confidence_root_motion(pred_smpl_params: dict, pose_confidence
     endpoint to interpolate toward and is instead held constant at whichever
     single real value it does have.
 
-    `body_pose` (the other 21 joints' own local rotations -- elbows, knees,
+    `body_pose` (the other 21 joints' own local rotations, elbows, knees,
     spine, etc.) is deliberately left untouched, and so is `betas` (body
     shape, not motion). An earlier version of this fix also froze body_pose,
     but during a genuine 2D-tracking dropout only the pelvis's own root
-    motion actually reads as visually wrong -- the other joints stay
+    motion actually reads as visually wrong, the other joints stay
     plausible even though the network's confidence in them is measured low
     too, and freezing them made the result look worse, not better.
 
-    Returns `(bridged_params, label)` -- `label` (the same (B, T) bool from
+    Returns `(bridged_params, label)`, `label` (the same (B, T) bool from
     `_unreliable_pose_label`) is returned too, not just used internally, so
     stage 10's own export can delete the pelvis bone's real Blender keyframes
     at these frames instead of just baking this function's own interpolated
@@ -219,7 +219,7 @@ def pp_static_joint_cam(outputs: dict, endecoder) -> torch.Tensor:
     """Correct the "global" (world-grounded) translation using the static-camera
     assumption: a genuinely static camera means the "incam" (camera-space)
     prediction's own joint motion, once aligned into world space via the first
-    frame, is a second independent estimate of world motion -- disagreements
+    frame, is a second independent estimate of world motion, disagreements
     between the two beyond a small threshold get pulled back, and joints
     predicted as "static" this frame get locked in place to remove foot sliding.
     """
@@ -273,14 +273,14 @@ def pp_static_joint_cam(outputs: dict, endecoder) -> torch.Tensor:
 
 def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
     """Cancels drift in incam's own translation the same way `pp_static_joint_cam`
-    does for `global` -- lock joints the network is confident are stationary --
+    does for `global`, lock joints the network is confident are stationary --
     but self-contained: incam's own FK positions, incam's own translation, no
     camera cross-check (that function's `cp_diff` correction is inherently a
     global-vs-incam agreement check with no incam-only equivalent, and isn't
     needed here). This is the fix that actually reaches a real run: every
     stage past stage 2 consumes incam exclusively (see stage_10_export.py's own
     module docstring), so `pp_static_joint_cam`'s identical-looking correction
-    on `global` never reaches anything downstream -- `global` is vestigial
+    on `global` never reaches anything downstream, `global` is vestigial
     past this point, feeding only one optional debug preview.
 
     Unlike `pp_static_joint_cam`, this also corrects vertical (Y) drift
@@ -295,7 +295,7 @@ def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
     separate classifier needed: a squat keeps that ankle's own static
     confidence high (the correction fires), a real jump drops it as the foot
     leaves the ground (the correction doesn't). No whole-clip "put on the
-    ground" snap is applied here either -- that step assumes a gravity-
+    ground" snap is applied here either, that step assumes a gravity-
     aligned, floored world incam doesn't have; the equivalent already exists,
     correctly, downstream in stage_10_export.py's own `_lowest_foot_z`/
     `floor_offset`.
@@ -317,7 +317,7 @@ def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
 def process_ik(outputs: dict, endecoder) -> torch.Tensor:
     """Nudge each limb's joints via CCD-IK toward a target that blends the
     previous frame's position (weighted by static confidence) with this
-    frame's raw FK position -- cleans up the small pops/jitters that `
+    frame's raw FK position, cleans up the small pops/jitters that `
     pp_static_joint_cam`'s translation-only correction can't fix, since that
     pass never touches individual joint rotations."""
     static_conf = outputs["static_conf_logits"].sigmoid()

@@ -3,8 +3,8 @@ SMPL-X body (stage 2), producing one merged full-body-plus-hands motion.
 
 The body's wrist orientation from GVHMR is discarded in favor of HaMeR's, which
 sees a zoomed-in crop and estimates the wrist far better than the body-only ViT
-can. The reconciliation -- re-expressing HaMeR's global wrist orientation
-relative to GVHMR's forearm, and copying the finger articulation across -- lives
+can. The reconciliation, re-expressing HaMeR's global wrist orientation
+relative to GVHMR's forearm, and copying the finger articulation across, lives
 in `hand_retarget`. This stage is the I/O around it: load both inputs, run the
 retarget, write the merged SMPL-X params that the later HOI stages consume in
 place of the body-only motion.
@@ -75,7 +75,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     body_pose = _as_f32_tensor(incam[KEY_BODY_POSE])  # (F, 63)
     betas = _as_f32_tensor(incam[KEY_BETAS])
     transl = _as_f32_tensor(incam[KEY_TRANSL])
-    # Pure passthrough -- unrelated to hand retargeting, but export (stage 10)
+    # Pure passthrough, unrelated to hand retargeting, but export (stage 10)
     # needs it and reads this stage's own npz output, not stage 2's directly.
     root_motion_unreliable = motion[KEY_ROOT_MOTION_UNRELIABLE]  # (F,) bool
 
@@ -116,7 +116,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     motion_path = retarget_dir / RETARGET_MOTION_FILENAME
     torch.save(merged, motion_path)
 
-    # A plain-numpy companion to the .pt above -- not a preview, a real
+    # A plain-numpy companion to the .pt above, not a preview, a real
     # interchange format for the one downstream consumer (export) that
     # runs in a separate environment with no torch installed at all.
     motion_npz_path = retarget_dir / RETARGET_MOTION_NPZ_FILENAME

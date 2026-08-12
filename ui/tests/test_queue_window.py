@@ -39,7 +39,7 @@ class _FakeMainWindow:
 
 def test_adding_enough_items_to_need_a_scrollbar_does_not_crash(qapp):
     # The real crash was a native "already deleted" fault, not a catchable
-    # Python exception -- this test only proves anything by running to
+    # Python exception, this test only proves anything by running to
     # completion rather than aborting the whole process partway through.
     window = QueueWindow(_FakeMainWindow())
     window.resize(400, 300)
@@ -52,6 +52,6 @@ def test_adding_enough_items_to_need_a_scrollbar_does_not_crash(qapp):
 
     assert window.list_widget.count() == 12
     # hide(), not close(): closeEvent() reads self.main_window.isVisible(),
-    # which _FakeMainWindow doesn't implement -- irrelevant to what this test
+    # which _FakeMainWindow doesn't implement, irrelevant to what this test
     # is actually verifying.
     window.hide()

@@ -1,5 +1,5 @@
 """Stage 1 regression test: runs real SAM 3.1 tracking on the small test clip
-and checks the tracked human/object masks look correct -- plausible per-frame
+and checks the tracked human/object masks look correct, plausible per-frame
 area, not empty, not the whole frame, and mask previews written at the
 video's native resolution. Needs the real SAM 3.1 checkpoint and a CUDA GPU
 -- skipped automatically otherwise (see conftest.py).
@@ -21,7 +21,7 @@ from conftest import TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH
 SAM31_WORKING_SIZE = 1008
 
 # Generous bounds around the real areas measured on this exact clip (human ~6.4-7%,
-# object ~0.6-0.9%) -- wide enough to tolerate minor model/library version drift,
+# object ~0.6-0.9%), wide enough to tolerate minor model/library version drift,
 # tight enough to catch a genuinely broken or empty mask.
 MIN_HUMAN_AREA_FRACTION = 0.02
 MAX_HUMAN_AREA_FRACTION = 0.20

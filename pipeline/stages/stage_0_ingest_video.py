@@ -1,7 +1,7 @@
 """ingest: reads the input video (or a pre-extracted image-sequence folder),
 extracts frames to disk, and computes camera intrinsics.
 
-The only stage with no dependencies -- everything else in the pipeline builds
+The only stage with no dependencies, everything else in the pipeline builds
 on the frames and scene info this produces.
 """
 
@@ -23,19 +23,19 @@ INPUT_FRAMES_DIRNAME = "input_frames"
 # accuracy cost is negligible, and it's a fraction of the disk space/write time.
 JPEG_QUALITY = 95
 
-# `--input-video` accepts a directory of these instead of a video file -- see
+# `--input-video` accepts a directory of these instead of a video file, see
 # `_ingest_image_folder`. Case-insensitive (`Path.suffix` preserves case).
 IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png"})
 
 # Phones tag "vertical" recordings with rotation metadata rather than
-# re-encoding pixels -- the sensor itself always captures landscape.
+# re-encoding pixels, the sensor itself always captures landscape.
 # cv2.VideoCapture.read() returns that raw sensor-orientation frame
 # regardless of the metadata (CAP_PROP_ORIENTATION_AUTO defaults to off, and
 # has a real history of being unreliable across backends/platforms even when
 # explicitly enabled), so this stage reads CAP_PROP_ORIENTATION_META itself
 # and rotates each frame before writing it out. The exact direction was
 # confirmed against a real vertical phone clip by visual inspection, not
-# assumed -- metadata value 90 requires ROTATE_90_CLOCKWISE to produce a
+# assumed, metadata value 90 requires ROTATE_90_CLOCKWISE to produce a
 # correctly upright frame; getting this backwards would silently produce
 # upside-down/mirrored frames that still "look" fixed (right dimensions).
 _ROTATION_TO_CV2_CODE: dict[int, int] = {
@@ -46,7 +46,7 @@ _ROTATION_TO_CV2_CODE: dict[int, int] = {
 
 
 def _resolve_rotation(orientation_meta: float, raw_width: int, raw_height: int) -> tuple[int | None, int, int]:
-    """`(rotate_code, final_width, final_height)` -- `rotate_code` is a
+    """`(rotate_code, final_width, final_height)`, `rotate_code` is a
     `cv2.rotate()` code, or `None` if no rotation is needed. The final
     dimensions already account for the width/height swap a 90/270 rotation
     causes; `compute_intrinsics_matrix` still needs `raw_width` separately
@@ -61,7 +61,7 @@ def _resolve_rotation(orientation_meta: float, raw_width: int, raw_height: int) 
 
 
 def _ingest_video(video_path: str, frames_dir: Path) -> tuple[float, int, int, int, int]:
-    """`(fps, raw_width, width, height, frame_count)` -- `raw_width` is the
+    """`(fps, raw_width, width, height, frame_count)`, `raw_width` is the
     sensor's own pre-rotation width, needed separately by
     `compute_intrinsics_matrix`'s own focal-length ratio."""
     capture = cv2.VideoCapture(video_path)
@@ -99,13 +99,13 @@ def _ingest_video(video_path: str, frames_dir: Path) -> tuple[float, int, int, i
 
 
 def _ingest_image_folder(folder: Path, fps: float, frames_dir: Path) -> tuple[float, int, int, int, int]:
-    """`(fps, raw_width, width, height, frame_count)` -- `fps` is just
+    """`(fps, raw_width, width, height, frame_count)`, `fps` is just
     `RunInput.source_fps` passed back through (an image sequence has no
     embedded frame rate the way a video container does; `validate_video_input`
     enforces it's set before this stage ever runs). No rotation handling:
     unlike a phone video, these are already-extracted or individually
     authored images with no comparable sensor-orientation metadata to correct
-    for. `raw_width` equals `width` here -- there's no separate pre-rotation
+    for. `raw_width` equals `width` here, there's no separate pre-rotation
     sensor dimension to track."""
     image_paths = sorted(p for p in folder.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
     if not image_paths:
@@ -136,7 +136,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     if Path(video_path).is_dir():
         if runRecord.input.source_fps is None or runRecord.input.source_fps <= 0:
             # Normally caught earlier by validate_video_input (create_run.py/
-            # pipeline.run.py's own main()s) -- this is a defensive backstop
+            # pipeline.run.py's own main()s), this is a defensive backstop
             # for direct run() calls (tests, a resumed run whose progress.json
             # predates that validator) that skip the CLI validation path.
             raise RuntimeError("--source-fps is required when --input-video is a directory of images")
@@ -151,7 +151,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     runRecord.scene.height = height
     runRecord.scene.frame_count = frame_count
     if runRecord.input.intrinsics_k is not None:
-        # Real calibration data, given as-is -- see RunInput.intrinsics_k's
+        # Real calibration data, given as-is, see RunInput.intrinsics_k's
         # own comment for why this is preferred over the lens-spec path when
         # both are available (a real K's principal point isn't necessarily
         # centered the way compute_intrinsics_matrix has to assume).

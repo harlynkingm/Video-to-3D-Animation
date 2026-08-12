@@ -3,7 +3,7 @@
 Two layers:
   - A pure-numpy unit test of `fit_scene_scale` on a synthetic scene with a
     *known* scale, proving the math actually recovers it (no GPU/checkpoints
-    needed -- always runs).
+    needed, always runs).
   - Real-data checks on the stage's output against the test clip (needs the
     full stage chain, so GPU + checkpoints + SMPL-X model; skipped otherwise
     via the stage_6_result fixture).
@@ -24,12 +24,12 @@ from pipeline.stages.stage_6_align_scene_scale import _resolve_auto_shape_hint, 
 
 def _synthetic_scene(known_scale: float):
     """A grid of 'SMPL-X' vertices with real Z variation (not a flat frontal
-    plane -- a constant-Z grid would make the Z-axis spread degenerate, since
+    plane, a constant-Z grid would make the Z-axis spread degenerate, since
     the anisotropic fit needs real depth variation to measure a Z scale from),
     plus a depth map whose pixels read `known_scale x` deeper. Back-projecting
     a fixed pixel at a deeper depth scales X, Y, and Z by the same factor (a
     property of pinhole projection: `x = (u-cx)*depth/fx`), so this fixture
-    can only exercise the *isotropic* case -- it proves recovering a shared
+    can only exercise the *isotropic* case, it proves recovering a shared
     known scale on both axis groups, not that they're fit independently (see
     `test_anisotropic_scale_recovers_independent_xy_and_z_ratios` for that)."""
     fx = fy = 500.0
@@ -79,8 +79,8 @@ def test_fit_is_deterministic():
 
 def test_anisotropic_scale_recovers_independent_xy_and_z_ratios():
     """Directly exercises `_fit_anisotropic_scale` on hand-built correspondence
-    pairs (bypassing pixel projection entirely, which -- per `_synthetic_scene`'s
-    own docstring -- can't produce a genuinely anisotropic scene on its own)."""
+    pairs (bypassing pixel projection entirely, which, per `_synthetic_scene`'s
+    own docstring, can't produce a genuinely anisotropic scene on its own)."""
     rng = np.random.default_rng(0)
     body_pts = rng.uniform(-0.3, 0.3, (500, 3))
     scale_xy_true, scale_z_true = 1.5, 3.0
@@ -137,7 +137,7 @@ def test_object_shape_output_is_plausible(stage_6_result):
     assert extents.shape == (3,)
     assert np.isfinite(extents).all()
     assert (extents > 0).all()
-    # A real handheld object shouldn't fit a multi-meter proxy -- a wildly large
+    # A real handheld object shouldn't fit a multi-meter proxy, a wildly large
     # value means the depth/mask correspondence broke.
     assert (extents < 2.0).all()
 
@@ -162,7 +162,7 @@ def test_scene_preview_combines_every_element(stage_6_result):
 
     # The human mesh (green), the tracked object (red), and the fitted proxy
     # primitive's wireframe (yellow) must all be present, alongside the RGB
-    # scene points -- proving every element landed in the one combined,
+    # scene points, proving every element landed in the one combined,
     # aligned point cloud.
     has_human = np.any(np.all(colors == HUMAN_COLOR, axis=1))
     has_object = np.any(np.all(colors == OBJECT_COLOR, axis=1))
@@ -191,7 +191,7 @@ def _save_packed_masks(masks_by_frame: list[np.ndarray], path) -> None:
 
 
 def test_select_shape_candidate_frames_ranks_a_notched_circle_below_the_clean_one(tmp_path):
-    """Solidity is used for every shape kind, including a round object -- a
+    """Solidity is used for every shape kind, including a round object, a
     notch (e.g. a gripping hand) breaks convexity the same way regardless of
     what the object's silhouette should otherwise look like."""
     clean_circle = _disk_mask(radius=40)

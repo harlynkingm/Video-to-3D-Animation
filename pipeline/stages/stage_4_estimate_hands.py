@@ -4,11 +4,11 @@ person and our COCO-17 ViTPose to locate each hand.
 
 Output is the *raw* per-hand MANO pose (finger articulation + wrist
 orientation, both in each hand crop's camera frame) plus TWO per-frame validity
-flags per hand: `*_valid` (detection-based -- a hand may be off-screen, too
+flags per hand: `*_valid` (detection-based, a hand may be off-screen, too
 occluded to detect, or its keypoint confidence too low over a rolling window)
-and `*_wrist_valid` (a further narrowing, wrist-only -- see below). Grafting
-these onto GVHMR's body -- merging the wrist/forearm reconciliation into the
-final SMPL-X body pose -- is still stage 5's job (retarget_hands), not this one.
+and `*_wrist_valid` (a further narrowing, wrist-only, see below). Grafting
+these onto GVHMR's body, merging the wrist/forearm reconciliation into the
+final SMPL-X body pose, is still stage 5's job (retarget_hands), not this one.
 
 This stage depends on stage 2 (estimate_human_motion), not just stage 0/1: a
 hand is an extension of the arm, not an independent tracked object, and a real
@@ -16,14 +16,14 @@ wrist has a rotational limit relative to the forearm that HaMeR's crop-only
 view has no way to know about. Before any smoothing runs, every frame's raw
 wrist estimate is checked against GVHMR's own elbow orientation
 (`hand_retarget.reject_biomechanically_implausible_wrist`) and treated as an
-occlusion if it's anatomically impossible -- deliberately done here, before the
+occlusion if it's anatomically impossible, deliberately done here, before the
 smoothing chain, rather than after in stage 5: a filter that's already blended
 a bad value into its neighbors can't be un-blended by a later stage.
 
 This wrist check produces its OWN validity array (`*_wrist_valid`), separate
 from the base `*_valid` used for finger smoothing: a biomechanically
 implausible wrist estimate doesn't mean the finger articulation from the same
-frame is untrustworthy too (checked on a real clip -- finger jitter during a
+frame is untrustworthy too (checked on a real clip, finger jitter during a
 bad wrist stretch was only modestly elevated, nowhere near the wrist's own
 near-total breakdown). Coupling them would throw away real, usable finger
 motion for every frame the wrist gate rejects.
@@ -130,7 +130,7 @@ def _smooth_hand_result(
     orientation (HaMeR has no temporal model, so raw hands are far jitterier
     than GVHMR's body). Both run the same `_smooth_hand_channel` chain with
     different knobs and validity arrays (fingers: base detection validity;
-    wrist: the narrower one from `_compute_wrist_validity`) -- neither array
+    wrist: the narrower one from `_compute_wrist_validity`), neither array
     is modified here, only the pose values for invalid frames.
 
     **The wrist channel runs this entire chain in the forearm-relative frame,
@@ -148,7 +148,7 @@ def _smooth_hand_result(
 
     The wrist alone also gets `cap_long_gaps_with_hold`, capping how much of
     a long invalid stretch gets interpolated rather than held (see that
-    function's own docstring). Fingers get neither treatment -- they're
+    function's own docstring). Fingers get neither treatment, they're
     relative to the wrist already and stay mostly trustworthy through a
     rejected wrist stretch (see `hand_retarget`'s own docstring)."""
     for pose_key, global_orient_key, valid_key, wrist_valid_key, elbow in (
@@ -179,7 +179,7 @@ def _smooth_hand_result(
 
 def _body_joint_rotations(runRecord: RunRecord) -> torch.Tensor:
     """(F, 22, 3, 3) global rotation of every SMPL-X body joint, from stage
-    2's own incam body pose -- the elbow orientation both the plausibility
+    2's own incam body pose, the elbow orientation both the plausibility
     gates and the forearm-relative smoothing frame are defined against.
     Loaded once here rather than per consumer, since both need the identical
     tensor."""
@@ -197,7 +197,7 @@ def _body_joint_rotations(runRecord: RunRecord) -> torch.Tensor:
 
 def _compute_wrist_validity(result: dict, global_rot: torch.Tensor, runRecord: RunRecord) -> None:
     """In place: adds `KEY_LEFT_WRIST_VALID`/`KEY_RIGHT_WRIST_VALID` to `result`
-    -- each hand's base `*_valid` narrowed further wherever the raw wrist
+   , each hand's base `*_valid` narrowed further wherever the raw wrist
     estimate is anatomically impossible relative to GVHMR's own elbow, changed
     implausibly fast from the previous frame, has the hand swung too far from
     its own rest-pose pointing direction, or has the hand geometrically folded

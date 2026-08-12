@@ -1,12 +1,12 @@
 """Full pipeline regression test: runs every implemented stage as a real
 subprocess (`python -m pipeline.stages...`), exactly how a user runs them,
-against the small test clip -- exercising `create_run.py`, each stage's CLI
+against the small test clip, exercising `create_run.py`, each stage's CLI
 entrypoint, `progress.json` persistence, and the skip-if-already-complete/
 `--force` behavior. The per-stage test files call each stage's `run()`
 directly and check its own output in detail; this file is the only one that
 exercises the actual subprocess/CLI dispatch path a real user goes through.
 
-Needs the real checkpoints and a CUDA GPU -- skipped automatically otherwise.
+Needs the real checkpoints and a CUDA GPU, skipped automatically otherwise.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _run_stage(module: str, progress_dir: Path, *extra_args: str) -> subprocess.
 
 def test_full_pipeline_runs_end_to_end(tmp_path):
     """Runs every currently-implemented `main`-environment stage as its own
-    real subprocess, in order -- this is the only test that exercises the
+    real subprocess, in order, this is the only test that exercises the
     per-stage CLI dispatch path (see this module's own docstring). The stage
     list comes from `ORDERED_STAGES` rather than a hand-typed module list, so
     this keeps up automatically as new stages ship (a hardcoded list here had
@@ -75,7 +75,7 @@ def test_full_pipeline_runs_end_to_end(tmp_path):
 
     Deliberately excludes `export`: it needs `bpy` from a separate pixi
     environment this test's `sys.executable` (the `main` env's own
-    interpreter) can't provide -- see `tests/test_stage_10_export.py` for
+    interpreter) can't provide, see `tests/test_stage_10_export.py` for
     its own dedicated, appropriately-gated coverage.
     """
     run_dir = tmp_path / "run"

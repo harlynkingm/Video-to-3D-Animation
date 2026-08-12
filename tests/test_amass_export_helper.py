@@ -1,4 +1,4 @@
-"""Unit tests for `amass_export_helper`: pure numpy, no GPU needed -- always runs."""
+"""Unit tests for `amass_export_helper`: pure numpy, no GPU needed, always runs."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def test_write_amass_npz_embeds_real_hand_pose_when_given(tmp_path):
         assert np.allclose(right, -0.5)
 
 
-def test_write_amass_npz_jaw_and_eyes_always_zero_even_with_hands(tmp_path):
+def test_write_amass_npz_defaults_jaw_and_eyes_to_zero(tmp_path):
     out_path = tmp_path / "export.npz"
     write_amass_npz(
         **_body_arrays(), fps=30.0, out_path=out_path,

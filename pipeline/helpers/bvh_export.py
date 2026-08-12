@@ -20,22 +20,22 @@ _ROT_CHANNELS = "Zrotation Xrotation Yrotation"
 _EULER_ORDER = "ZXY"  # matches _ROT_CHANNELS; scipy intrinsic convention
 
 # This project's SMPL-X/GVHMR/HaMeR rest offsets and predicted rotations all
-# live in camera space (X right, Y down, Z forward -- confirmed via stage 6:
+# live in camera space (X right, Y down, Z forward, confirmed via stage 6:
 # posing the real SMPL-X model with these values tightly matches real
 # depth-camera data). BVH's own convention is Y-up; writing camera-space
 # values directly (Y-down) into a BVH file makes Blender's importer read the
 # skeleton upside down. This is the camera-space -> BVH-space change of basis:
 # up (-Y_cam) -> +Y_bvh; forward -> +X_bvh, where "forward" means the direction
-# a camera-*facing* subject's own front points -- i.e. camera-space -Z (back
+# a camera-*facing* subject's own front points, i.e. camera-space -Z (back
 # toward the camera), not +Z (the direction the camera itself looks, away from
-# it) -- confirmed against real data: a first attempt mapped +Z_cam to +X_bvh
+# it), confirmed against real data: a first attempt mapped +Z_cam to +X_bvh
 # and produced a character facing -X in Blender on a real clip where the
 # subject faces the camera, exactly backwards. The remaining axis follows from
 # the cross product, to keep this a proper rotation (det +1, no mirroring, so
 # already-correct per-joint local rotations compose exactly the same way).
 #
 # Applying this to the WHOLE skeleton only requires left-multiplying the
-# ROOT's own rotation by it -- every other joint's rest offset and predicted
+# ROOT's own rotation by it, every other joint's rest offset and predicted
 # rotation is relative to its parent and needs no change (forward-kinematics
 # composition: world[joint] = world[parent] @ local[joint], so rotating the
 # root's world transform by a fixed R rotates every descendant's world
@@ -44,7 +44,7 @@ _EULER_ORDER = "ZXY"  # matches _ROT_CHANNELS; scipy intrinsic convention
 # A further consequence, worth being explicit about: this rotation reverses
 # which world-space side "anatomical left" ends up on (since reversing forward
 # while keeping up fixed is a 180-degree yaw, which also reverses left-right in
-# world space) -- but NOT which side is anatomically correct relative to the
+# world space), but NOT which side is anatomically correct relative to the
 # body itself, since a rotation can't change chirality. Verified on the same
 # real clip: RightWrist stays on the same side as RightHip (relative to the
 # body's own hip axis) on 100% of frames, unaffected by this change.
@@ -53,7 +53,7 @@ CAMERA_TO_BVH_ROOT_ROTATION = np.array([[0, 0, -1], [0, -1, 0], [-1, 0, 0]], dty
 
 def camera_to_upright_rotation_matrix(root_matrix: np.ndarray) -> np.ndarray:
     """Left-multiplies a root joint's own (..., 3, 3) rotation matrix by
-    `CAMERA_TO_BVH_ROOT_ROTATION` -- not the other joints, whose rotations
+    `CAMERA_TO_BVH_ROOT_ROTATION`, not the other joints, whose rotations
     are relative to their parent already. The one actual reorientation step
     every consumer below shares; `root_camera_to_upright` wraps it for a
     caller working in axis-angle (SMPL-X's own convention) instead of
@@ -74,7 +74,7 @@ def root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tup
     see `camera_to_upright_rotation_matrix`/`camera_to_upright_translation`
     for the actual reorientation math this composes. Shared by every
     consumer that has to hand GVHMR's own incam root to something expecting
-    an upright/gravity-aligned one -- stage 10's own export and stage 2's
+    an upright/gravity-aligned one, stage 10's own export and stage 2's
     `--render-motion-preview` both need this exact correction."""
     root_matrix = camera_to_upright_rotation_matrix(Rotation.from_rotvec(global_orient).as_matrix())
     corrected_orient = Rotation.from_matrix(root_matrix).as_rotvec()
@@ -129,7 +129,7 @@ def write_bvh(
     """rotations: (F, J, 3, 3) local rotation matrices, one per joint per frame.
     `parents[root] == -1` (exactly one root, listed before its children).
     root_translation: optional (F, 3), already in BVH space (see
-    CAMERA_TO_BVH_ROOT_ROTATION -- the caller applies the same change of basis
+    CAMERA_TO_BVH_ROOT_ROTATION, the caller applies the same change of basis
     to translation as to the root's own rotation). Root position is written as
     static zero when omitted, for previews where only relative pose matters."""
     root = parents.index(-1)

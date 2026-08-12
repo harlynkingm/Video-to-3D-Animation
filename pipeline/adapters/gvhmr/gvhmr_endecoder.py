@@ -1,16 +1,16 @@
 """Turns the GVHMR transformer's raw 151-dim per-frame output into actual pose
 parameters (`decode`), and those parameters into real 3D joint positions
-(`fk_v2`) -- the latter is what the static-foot-lock postprocessing and CCD-IK
+(`fk_v2`), the latter is what the static-foot-lock postprocessing and CCD-IK
 cleanup both need to actually see where the body is in space.
 
 Ported from `comfyui-motioncapture/nodes/gvhmr/endecoder.py`. Has no learned
-weights of its own -- `mean`/`std` are the checkpoint-independent
+weights of its own, `mean`/`std` are the checkpoint-independent
 `MM_V1_AMASS_LOCAL_BEDLAM_CAM` normalization table (confirmed by checking the
 real `inference_node.py` call site, not the class's own misleading
 `stats_name="DEFAULT_01"` default, which turns out to be an unused no-op),
 extracted once from the real reference module into `gvhmr_endecoder_stats.json`
 rather than hand-transcribed (that table is ~300 floats composed from five
-different named entries in the source's data file -- retyping it by hand would
+different named entries in the source's data file, retyping it by hand would
 be a real transcription-error risk with no way to catch a wrong digit later).
 """
 
@@ -29,7 +29,7 @@ _STATS_PATH = Path(__file__).parent / "gvhmr_endecoder_stats.json"
 
 
 class EnDecoder:
-    """Not an `nn.Module` -- no learned parameters, just fixed normalization
+    """Not an `nn.Module`, no learned parameters, just fixed normalization
     stats and a `SmplxSkeleton` instance, matching the source's own treatment
     of the equivalent object (its `nn.Module` base there exists only so
     `mean`/`std` ride along with `.to(device)`, which this port does explicitly

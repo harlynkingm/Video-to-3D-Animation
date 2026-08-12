@@ -1,4 +1,4 @@
-"""Unit tests for the pure-Python parts of `sam31_adapter.py` -- this whole
+"""Unit tests for the pure-Python parts of `sam31_adapter.py`, this whole
 module had zero test coverage before (written before the project had a test
 suite): checkpoint key-prefix splitting, frame loading/color conversion, the
 multi-slot stitching fix, and `infer()`'s own prompt-routing control flow.
@@ -69,7 +69,7 @@ def test_single_slot_no_gaps_passes_through_unchanged():
 def test_uses_whichever_slot_is_active_even_if_a_different_slot_scores_higher():
     # Slot 0 (score 0.93) only covers frames 0-1; slot 1 (score 0.68, LOWER)
     # covers frames 2-4. The old "keep the single best-scoring slot" behavior
-    # would drop slot 1 entirely -- this is the actual basketball-clip bug.
+    # would drop slot 1 entirely, this is the actual basketball-clip bug.
     packed = _make_packed([
         [True, True, False, False, False],
         [False, False, True, True, True],
@@ -85,7 +85,7 @@ def test_uses_whichever_slot_is_active_even_if_a_different_slot_scores_higher():
 
 def test_prefers_spatial_continuity_over_a_higher_scoring_slot():
     """Once a slot has been chosen, a *different* slot becoming active the
-    same frame must not win just for having a higher fixed score -- it
+    same frame must not win just for having a higher fixed score, it
     should only win by sitting closer to the previous frame's own chosen
     position. `_slot_pattern` gives each slot a fixed, distinct position, so
     slot 0 (already winning, and at the same position every frame) stays
@@ -101,7 +101,7 @@ def test_prefers_spatial_continuity_over_a_higher_scoring_slot():
 
 def test_falls_back_to_score_when_multiple_slots_are_active_with_no_prior_frame():
     """No previous chosen position exists yet at the very first active
-    frame -- continuity has nothing to compare against, so this one case
+    frame, continuity has nothing to compare against, so this one case
     still falls back to the higher fixed score, matching the only
     reasonable behavior when the two candidates are otherwise equally
     unproven."""
@@ -127,7 +127,7 @@ def test_rejects_a_spurious_large_jump_in_favor_of_the_continuing_object():
     object, establishing continuity the same way a real clip's own object
     is tracked alone for a while before a decoy ever appears). Even though
     the decoy's own fixed score is higher, its mask sits far from where the
-    genuinely-tracked object has been every frame -- continuity must keep
+    genuinely-tracked object has been every frame, continuity must keep
     following the real (here, slowly drifting) object instead of jumping to
     it once both are simultaneously active."""
     canvas_h, canvas_w = 20, 80
@@ -152,7 +152,7 @@ def test_a_lone_implausibly_far_candidate_is_treated_as_a_gap_not_accepted():
     single frame (motion blur mid-throw, in the real case this was found
     against) while an unrelated decoy slot is the *only* other thing
     active. A lone candidate must still be checked against continuity, not
-    accepted unconditionally -- otherwise the decoy silently becomes the
+    accepted unconditionally, otherwise the decoy silently becomes the
     new continuity anchor and never lets go. Real object at frames 0-1 and
     3 (a one-frame dropout at frame 2, where only the far decoy is active,
     followed by a real reappearance near its own last position); bridging
@@ -200,7 +200,7 @@ def test_leaves_a_gap_longer_than_max_bridge_frames_empty():
 
 
 def test_leaves_leading_and_trailing_gaps_empty_regardless_of_bridge_setting():
-    # Never detected until frame 2, and gone again after frame 3 -- no valid
+    # Never detected until frame 2, and gone again after frame 3, no valid
     # mask exists on one side of either gap to hold from.
     packed = _make_packed([
         [False, False, True, True, False, False],
@@ -240,7 +240,7 @@ def test_load_checkpoint_state_splits_and_strips_prefixes(tmp_path: Path):
         # Under detector.backbone.* but not vision_backbone/language_backbone --
         # the detector branch explicitly excludes anything under that prefix.
         "detector.backbone.some_other_submodule.weight": torch.tensor([6.0]),
-        # Matches no recognized prefix at all -- silently dropped.
+        # Matches no recognized prefix at all, silently dropped.
         "discriminator.unused.weight": torch.tensor([7.0]),
     }
     save_file(tensors, str(ckpt_path))

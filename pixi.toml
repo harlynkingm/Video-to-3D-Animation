@@ -7,18 +7,18 @@ version = "0.1.0"
 
 [tasks]
 
-# Runs the full suite across both environments -- most stages' tests live in
+# Runs the full suite across both environments, most stages' tests live in
 # `main`, but stage 10's own tests (tests/test_stage_10_export.py) need bpy
 # and only run under `export`. Every other test module imports torch/cv2/
 # etc. at its own top level (unguarded), so `export` must target stage 10's
-# file specifically -- collecting the whole `tests/` dir under that env errors
+# file specifically, collecting the whole `tests/` dir under that env errors
 # out before running anything. Chained with `;`, not `&&`, so a failure in one
 # environment doesn't hide the other environment's results.
 #
 # The export half goes through scripts/run_export_tests.py, not a direct
 # `pytest` invocation: bpy has a reproducible access-violation crash during
 # its own interpreter teardown on Windows, well after every test has already
-# finished and passed -- a raw `pytest` call here would make that benign
+# finished and passed, a raw `pytest` call here would make that benign
 # crash look like the whole suite failed (segfault, nonzero exit) even when
 # every test genuinely passed. The wrapper isolates that crash to a child
 # process and reports the real result from its junit report instead.
@@ -27,15 +27,15 @@ cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python scrip
 
 # Launches the minimal desktop UI (ui/) that composes and runs a `pipeline.run`
 # invocation instead of using the CLI by hand. Runs under the same `main` env
-# as the pipeline itself -- see ui/pipeline_runner.py.
+# as the pipeline itself, see ui/pipeline_runner.py.
 [tasks.ui]
 cmd = "pixi run -e main python -m ui"
 
-# Static dead-code scan (vulture) -- checks pipeline/ for functions/classes/
+# Static dead-code scan (vulture), checks pipeline/ for functions/classes/
 # attributes with no reference anywhere, including tests/ and scripts/ (passed
 # too, so cross-file usage from a test counts). `.vulture_whitelist.py` records
 # confirmed false positives (dynamic dispatch vulture's static analysis can't
-# see -- CLI entrypoints invoked via subprocess, dataclass fields read through
+# see, CLI entrypoints invoked via subprocess, dataclass fields read through
 # `dataclasses.fields()`, etc.) so re-runs don't re-flag them.
 [tasks.deadcode]
 cmd = "pixi run -e main python -m vulture pipeline/ tests/ scripts/ .vulture_whitelist.py --min-confidence 70"
@@ -74,15 +74,15 @@ python = "3.13.*"
 [feature.main.pypi-dependencies]
 # depth-anything-3 (below) unconditionally declares open3d as a PyPI
 # dependency, even though nothing in its actual source imports it (confirmed
-# by searching its real repo) -- but PyPI has no cp313 wheel for open3d at
+# by searching its real repo), but PyPI has no cp313 wheel for open3d at
 # all, which would otherwise break resolution outright. A first attempt
 # pulled real open3d in via conda-forge (which does have a py313 win-64
 # build), but that silently swapped in a conda-built numpy/BLAS stack that
-# conflicts with torch's own bundled OpenMP runtime -- a real, confirmed
+# conflicts with torch's own bundled OpenMP runtime, a real, confirmed
 # crash (`OMP: Error #15`, a hard `Fatal Python error: Aborted`) during
 # stage 2 (GVHMR). Fixed instead with a tiny local stub package
 # (vendor/open3d_stub/) that satisfies the declared dependency without
-# installing anything real -- safe specifically because nothing ever calls
+# installing anything real, safe specifically because nothing ever calls
 # `import open3d` in the code paths this project's adapter exercises.
 open3d = { path = "vendor/open3d_stub", editable = true }
 smplx = ">=0.1.28"
@@ -104,7 +104,7 @@ vulture = ">=2.11"
 tqdm = ">=4.60.0"
 depth-anything-3 = ">=0.1.1"
 # depth-anything-3's own model code imports addict directly (depth_anything_3/model/da3.py)
-# but its pyproject.toml never declares it -- a real gap in the upstream package's
+# but its pyproject.toml never declares it, a real gap in the upstream package's
 # own metadata, confirmed by actually importing the package and hitting this.
 addict = "*"
 # ui/: the minimal desktop UI that runs the pipeline as a subprocess instead
@@ -113,7 +113,7 @@ addict = "*"
 PySide6 = ">=6.8"
 # Face-capture stage's landmark detector (FaceLandmarker task API, 478 3D
 # landmarks). Its own declared dependency is opencv-contrib-python, not
-# opencv-python-headless like the rest of this env -- confirmed to resolve
+# opencv-python-headless like the rest of this env, confirmed to resolve
 # and coexist without a version conflict (pip/uv just installs both dists;
 # whichever's cv2/ files land last in site-packages is what actually runs),
 # verified with the full existing test suite to rule out a silent regression
@@ -129,7 +129,7 @@ version = "==0.23.*"
 index = "https://download.pytorch.org/whl/cu128"
 
 # depth-anything-3 hard-pins numpy<2, which forces numpy 1.26.4 (the newest
-# 1.x release) -- and no numpy 1.x release ever shipped a cp313 win-64 wheel
+# 1.x release), and no numpy 1.x release ever shipped a cp313 win-64 wheel
 # (confirmed via PyPI's JSON API), so it has to be compiled from source on
 # this platform. That source build has proven fragile in CI.
 # Overriding it here sidesteps this whole bug class rather than chasing each
@@ -143,14 +143,14 @@ no-default-feature = true
 
 # flame-convert: a one-time-use environment, never imported by pipeline code.
 # Its only job is scripts/convert_flame_model.py, which turns the officially-
-# released FLAME 2020 model (a chumpy-pickled .pkl -- chumpy is the original
+# released FLAME 2020 model (a chumpy-pickled .pkl, chumpy is the original
 # authors' own now-unmaintained numpy wrapper library) into a plain .npz that
 # `smplx`'s own native FLAME loader reads directly, so chumpy never needs to
 # be anywhere near the actual pipeline's `main`/`export` environments. chumpy
 # 0.70 itself needs numpy <1.24 (it imports numpy's `bool`/`int` aliases,
 # removed in 1.24) and Python <=3.10 (it calls `inspect.getargspec`, removed
 # in 3.11) to even import, and its own setup.py does a bare `import pip` at
-# build time -- incompatible with an isolated build venv, hence both `pip`
+# build time, incompatible with an isolated build venv, hence both `pip`
 # declared as a real conda dependency here (so that `import pip` succeeds)
 # and `no-build-isolation` below (so the build runs against this env's own
 # site-packages instead of a pip-less throwaway one).

@@ -1,4 +1,4 @@
-"""Unit tests for progress_tracker.py's own pure logic -- no GPU/checkpoints
+"""Unit tests for progress_tracker.py's own pure logic, no GPU/checkpoints
 needed, always runs.
 """
 
@@ -107,7 +107,7 @@ def test_save_refreshes_updated_at_but_leaves_created_at_alone(tmp_path, monkeyp
 
 
 def test_load_defaults_missing_timestamps_to_zero(tmp_path):
-    # A progress.json from before this field existed -- confirms an old run
+    # A progress.json from before this field existed, confirms an old run
     # directory still loads instead of erroring on the newly-required keys.
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
     data = json.loads(runRecord.path.read_text())
@@ -122,7 +122,7 @@ def test_load_defaults_missing_timestamps_to_zero(tmp_path):
 
 def test_update_schema_adds_a_stage_the_run_predates(tmp_path):
     # Simulates an old progress.json written before a stage existed in the
-    # DAG at all -- create_run() itself always writes every stage the current
+    # DAG at all, create_run() itself always writes every stage the current
     # DAG knows about, so drop one afterward to reproduce that shape.
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
     del runRecord.stages[StageName.STAGE_9_CAPTURE_FACE.value]
@@ -136,7 +136,7 @@ def test_update_schema_adds_a_stage_the_run_predates(tmp_path):
 
 def test_update_schema_refreshes_depends_on_for_an_existing_stage(tmp_path):
     # The DAG can change after a stage's own record was first written (see
-    # STAGE_DEPENDS_ON's own comment for real examples) -- update_schema
+    # STAGE_DEPENDS_ON's own comment for real examples), update_schema
     # must overwrite a stale depends_on, not just leave whatever a stage
     # happened to be created with.
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
@@ -164,7 +164,7 @@ def test_update_schema_never_touches_an_existing_stage_own_progress(tmp_path):
 
 def test_update_schema_never_discards_a_stage_no_longer_in_the_dag(tmp_path):
     # A stage this run has a real record for but the current code no longer
-    # lists (e.g. a renamed/removed stage) must survive -- no recorded
+    # lists (e.g. a renamed/removed stage) must survive, no recorded
     # progress should ever be silently dropped by a schema migration.
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
     runRecord.stages["some_removed_stage"] = StageRecord(status=StageStatus.COMPLETE)
@@ -181,7 +181,7 @@ def test_update_schema_bumps_schema_version_and_persists_to_disk(tmp_path):
     runRecord.update_schema()
     assert runRecord.schema_version == SCHEMA_VERSION
 
-    # update_schema() saves internally -- confirm the migration actually
+    # update_schema() saves internally, confirm the migration actually
     # reached disk, not just the in-memory object.
     reloaded = RunRecord.load(runRecord.progress_dir)
     assert reloaded.schema_version == SCHEMA_VERSION
@@ -199,7 +199,7 @@ def test_ordered_stages_has_one_entry_per_stage_number_in_ascending_order():
 
 def test_ordered_stages_prefers_each_stage_own_top_level_member():
     # Stage 1 and stage 6 both have sub-progress labels sharing their
-    # stage_number (STAGE_1A/1B_*, STAGE_6B_*) -- ordered_stages() must
+    # stage_number (STAGE_1A/1B_*, STAGE_6B_*), ordered_stages() must
     # still surface the real top-level stage pipeline.run actually invokes,
     # not one of those internal-reporting-only sub-labels.
     stages_by_number = {stage.stage_number: stage for stage in ordered_stages()}

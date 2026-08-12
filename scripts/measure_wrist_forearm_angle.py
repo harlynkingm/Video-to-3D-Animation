@@ -1,11 +1,11 @@
-"""Standalone diagnostic, not part of the pipeline -- no stage imports this,
+"""Standalone diagnostic, not part of the pipeline, no stage imports this,
 and it isn't wired into any DAG. Safe to run by hand against any already-
 exported run to spot-check wrist plausibility; nothing else depends on it.
 
 Measures the real angle between the forearm bone (`{side}_elbow`, which spans
 elbow->wrist) and the hand bone (`{side}_wrist`, which spans wrist->hand) in
-an exported `output.blend`'s own rig -- the same ground-truth check that
-caught and confirmed the 2026-08-03 fix for wrists rendering anatomically
+an exported `output.blend`'s own rig, the same ground-truth check that
+caught and confirmed the  fix for wrists rendering anatomically
 impossible (folded back into the forearm) despite every pre-export validity
 gate reading the pose as plausible. A real wrist rarely exceeds ~90 degrees
 here; this project's own SMPL-X rest pose reads under 10.
@@ -16,7 +16,7 @@ already has `output.blend` (i.e. has completed stage 10):
     pixi run -e export python scripts/measure_wrist_forearm_angle.py runs/my_clip
 
 Prints per-side summary stats and any contiguous frame ranges over the
-threshold -- read the printed output rather than the process exit code:
+threshold, read the printed output rather than the process exit code:
 like every other bpy CLI invocation in this project, the interpreter's own
 teardown can report a nonzero exit even after this script's own logic
 finished and printed cleanly (a known bpy quirk, not a bug here).
@@ -120,7 +120,7 @@ def main() -> None:
 
     blend_path = args.run_dir / OUTPUT_BLEND_FILENAME
     if not blend_path.exists():
-        raise SystemExit(f"{blend_path} not found -- has stage 10 (export) run for this directory?")
+        raise SystemExit(f"{blend_path} not found, has stage 10 (export) run for this directory?")
 
     ok = measure(blend_path, args.threshold_deg)
     sys.exit(0 if ok else 1)

@@ -1,5 +1,5 @@
 """Unit tests for `write_bvh` itself (pure string/numpy logic, no GPU/checkpoints
-or SMPL-X model file needed) -- in particular the root-position channel's two
+or SMPL-X model file needed), in particular the root-position channel's two
 modes: a static zero when `root_translation` is omitted (stage 4's hands-only
 preview, which has no real root to show), and real per-frame values when it's
 given (stage 5's retarget preview). Higher-level tests
@@ -75,7 +75,7 @@ def test_camera_to_bvh_root_rotation_is_a_proper_rotation():
 def test_root_camera_to_upright_maps_camera_up_to_target_plus_y():
     """Camera space is Y-down (a point "up" from the origin has negative Y);
     the target frame is Y-up, matching the already-proven BVH convention
-    this reuses -- so a purely-vertical camera-space offset should land on
+    this reuses, so a purely-vertical camera-space offset should land on
     positive Y, not Z or X, in the corrected frame."""
     global_orient = np.zeros((1, 3), dtype=np.float32)
     transl = np.array([[0.0, -1.0, 0.0]], dtype=np.float32)  # 1 unit "up" in camera space
@@ -110,7 +110,7 @@ def test_camera_to_upright_rotation_matrix_left_multiplies_the_constant():
 
 def test_camera_to_upright_rotation_matrix_broadcasts_over_frames():
     """The BVH preview passes a whole (F, 3, 3) per-frame batch at once, not
-    one matrix at a time -- confirms that shape works, not just a single
+    one matrix at a time, confirms that shape works, not just a single
     (3, 3) matrix."""
     rng = np.random.default_rng(1)
     batch = Rotation.from_rotvec(rng.normal(size=(5, 3))).as_matrix()
@@ -131,8 +131,8 @@ def test_camera_to_upright_translation_applies_the_constant_transpose():
 
 
 def test_root_camera_to_upright_is_built_from_the_shared_primitives():
-    """Regression guard against the two implementations drifting apart again
-    -- `root_camera_to_upright`'s own result must match composing the two
+    """Regression guard against the two implementations drifting apart again,
+    `root_camera_to_upright`'s own result must match composing the two
     matrix-level primitives directly, not just look similar."""
     rng = np.random.default_rng(2)
     global_orient = rng.normal(size=(4, 3)).astype(np.float32)

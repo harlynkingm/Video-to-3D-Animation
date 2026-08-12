@@ -7,7 +7,7 @@ CCD-IK cleanup pass).
 
 Ported from `comfyui-motioncapture/nodes/motion_utils/matrix.py`, which is a
 much larger, generic transform/quaternion toolkit (`matrix.py`, hence the
-generic name) -- restricted here to just the four functions GVHMR's own code
+generic name), restricted here to just the four functions GVHMR's own code
 actually calls (`get_TRS`, `forward_kinematics`, `get_position`,
 `get_rotation`), renamed to this file to make that scope explicit rather than
 implying a general-purpose transform library. The many
@@ -22,7 +22,7 @@ import torch
 
 def normalize_transform(mat: torch.Tensor) -> torch.Tensor:
     """Rescale a 4x4 (or 3x3) transform's rotation columns back to unit length.
-    An approximate re-orthonormalization (not full Gram-Schmidt) -- matches the
+    An approximate re-orthonormalization (not full Gram-Schmidt), matches the
     source exactly, used after every matrix multiply below to keep small
     floating-point drift from accumulating into a non-rotation matrix over a
     long kinematic chain."""
@@ -67,7 +67,7 @@ def _compose(parent_world: torch.Tensor, local_to_parent: torch.Tensor) -> torch
 
 def get_mat_BtoA(mat_a: torch.Tensor, mat_b: torch.Tensor) -> torch.Tensor:
     """Given two transforms in the same (e.g. world) space, return B expressed
-    relative to A -- i.e. `inverse(A) @ B`. Used by the CCD-IK solver to turn a
+    relative to A, i.e. `inverse(A) @ B`. Used by the CCD-IK solver to turn a
     solved world-space rotation back into a joint's local rotation relative to
     its (unchanged) parent."""
     return normalize_transform(torch.inverse(mat_a) @ mat_b)
@@ -78,7 +78,7 @@ def forward_kinematics(local_transforms: torch.Tensor, parents: list[int]) -> to
     its parent) into its actual world transform.
 
     Args:
-        local_transforms: (..., J, 4, 4) -- joint `i`'s own rotation + its
+        local_transforms: (..., J, 4, 4), joint `i`'s own rotation + its
             rest-pose offset from joint `parents[i]`.
         parents: length-J list, `parents[i]` is joint i's parent index, or -1
             for the root. Must list each joint after its own parent (true for

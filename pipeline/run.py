@@ -15,7 +15,7 @@ heavier models here (SAM 3.1, GVHMR, HAMER) are separately-compiled
 native/CUDA stacks, and loading one after another inside a single process has
 been observed to segfault deep inside torch, even though each stage's own
 adapter correctly `del`s its model and calls `torch.cuda.empty_cache()` on
-unload -- the corruption is at the native/CUDA level, not a Python-visible
+unload, the corruption is at the native/CUDA level, not a Python-visible
 leak, and gets more likely to actually trigger the more frames/GPU memory
 churn a stage does. Running each stage as its own process sidesteps that
 class of bug entirely, at the cost of a per-stage process-startup/checkpoint-
@@ -26,7 +26,7 @@ mechanism to every stage.
 Resumable exactly like the per-stage manual workflow: if `progress.json`
 already exists at --output-dir, this skips `create_run` and just resumes
 against it (each stage still skips itself if already complete). Resuming
-doesn't require re-supplying `--input-video`/`--human-prompt`/etc. -- those
+doesn't require re-supplying `--input-video`/`--human-prompt`/etc., those
 only matter for a fresh run, since an existing one already has them stored.
 A RunInput flag passed while resuming still applies, though (via the same
 override mechanism `update_run` uses), so e.g. `--render-contacts-preview`
@@ -62,14 +62,14 @@ ORDERED_STAGES: list[StageName] = list(STAGE_DEPENDS_ON.keys())
 # The last stage `pipeline.run` will actually execute
 MAX_ORDERED_STAGE_NUMBER = max(s.stage_number for s in ORDERED_STAGES)
 
-# repo root is 1 level up from this file (pipeline/ -> root) -- needed so
+# repo root is 1 level up from this file (pipeline/ -> root), needed so
 # subprocess stages find pixi.toml regardless of the caller's cwd.
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def stage_module_name(stage_name: StageName) -> str:
     """The `stage_{number}_{StageName.value}` naming convention every stage
-    module follows, as an importable dotted path -- pulled out so tests
+    module follows, as an importable dotted path, pulled out so tests
     (which need to invoke the same modules as real subprocesses) can reuse
     this exact convention instead of re-deriving it by hand.
     """
@@ -82,7 +82,7 @@ def _run_subprocess_tolerating_crash_after_success(
     """Runs a stage's own CLI entrypoint and raises only if the stage didn't
     actually complete. A subprocess can crash during its own interpreter
     teardown *after* already saving its real output and marking the stage
-    complete in `progress.json` -- `bpy` in particular is known to sometimes
+    complete in `progress.json`, `bpy` in particular is known to sometimes
     do this on exit, well after the export stage's own `run()` has already
     returned successfully. Judging success by the subprocess's exit code
     alone would treat that the same as a genuine mid-stage failure; checking
@@ -95,7 +95,7 @@ def _run_subprocess_tolerating_crash_after_success(
 
 def _run_stage_subprocess(stage_name: StageName, progress_dir: Path, force: bool) -> None:
     """Runs one stage's own CLI entrypoint (`cli_entrypoint`/`run_stage`) as a
-    fresh subprocess under this same `main`-env interpreter -- that
+    fresh subprocess under this same `main`-env interpreter, that
     entrypoint already does the right dependency/skip/mark-progress
     bookkeeping against `progress.json`, so nothing is duplicated here.
     """
@@ -150,7 +150,7 @@ def main() -> None:
     # Whether RunInput's own flags (--input-video, --human-prompt, etc.) are
     # required depends on whether a run already exists at --output-dir: a
     # fresh run needs them, resuming an existing one doesn't (its RunInput is
-    # already stored) -- but that isn't knowable until --output-dir itself
+    # already stored), but that isn't knowable until --output-dir itself
     # has been parsed, so this resolves just that much first with a
     # throwaway parser (add_help=False so a real --help still goes to the
     # full parser below, not this partial one) before building the real one.

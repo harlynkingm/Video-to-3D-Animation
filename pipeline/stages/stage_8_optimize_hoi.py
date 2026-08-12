@@ -3,16 +3,16 @@ rigidly attached to a body joint during a genuine sustained hold, held
 perfectly still everywhere else (before the first grip, between two grips,
 and after the last one). The actual algorithm lives in
 `pipeline/algorithms/hoi_object_pose.py`, kept as pure math/no I/O; this file
-is the orchestration around it -- load stage 6/7's outputs, wire up the one
+is the orchestration around it, load stage 6/7's outputs, wire up the one
 callback that pure module needs (an expensive per-frame depth-based position
 fit), run it, write the result.
 
 Stays in the same incam/body-metric space as every upstream stage (5-7) and
-`object_shape.json` -- no camera-to-upright pivot correction here, that's
+`object_shape.json`, no camera-to-upright pivot correction here, that's
 purely a stage-10 export concern.
 
 A run without a tracked object (human-only) has nothing for this stage to
-solve -- writes an all-identity, all-flagged-low-confidence pose sequence
+solve, writes an all-identity, all-flagged-low-confidence pose sequence
 rather than skipping the stage's own output entirely, so stage 10's eventual
 consumption of this file doesn't need a separate no-object code path.
 """
@@ -56,10 +56,10 @@ OUTPUT_OBJECT_POSE_NPZ = "object_pose_npz"
 OUTPUT_ATTACHMENT_EVENTS = "attachment_events"
 
 # Below this duration, a contact event reads as a brief collision/kick, not a
-# sustained hold worth rigidly attaching the object to -- treated as no
+# sustained hold worth rigidly attaching the object to, treated as no
 # attachment at all, so the object just stays at whatever pose it's currently
 # holding through the brief touch (this module no longer independently
-# tracks the object while it isn't attached -- see hoi_object_pose.py's own
+# tracks the object while it isn't attached, see hoi_object_pose.py's own
 # module docstring for why). Expressed in seconds (not a fixed frame count)
 # so it scales correctly across clips at different frame rates. Uncalibrated:
 # a rough starting point, needs real footage with an actual kick/bounce to
@@ -111,17 +111,17 @@ def _resolve_overlapping_events(events: list[dict]) -> list[dict]:
 def _bridge_resolved_events(resolved: list[dict], fps: float) -> list[dict]:
     """`_resolve_overlapping_events`'s own confidence-first claiming can eat
     into a gap `contact_detection.bridge_short_gaps` already closed upstream,
-    in stage 7's own `contact_events.json` -- a lower-confidence event losing
+    in stage 7's own `contact_events.json`, a lower-confidence event losing
     part of its own range to a higher-confidence *overlapping* one (e.g. a
     hand event and an arm event both firing near the same frames) can leave a
     short gap behind at that boundary, even though stage 7 had none there.
     Reuses that exact same function (not a reimplementation, and not a second
     threshold to keep in sync) on this stage's own final resolved list, so
-    the very last step -- the one that actually drives the animation --
+    the very last step, the one that actually drives the animation --
     still honors the same bridging decision stage 7 already made, rather
     than trusting it to survive this stage's own independent reclaiming
     untouched. `ContactEvent.joint`/`peak_frame` are unused by
-    `bridge_short_gaps` -- filled with harmless placeholders here purely to
+    `bridge_short_gaps`, filled with harmless placeholders here purely to
     satisfy the dataclass, since `_qualifying_attachment_events`'s own
     candidate dicts never carried either field to begin with (dropped when
     `contact_events.json`'s richer events were first reduced to
@@ -143,18 +143,18 @@ def _bridge_resolved_events(resolved: list[dict], fps: float) -> list[dict]:
 
 def _qualifying_attachment_events(contact_events: list[dict], fps: float) -> list[dict]:
     """Filters `contact_events.json`'s own events down to genuine sustained
-    holds (any region -- a hat on the head uses the same mechanism as a mug
+    holds (any region, a hat on the head uses the same mechanism as a mug
     in a hand, just a different attachment joint; see `hoi_object_pose`'s own
     docstring), resolves any remaining cross-joint overlap, then re-bridges
     any short gap that resolution reopened (see `_bridge_resolved_events`).
 
     A region outside `GRIP_CAPABLE_REGIONS` also has to clear stage 7's own
-    `is_low_confidence` flag to qualify at all -- confirmed on a real clip:
+    `is_low_confidence` flag to qualify at all, confirmed on a real clip:
     a tracked object resting on the floor near a passing foot produced a
     16-frame `left_leg` event (0.55 mean confidence, a 0.043m depth gap)
     that cleared the duration bar here despite the foot never touching it.
     A hand/arm region's own low-confidence events still qualify regardless
-    (unchanged) -- the real evidence for trusting a weak hand/arm signal
+    (unchanged), the real evidence for trusting a weak hand/arm signal
     despite the flag (a full grip commonly wraps around/behind the object,
     depressing both signals for reasons unrelated to whether contact is
     real) doesn't extend to other regions; see `GRIP_CAPABLE_REGIONS`'s own
@@ -192,7 +192,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     object_shape_path = stage_6_outputs.get(OUTPUT_OBJECT_SHAPE)
 
     if object_shape_path is None:
-        # Human-only run -- nothing for this stage to solve.
+        # Human-only run, nothing for this stage to solve.
         translation = np.zeros((n_frames, 3))
         rotation = np.tile(np.eye(3), (n_frames, 1, 1))
         is_low_confidence = np.ones(n_frames, dtype=bool)
@@ -218,7 +218,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         focal_length_px = K[0, 0]
 
         # `object_position_fn` is the expensive one (a fresh DA3 pass per
-        # call) -- memoized since `compute_object_pose_sequence`'s own
+        # call), memoized since `compute_object_pose_sequence`'s own
         # free-track already asks for every frame (including ones inside
         # attachment windows, for the cross-fade blend's own use).
         position_cache: dict[int, tuple[np.ndarray, np.ndarray] | None] = {}
@@ -280,7 +280,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # skeleton itself is later retargeted onto a different rig (see
     # hoi_object_pose.compute_object_pose_sequence's own docstring) needs a
     # live parent/constraint relationship to the joint, not the baked
-    # translation/rotation above -- this is the raw per-event reference data
+    # translation/rotation above, this is the raw per-event reference data
     # that lets a caller (stage 10) build one. A plain JSON, not part of the
     # .pt/.npz above: an irregular-length list of small per-event records,
     # not a fixed-size per-frame array.

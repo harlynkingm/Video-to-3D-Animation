@@ -1,4 +1,4 @@
-"""create_run: bootstraps a new pipeline run -- a fresh progress directory with
+"""create_run: bootstraps a new pipeline run, a fresh progress directory with
 a `progress.json` seeded from the user's input (video path, prompts, camera
 info). Every stage script expects this file to already exist (see
 `pipeline_stage_base.cli_entrypoint`), so this runs first, once per clip.
@@ -26,7 +26,7 @@ from .progress_tracker import (
 
 def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = None) -> RunRecord:
     """`run_id` is just a human-readable label stored alongside the run's data --
-    `progress_dir` is what actually identifies a run on disk -- so it defaults to
+    `progress_dir` is what actually identifies a run on disk, so it defaults to
     the directory's own name rather than requiring the caller to repeat it.
     """
     progress_dir.mkdir(parents=True, exist_ok=True)

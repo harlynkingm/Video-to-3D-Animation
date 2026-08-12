@@ -113,7 +113,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
         self.status_indicator = RunStatusIndicator(self.status_label, None, self.progress_bar, progress_console_spacer)
         # Sized to the layout's own minimum (narrowest usable width, shortest
-        # usable height) rather than an arbitrary fixed size -- both shrink
+        # usable height) rather than an arbitrary fixed size, both shrink
         # further still since the advanced section and fps field start hidden.
         self.adjustSize()
 
@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         frame.setVisible(False)
         form = QFormLayout(frame)
         # Unlike top_form (whose text fields should fill the available width),
-        # this form's fields -- the object-shape combo, the stage-range row --
+        # this form's fields, the object-shape combo, the stage-range row --
         # should only take the width their own content needs.
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
 
@@ -241,7 +241,7 @@ class MainWindow(QMainWindow):
         stage_row_layout.setContentsMargins(0, 0, 0, 0)
         # Stored so combo *index* can be mapped back to each stage's real
         # `.stage_number` explicitly (see _on_run_clicked) instead of assuming
-        # they're numerically equal -- true today only because ordered_stages()
+        # they're numerically equal, true today only because ordered_stages()
         # happens to return one deduplicated entry per number, 0..9, in order.
         self._stages_by_combo_index = ordered_stages()
         stage_names = [s.label for s in self._stages_by_combo_index]
@@ -507,7 +507,7 @@ class MainWindow(QMainWindow):
         try:
             run_record = RunRecord.load(self._run_destination)
         except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
-            return  # progress.json doesn't exist yet, or is mid-write -- try again next tick
+            return  # progress.json doesn't exist yet, or is mid-write, try again next tick
         progress = compute_stage_progress(run_record, self._run_start_stage, self._run_stop_stage)
         self.status_indicator.apply(progress)
 

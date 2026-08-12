@@ -45,7 +45,7 @@ def _rotate_half(x: torch.Tensor) -> torch.Tensor:
 
 
 def _apply_rotary_emb(freqs: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-    """t: (B, H, L, D). freqs: (max_len, D) -- sliced to the last L positions."""
+    """t: (B, H, L, D). freqs: (max_len, D), sliced to the last L positions."""
     seq_len = t.shape[-2]
     freqs = freqs[-seq_len:].to(t)
     return t * freqs.cos() + _rotate_half(t) * freqs.sin()
@@ -179,7 +179,7 @@ class GVHMRTemporalTransformer(nn.Module):
         attn_mask = None
         if L > MAX_LEN:
             # Local attention window: each position only attends within +/- MAX_LEN//2
-            # of itself (clamped to stay inside [0, L)) -- avoids O(L^2) global attention
+            # of itself (clamped to stay inside [0, L)), avoids O(L^2) global attention
             # on long clips while still giving every frame a wide local temporal context.
             attn_mask = torch.ones((L, L), device=x.device, dtype=torch.bool)
             for i in range(L):

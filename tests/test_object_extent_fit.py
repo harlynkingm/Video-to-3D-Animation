@@ -1,5 +1,5 @@
 """Unit tests for `object_extent_fit`: pure-numpy fits on synthetic point
-clouds with a *known* shape, no GPU/checkpoints needed -- always runs.
+clouds with a *known* shape, no GPU/checkpoints needed, always runs.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from pipeline.progress_tracker import ObjectShapeHint
 
 def _box_point_cloud(center, half_extents, rotation, n=4000, rng=None):
     """A dense random surface sample of a real oriented box (points ON the six
-    faces, not filled interior) -- the kind of front-facing-surface cloud a
+    faces, not filled interior), the kind of front-facing-surface cloud a
     real depth back-projection would actually produce."""
     rng = rng or np.random.default_rng(0)
     axis = rng.integers(0, 3, n)
@@ -41,7 +41,7 @@ def _box_point_cloud(center, half_extents, rotation, n=4000, rng=None):
 
 
 def _ellipsoid_point_cloud(center, semi_axes, n=6000, rng=None):
-    """Uniform directions on the unit sphere, scaled per-axis -- a valid
+    """Uniform directions on the unit sphere, scaled per-axis, a valid
     surface sample of the ellipsoid `(x/a)^2+(y/b)^2+(z/c)^2=1` (not
     perfectly uniform by surface area, but a standard, good-enough synthetic
     fixture)."""
@@ -53,7 +53,7 @@ def _ellipsoid_point_cloud(center, semi_axes, n=6000, rng=None):
 
 def _cylinder_point_cloud(center, rotation, radius, half_height, n=6000, rng=None):
     """A surface sample of a real cylinder: mostly the curved side, plus the
-    two flat end caps -- local axis 0 is the length, matching
+    two flat end caps, local axis 0 is the length, matching
     `_fit_cylinder`'s own convention."""
     rng = rng or np.random.default_rng(0)
     n_side = int(n * 0.7)
@@ -98,7 +98,7 @@ def test_ellipsoid_fit_recovers_independent_semi_axes():
     assert descriptor["kind"] == KIND_ELLIPSOID
     assert np.allclose(descriptor["center"], center, atol=0.02)
     assert np.allclose(sorted(descriptor["semi_axes"]), sorted(semi_axes), atol=0.03)
-    # Not degenerated into a sphere -- the three recovered axes must actually differ.
+    # Not degenerated into a sphere, the three recovered axes must actually differ.
     recovered = sorted(descriptor["semi_axes"])
     assert recovered[2] - recovered[0] > 0.05
 
@@ -213,7 +213,7 @@ def test_reject_depth_outliers_drops_a_far_tail_keeps_the_dense_core():
 
 def test_reject_depth_outliers_falls_back_when_trim_would_starve_the_fit():
     """A genuinely sparse/uniform cloud (no real dense core) shouldn't lose
-    most of its points to rejection -- better to fit the untrimmed cloud than
+    most of its points to rejection, better to fit the untrimmed cloud than
     fail outright."""
     rng = np.random.default_rng(3)
     points = rng.uniform(-1.0, 1.0, (MIN_OBJECT_POINTS + 5, 3))
@@ -234,7 +234,7 @@ def test_fit_position_and_orientation_recovers_center_and_rotation():
     fitted_center, fitted_rotation = result
     assert np.allclose(fitted_center, center, atol=0.02)
     # PCA's own axis order/sign is ambiguous (see hoi_object_pose's own
-    # axis-disambiguation for why) -- checking the *plane spanned* by the
+    # axis-disambiguation for why), checking the *plane spanned* by the
     # fitted rotation matches the real one is what's actually guaranteed here,
     # not that the columns land in the same order/sign as the input.
     assert np.allclose(fitted_rotation @ fitted_rotation.T, np.eye(3), atol=1e-6)
@@ -308,7 +308,7 @@ def _disk_mask(radius: int, size: int = 200) -> np.ndarray:
 def test_mask_circularity_of_a_real_circle_is_close_to_one():
     # cv2's own perimeter measure overestimates a rasterized (stair-stepped)
     # circle's true circumference, so even a perfect disk caps out around
-    # ~0.88-0.89 here -- matches the real range measured on the basketball
+    # ~0.88-0.89 here, matches the real range measured on the basketball
     # clip's own cleanest frames, not a bug in the metric.
     mask = _disk_mask(radius=40)
     assert mask_circularity(mask) > 0.85
@@ -317,7 +317,7 @@ def test_mask_circularity_of_a_real_circle_is_close_to_one():
 def test_mask_circularity_of_an_elongated_shape_is_lower():
     size = 200
     mask = np.zeros((size, size), dtype=np.uint8)
-    mask[90:110, 20:180] = 1  # a thin horizontal bar -- far from circular
+    mask[90:110, 20:180] = 1  # a thin horizontal bar, far from circular
     assert mask_circularity(mask) < 0.5
 
 
@@ -366,11 +366,11 @@ def test_mask_solidity_of_a_clean_box_is_close_to_one():
 
 def test_mask_solidity_of_a_notched_box_is_lower_than_the_clean_box():
     # A hand gripping part of a box's silhouette bites a concave notch out
-    # of it -- the exact case mask_solidity is meant to catch, for any
+    # of it, the exact case mask_solidity is meant to catch, for any
     # convex shape kind (box, cylinder, or ellipsoid alike).
     clean = _box_mask()  # spans y in [70, 130), x in [50, 150)
     notched = clean.copy()
-    notched[70:80, 90:110] = 0  # cuts into the top edge -- a real boundary concavity,
+    notched[70:80, 90:110] = 0  # cuts into the top edge, a real boundary concavity,
     # unlike a fully interior hole (which findContours' RETR_EXTERNAL wouldn't see at all)
     assert mask_solidity(notched) < mask_solidity(clean)
 
@@ -379,7 +379,7 @@ def test_mask_solidity_does_not_catch_motion_blur_elongation():
     """Documents a real limitation, not just a passing case: a linear-blur
     smear of a box is still convex (a "stadium" shape), so solidity alone
     can't tell a blurred frame from a clean one the way mask_circularity
-    can for a round object -- see this function's own docstring."""
+    can for a round object, see this function's own docstring."""
     clean = _box_mask(w=100, h=60)
     blurred = _box_mask(w=180, h=60)  # smeared wider, but still a solid rectangle
     assert mask_solidity(blurred) > 0.99  # still reads as fully solid
@@ -426,7 +426,7 @@ def test_correct_foreshortened_axis_replaces_the_camera_axis_with_the_harmonic_m
 
 def test_correct_foreshortened_axis_leaves_a_genuinely_matching_depth_axis_unchanged():
     # If the "foreshortened" axis already happens to equal the harmonic mean
-    # of the other two, correction is a no-op -- not a guarantee anything was
+    # of the other two, correction is a no-op, not a guarantee anything was
     # wrong, just confirms the formula doesn't introduce spurious drift.
     descriptor = {
         "kind": KIND_ELLIPSOID,
@@ -453,7 +453,7 @@ def test_correct_foreshortened_axis_works_on_box_half_extents_too():
 
 def test_correct_foreshortened_axis_leaves_cylinder_unchanged():
     """Cylinder's own `radius` already blends both radial directions into
-    one median distance -- there's no separate lateral measurement left to
+    one median distance, there's no separate lateral measurement left to
     correct from, so it's returned untouched (a documented, open
     approximation, not a silent guess)."""
     descriptor = {
@@ -608,7 +608,7 @@ def test_correct_cylinder_extent_from_mask_uses_larger_dim_for_length_smaller_fo
         "half_height": 5.0,
         "rotation": np.eye(3).tolist(),
     }
-    # 0.10m = diameter (radius 0.05), 0.5m = length (half_height 0.25) -- order shouldn't matter.
+    # 0.10m = diameter (radius 0.05), 0.5m = length (half_height 0.25), order shouldn't matter.
     corrected = correct_cylinder_extent_from_mask(descriptor, (0.5, 0.10), scale_xy=1.0)
     assert np.isclose(corrected["radius"], 0.05)
     assert np.isclose(corrected["half_height"], 0.25)

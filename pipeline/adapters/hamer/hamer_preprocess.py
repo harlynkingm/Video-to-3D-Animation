@@ -6,7 +6,7 @@ to inference (no augmentation). Two project-specific choices, both flagged:
 
   - HaMeR's demo derives hand boxes from a whole-body (133-keypoint) ViTPose.
     This project only has a COCO-17 body ViTPose, so `hand_box_from_body_kpts`
-    derives the box from the wrist+elbow instead -- a heuristic, isolated here
+    derives the box from the wrist+elbow instead, a heuristic, isolated here
     so a whole-body-ViTPose upgrade can replace just this one function later.
   - `BBOX_SHAPE = (192, 256)` is HaMeR's released `model_config.yaml` value
     (that file ships only inside the checkpoint tarball, not the public repo);

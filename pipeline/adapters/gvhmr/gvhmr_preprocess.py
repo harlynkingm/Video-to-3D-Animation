@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 CROP_SIZE = 256  # square crop before narrowing to the model's (256, 192) input
-MODEL_SIZE = (256, 192)  # (H, W) -- both ViTPose and HMR2's ViT input shape
+MODEL_SIZE = (256, 192)  # (H, W), both ViTPose and HMR2's ViT input shape
 WIDTH_CROP_MARGIN = 32  # each side trimmed off the square crop's width: 256 - 2*32 = 192
 BBOX_ASPECT_RATIO = MODEL_SIZE[1] / MODEL_SIZE[0]  # width:height = 192:256, for fitting a bbox to this model's shape
 BBOX_ENLARGE = 1.2  # matches the reference's actual per-frame call (expand_bbox scale=1.2, then no further enlarge)

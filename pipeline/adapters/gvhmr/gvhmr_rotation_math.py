@@ -3,13 +3,13 @@ needed by the GVHMR port's decode and postprocessing steps.
 
 Copied (not reimplemented from scratch) from `comfyui-motioncapture/nodes/
 motion_utils/pytorch3d_shim.py`, itself a pure-PyTorch port of the same
-functions in Meta's `facebookresearch/pytorch3d` -- BSD-3-Clause, unlike
+functions in Meta's `facebookresearch/pytorch3d`, BSD-3-Clause, unlike
 GVHMR's own restricted-use license, so directly reusable here with
 attribution (see the notice below), not a clean-room rewrite.
 
 Restricted to the one code path this project's port actually exercises:
 every call site in the reference uses the default `fast=False` (quaternion-
-based) conversion, never the alternate Rodrigues-formula fast path -- so
+based) conversion, never the alternate Rodrigues-formula fast path, so
 `axis_angle_to_matrix`/`matrix_to_axis_angle` below only implement that one
 path, and the euler-angle/so3-exp-log aliases (never called anywhere in the
 GVHMR code this project ports) are dropped entirely.
@@ -68,7 +68,7 @@ def matrix_to_quaternion(matrix: torch.Tensor) -> torch.Tensor:
         [1.0 + m00 + m11 + m22, 1.0 + m00 - m11 - m22, 1.0 - m00 + m11 - m22, 1.0 - m00 - m11 + m22], dim=-1,
     ))
 
-    # The desired quaternion, multiplied by each of r, i, j, k -- picking the
+    # The desired quaternion, multiplied by each of r, i, j, k, picking the
     # best-conditioned candidate (largest q_abs) avoids the near-zero-denominator
     # instability any single formula has near specific rotation angles.
     quat_by_rijk = torch.stack(

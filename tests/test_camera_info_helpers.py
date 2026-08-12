@@ -1,4 +1,4 @@
-"""Unit tests for compute_intrinsics_matrix -- pure math, always runs."""
+"""Unit tests for compute_intrinsics_matrix, pure math, always runs."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pipeline.helpers.camera_info_helpers import compute_intrinsics_matrix
 def test_focal_length_uses_sensor_width_px_not_image_width_px():
     """The regression case this split exists for: a rotated frame's own
     image_width_px is NOT the same axis sensor_width_mm was measured against
-    (see stage_0_ingest_video.py's rotation handling) -- e.g. a 3840x2160
+    (see stage_0_ingest_video.py's rotation handling), e.g. a 3840x2160
     sensor rotated 90 degrees produces a 2160x3840 output frame, but the
     focal length ratio must still use the sensor's real 3840px width."""
     K = compute_intrinsics_matrix(

@@ -26,7 +26,7 @@ UI_PREPARING_NEXT_STAGE = "Preparing to run next stage..."
 class RunFormState:
     destination_folder: str
     # video_path/human_prompt/focal_length_mm/sensor_width_mm are only required
-    # for a fresh run -- pipeline.run itself already resumes an existing run
+    # for a fresh run, pipeline.run itself already resumes an existing run
     # (progress.json already present at destination_folder) from its own
     # stored RunInput, treating any of these as an override only when given.
     # Left as None, they're simply omitted from argv (see build_run_argv)
@@ -49,7 +49,7 @@ class RunFormState:
 def build_run_argv(state: RunFormState) -> list[str]:
     """`state` -> the same argv `pixi run -e main python -m pipeline.run ...`
     would receive by hand. Uses `sys.executable` rather than shelling out
-    through `pixi run` again -- the UI process itself already runs under the
+    through `pixi run` again, the UI process itself already runs under the
     `main` env's interpreter, so it's the same interpreter either way.
     """
     argv = [
@@ -92,7 +92,7 @@ def _stages_in_range(start_stage: int, stop_stage: int) -> list[StageName]:
 
 def stage_count_in_range(start_stage: int, stop_stage: int) -> int:
     """How many stages `pipeline.run` will actually execute for
-    [start_stage, stop_stage] -- used by the queue (ui/queue.py) to size its
+    [start_stage, stop_stage], used by the queue (ui/queue.py) to size its
     own aggregate progress bar for items that haven't started yet (no
     progress.json to read from) without duplicating ORDERED_STAGES'
     filtering logic.
@@ -103,7 +103,7 @@ def stage_count_in_range(start_stage: int, stop_stage: int) -> int:
 def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: int) -> StageProgress:
     """Summarizes a run's on-disk progress.json against the stages
     `pipeline.run` actually executes for [start_stage, stop_stage] --
-    `ORDERED_STAGES`, the same list pipeline.run itself iterates -- into one
+    `ORDERED_STAGES`, the same list pipeline.run itself iterates, into one
     bar-fill fraction and one human-readable status line, reusing each
     stage's own `StageName.label` rather than inventing new wording.
     """
@@ -155,7 +155,7 @@ class PipelineRunner(QObject):
         self._process = QProcess(self)
         self._process.setWorkingDirectory(str(REPO_ROOT))
         self._process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        # Python only line-buffers stdout when it's a real terminal -- piped to
+        # Python only line-buffers stdout when it's a real terminal, piped to
         # QProcess like this, it's fully block-buffered by default, so a print
         # can sit unflushed for a long time (confirmed: pipeline.run's own
         # early "Found an existing run..." print was arriving after every
@@ -163,7 +163,7 @@ class PipelineRunner(QObject):
         # forces unbuffered stdout/stderr for this process AND everything it
         # subprocess.run()s in turn (stages 0-8 directly, stage 10 through its
         # `pixi run -e export ...` wrapper), since env vars inherit down the
-        # whole chain -- restoring live output without touching pipeline code.
+        # whole chain, restoring live output without touching pipeline code.
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
         self._process.setProcessEnvironment(env)

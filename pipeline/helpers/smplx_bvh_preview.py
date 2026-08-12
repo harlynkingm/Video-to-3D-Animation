@@ -8,12 +8,12 @@ correction before it matches GVHMR's.
 Reuses `write_bvh` and SMPL-X's own rest skeleton (which loads with plain numpy,
 no chumpy). Body joints are driven by the merged `global_orient`/`body_pose`,
 fingers by `left_hand_pose`/`right_hand_pose`, and the root's own position by
-`transl` -- GVHMR's own root translation, given the same camera-space -> BVH
+`transl`, GVHMR's own root translation, given the same camera-space -> BVH
 change of basis as the root's rotation (`bvh_export.camera_to_upright_
 rotation_matrix`/`camera_to_upright_translation`), since a position vector
 needs the same reorientation a direction does. This is the only BVH preview
 in the pipeline with real root motion; stage 4's hands-only preview
-(`hamer_bvh_preview.py`) stays root-locked on purpose -- it shows both hands in
+(`hamer_bvh_preview.py`) stays root-locked on purpose, it shows both hands in
 isolation, side by side, where a moving root would only get in the way.
 """
 
@@ -52,7 +52,7 @@ INCLUDED_JOINTS = list(range(22)) + list(LEFT_FINGERS) + list(RIGHT_FINGERS)
 
 def smplx_rest_joints_and_parents() -> tuple[np.ndarray, np.ndarray]:
     """(55, 3) rest-pose joint positions + length-55 kinematic-tree parents,
-    from SMPL-X's own neutral mesh. Public -- shared with `hand_retarget.py`,
+    from SMPL-X's own neutral mesh. Public, shared with `hand_retarget.py`,
     which needs the rest-pose wrist-to-finger direction for its anatomical
     swing check, the same rest geometry this module already loads to build
     its own preview skeleton."""
@@ -118,7 +118,7 @@ def render_body_hands_bvh(
         for out_i, smplx_idx in enumerate(INCLUDED_JOINTS):
             rotations[frame, out_i] = Rotation.from_rotvec(axis_angle_for(smplx_idx, frame)).as_matrix()
     # Reorient the whole skeleton from camera space into BVH's Y-up convention
-    # -- only the root (Pelvis, out_i 0)'s own rotation/translation, see
+    #, only the root (Pelvis, out_i 0)'s own rotation/translation, see
     # bvh_export.py's own docstrings for why.
     rotations[:, 0] = camera_to_upright_rotation_matrix(rotations[:, 0])
     root_translation = camera_to_upright_translation(transl)

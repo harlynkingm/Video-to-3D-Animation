@@ -1,5 +1,5 @@
 """Unit tests for `contact_detection`: pure-numpy geometry + hysteresis, no
-GPU/checkpoints needed -- always runs.
+GPU/checkpoints needed, always runs.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_confidence_is_full_inside_the_mask():
 def test_confidence_decays_linearly_with_distance():
     mask = _square_mask()
     # The box spans columns 40-59 inclusive (mask[:, 40:60]), so pixel 65 is
-    # 6px past the nearest True column (59), not 5 -- an off-by-one against
+    # 6px past the nearest True column (59), not 5, an off-by-one against
     # the exclusive slice bound if computed naively.
     pixels = np.array([[65.0, 50.0]])
     confidence = _confidence_from_mask_distance(pixels, mask)
@@ -74,7 +74,7 @@ def test_all_nine_regions_are_defined_with_matching_joint_names():
 
 def test_head_top_joint_index_does_not_collide_with_any_real_region_joint():
     """HEAD_TOP_JOINT_INDEX is a synthetic index (the appended mesh vertex,
-    see that constant's own comment) -- it must never coincide with a real
+    see that constant's own comment), it must never coincide with a real
     skeletal joint index another region uses, or consolidate_overlapping_events
     would wrongly treat a head-top contact and some other region's contact as
     the same physical joint."""
@@ -85,7 +85,7 @@ def test_head_top_joint_index_does_not_collide_with_any_real_region_joint():
 
 
 def test_attachment_joint_index_redirects_head_top_to_the_real_head_joint():
-    """stage 8/10 rigidly attach to a real skeletal bone -- head_top's own
+    """stage 8/10 rigidly attach to a real skeletal bone, head_top's own
     REGION_JOINTS entry (a synthetic mesh-vertex index) has no such bone, so
     attachment_joint_index must redirect it to HEAD_JOINT instead (the same
     one the "head" region already uses), not return the raw vertex index."""
@@ -161,7 +161,7 @@ def test_per_frame_region_confidence_matches_frame_confidence_for_region():
     mask = _square_mask()
 
     # Sized to cover HEAD_TOP_JOINT_INDEX (the appended mesh-vertex slot, past
-    # the real 55-joint body+hands layout) -- per_frame_region_confidence
+    # the real 55-joint body+hands layout), per_frame_region_confidence
     # indexes every region's own joints, not just left_hand's. z=1.0 everywhere
     # (a realistic camera-space depth) avoids a divide-by-zero projecting the
     # other regions' still-untouched joints.
@@ -204,7 +204,7 @@ def test_detect_contact_events_finds_a_clear_contact_stretch():
 
     # CONTACT_WINDOW=5's rolling max naturally widens the elevated region by
     # (window//2) frames on each side of the raw 10-14 spike, same as the
-    # wrist-plausibility gate's own hysteresis -- 8-16, not exactly 10-14.
+    # wrist-plausibility gate's own hysteresis, 8-16, not exactly 10-14.
     assert len(events) == 1
     assert events[0].start_frame == 8
     assert events[0].end_frame == 16
@@ -217,7 +217,7 @@ def test_detect_contact_events_finds_a_clear_contact_stretch():
 
 def test_detect_contact_events_ignores_a_run_that_never_seeds():
     # Elevated (above release) throughout, but never crosses the stricter seed
-    # threshold -- should never be reported as a real contact.
+    # threshold, should never be reported as a real contact.
     confidence = np.full(20, 0.5)
     joint_idx = np.zeros(20, dtype=int)
     events = detect_contact_events(confidence, joint_idx, "left_hand", REGION_JOINT_NAMES["left_hand"])
@@ -230,7 +230,7 @@ def test_detect_contact_events_bridges_a_brief_dip():
     window) shouldn't fragment into two separate events."""
     confidence = np.zeros(20)
     confidence[5:9] = 0.9
-    confidence[9] = 0.4  # dip -- below seed, but still above release
+    confidence[9] = 0.4  # dip, below seed, but still above release
     confidence[10:14] = 0.9
     joint_idx = np.zeros(20, dtype=int)
 
@@ -293,7 +293,7 @@ def test_consolidate_leaves_different_joints_separate():
 
 def test_consolidate_leaves_non_overlapping_same_joint_events_separate():
     """Two genuinely separate grips (same wrist joint) shouldn't merge just
-    because they share a joint -- only overlapping-in-time events represent
+    because they share a joint, only overlapping-in-time events represent
     the same physical touch."""
     first_grip = _event(["left_hand"], "wrist", 0, 5, 2, 0.9)
     second_grip = _event(["left_arm"], "wrist", 50, 55, 52, 0.9)
@@ -314,7 +314,7 @@ def test_consolidate_merges_a_chain_of_three_overlapping_events():
 
 
 def test_bridge_short_gaps_closes_a_same_region_gap_at_the_midpoint():
-    """One hand's own brief tracking dropout mid-grip -- two left_hand events
+    """One hand's own brief tracking dropout mid-grip, two left_hand events
     a few frames apart should end up abutting, not merged into one."""
     first = _event(["left_hand"], "wrist", 0, 10, 5, 0.9)
     second = _event(["left_hand"], "wrist", 15, 30, 20, 0.9)  # 4-frame gap (11-14)
@@ -329,7 +329,7 @@ def test_bridge_short_gaps_closes_a_same_region_gap_at_the_midpoint():
 def test_bridge_short_gaps_closes_a_cross_hand_gap_but_keeps_events_separate():
     """A fast hand-to-hand pass: the object was never let go, but the
     detected joint changes from left to right hand. Each side must keep its
-    own region/joint for stage 8's own rigid attachment -- bridging must not
+    own region/joint for stage 8's own rigid attachment, bridging must not
     merge them into one event, only close the gap between them."""
     left = _event(["left_hand"], "thumb_tip", 0, 100, 50, 0.9)
     right = _event(["right_hand"], "middle_tip", 105, 200, 150, 0.9)  # 4-frame gap
@@ -357,7 +357,7 @@ def test_bridge_short_gaps_leaves_a_gap_longer_than_the_max_untouched():
 
 def test_bridge_short_gaps_never_bridges_a_non_bridgeable_region():
     """A leg (or head/chest) event near a hand event in time is not evidence
-    of a physically plausible hand-off -- only left/right hand/arm bridge."""
+    of a physically plausible hand-off, only left/right hand/arm bridge."""
     hand = _event(["left_hand"], "wrist", 0, 10, 5, 0.9)
     leg = _event(["right_leg"], "ankle", 14, 30, 20, 0.9)  # 3-frame gap, well within the max
 
@@ -368,7 +368,7 @@ def test_bridge_short_gaps_never_bridges_a_non_bridgeable_region():
 
 
 def test_bridge_short_gaps_does_not_touch_already_overlapping_events():
-    """Overlap resolution is consolidate_overlapping_events' own job -- an
+    """Overlap resolution is consolidate_overlapping_events' own job, an
     already-overlapping pair (gap <= 0) must pass through unchanged."""
     first = _event(["left_hand"], "wrist", 0, 15, 5, 0.9)
     second = _event(["left_arm"], "elbow", 10, 25, 20, 0.9)
@@ -399,7 +399,7 @@ def test_depth_gap_for_joint_is_zero_when_object_and_body_are_at_the_same_depth(
 
 def test_depth_gap_for_joint_is_large_for_incidental_occlusion():
     """Object and body silhouettes overlap where the joint projects, but
-    they're at genuinely different depths -- one is merely in front of the
+    they're at genuinely different depths, one is merely in front of the
     other in the image, not touching."""
     depth = np.zeros((100, 100))
     object_mask = np.zeros((100, 100), dtype=bool)

@@ -1,12 +1,12 @@
 """Terminal progress reporting for the pipeline's per-frame stages.
 
 Stage 1 (SAM 3.1 tracking), stage 2 (GVHMR), stage 4 (HaMeR), and stage 7
-(contact detection) each loop once per video frame -- `frame_progress` wraps
+(contact detection) each loop once per video frame, `frame_progress` wraps
 that loop with a single self-overwriting terminal line showing percent
 complete, frames done/total, and a remaining-time estimate (tqdm smooths the
 per-frame rate itself, so early GPU-warmup frames don't skew the estimate).
 
-Stage 3 (depth) and stage 6 (scale) run once on a single anchor frame -- no
+Stage 3 (depth) and stage 6 (scale) run once on a single anchor frame, no
 per-frame progress is possible, so `report_single_shot` prints a start/done
 line with elapsed time instead.
 """

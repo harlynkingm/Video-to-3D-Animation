@@ -26,7 +26,7 @@ from pipeline.algorithms.motion_smoothing import (
 
 
 def _jitter_energy(seq: np.ndarray) -> float:
-    """Mean magnitude of frame-to-frame second differences -- a proxy for how
+    """Mean magnitude of frame-to-frame second differences, a proxy for how
     jittery a sequence is (a smooth signal has near-zero curvature noise)."""
     return float(np.abs(np.diff(seq, n=2, axis=0)).mean())
 
@@ -188,10 +188,10 @@ def test_cap_long_gaps_with_hold_freezes_early_part_of_long_gap():
 
     held_values, held_valid = cap_long_gaps_with_hold(values, valid, max_bridge_frames=10)
 
-    # Held region: [10, 30) -- frozen at the entry value, now marked valid.
+    # Held region: [10, 30), frozen at the entry value, now marked valid.
     assert held_valid[10:30].all()
     assert np.array_equal(held_values[10:30], np.tile([1.0, 0.0, 0.0], (20, 1)))
-    # Tail region: [30, 40) -- still invalid, left for interpolation.
+    # Tail region: [30, 40), still invalid, left for interpolation.
     assert not held_valid[30:40].any()
     # Untouched elsewhere.
     assert held_valid[:10].all() and held_valid[40:].all()
@@ -199,7 +199,7 @@ def test_cap_long_gaps_with_hold_freezes_early_part_of_long_gap():
 
 def test_cap_long_gaps_with_hold_leaves_leading_and_trailing_gaps_untouched():
     """Leading/trailing runs already freeze correctly via `fill_invalid`'s own
-    boundary behavior -- there's no entry value to hold from on the open side
+    boundary behavior, there's no entry value to hold from on the open side
     of a leading run, and holding a trailing run's entry value is exactly
     what already happens."""
     n = 40
@@ -231,12 +231,12 @@ def test_cap_long_gaps_with_hold_does_not_mutate_inputs():
 
 def test_decimate_removes_jitter_outright():
     """Keyframe reduction fits a smooth curve through sparse knots, so residual
-    jitter is gone by construction -- when the tolerance sits comfortably above
+    jitter is gone by construction, when the tolerance sits comfortably above
     the noise floor (as it does in the pipeline, where decimation runs after the
     one-euro pass has already knocked the residual down), the wiggle frames are
     dropped and the fit is far smoother than the input. (If the noise amplitude
     instead rivals the tolerance, RDP correctly keeps those frames as knots and
-    smooths little -- that's the 'knots on noise' failure the one-euro pre-pass
+    smooths little, that's the 'knots on noise' failure the one-euro pre-pass
     exists to prevent.)"""
     rng = np.random.default_rng(10)
     n = 200
@@ -323,7 +323,7 @@ def test_fill_invalid_zero_valid_frames_returns_unchanged():
     """Regression guard for a real crash: a shoulders-up clip framed for
     face capture left GVHMR's own whole-body pose confidence at
     zero on every single frame, so `pp_bridge_low_confidence_root_motion`
-    called `fill_invalid` with an all-False `valid` -- `np.interp` raises on
+    called `fill_invalid` with an all-False `valid`, `np.interp` raises on
     an empty sample-point array in that case. There is no single real value
     left to hold at either, so the honest degenerate case is to return the
     input unchanged rather than raise or fabricate a default."""
@@ -389,7 +389,7 @@ def test_translation_decimate_stays_within_tolerance():
 
 def test_translation_decimate_preserves_large_real_motion():
     """A genuinely large displacement must survive decimation near-intact, not
-    get flattened the way jitter does -- decimation should distinguish real
+    get flattened the way jitter does, decimation should distinguish real
     motion from noise by magnitude relative to tolerance, not erase both."""
     n = 60
     seq = np.zeros((n, 3))
@@ -448,7 +448,7 @@ def test_one_euro_collapses_small_residual_wobble():
     """A joint circling in place with small amplitude (the axis-precession
     artifact this replaced) should be smoothed down close to a constant, not
     literally held (that discrete hold-then-snap is exactly what looked like
-    stop-motion and got replaced) -- just continuously, substantially damped."""
+    stop-motion and got replaced), just continuously, substantially damped."""
     n = 60
     base = np.array([0.9, 0.0, 0.0])
     t = np.linspace(0, 4 * np.pi, n)
@@ -467,8 +467,8 @@ def test_one_euro_collapses_small_residual_wobble():
 def test_one_euro_speed_estimate_cancels_symmetric_noise():
     """Regression guard for a real bug: an earlier version estimated 'current
     speed' by low-pass filtering the already-rectified (always >= 0) geodesic
-    distance between consecutive frames, which can never average toward zero
-    -- rectified symmetric noise has a nonzero mean no matter how heavily it's
+    distance between consecutive frames, which can never average toward zero,
+    rectified symmetric noise has a nonzero mean no matter how heavily it's
     smoothed. That let noise alone convince the filter a still joint was
     moving, loosening it and letting the noise leak through as persistent
     low-amplitude wobble (reported on real thumb data as "shaky, like a person
@@ -538,7 +538,7 @@ def test_one_euro_occlusion_gap_uses_same_fill_contract():
 
 def test_one_euro_linear_collapses_noise_on_a_stationary_signal():
     """Linear counterpart to `one_euro_filter_rotation_sequence`'s own noise
-    test -- a static true value plus per-frame noise (e.g. FLAME `expression`
+    test, a static true value plus per-frame noise (e.g. FLAME `expression`
     coefficients while the face is at rest) should be smoothed hard."""
     rng = np.random.default_rng(7)
     n = 200
@@ -553,7 +553,7 @@ def test_one_euro_linear_collapses_noise_on_a_stationary_signal():
 def test_one_euro_linear_tracks_real_transient_with_low_lag():
     """A real, fast, brief transient (a blink-shaped dip in one channel) must
     come through close to its true depth, not be smeared flat the way a
-    heavier fixed-window filter would -- the whole reason this replaced a
+    heavier fixed-window filter would, the whole reason this replaced a
     single global smoothing weight for FLAME's jaw/expression output."""
     n = 60
     seq = np.zeros((n, 3))

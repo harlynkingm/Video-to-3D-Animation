@@ -1,7 +1,7 @@
 """Contact detection: per-frame, checks whether the body's candidate joints
 (fingertips + wrist for each hand, plus a couple of representative joints for
 every other body region) land near the tracked object's 2D mask in image
-space -- pure geometry, no learned model, no GPU. Deliberately never compares
+space, pure geometry, no learned model, no GPU. Deliberately never compares
 against absolute real-world depth: GVHMR's own Z estimate is measurably
 unreliable for a reaching/foreshortened arm, and for a convincing *animation*
 what matters is that the body and object agree with each other in the SAME
@@ -22,7 +22,7 @@ for both a hand and its own arm region, so one real grip can produce two
 region-events for the same physical contact); `depth_gap_for_joint` measures
 whether the object and body were actually physically close where their masks
 overlapped, rather than one merely passing in front of/behind the other in
-the image -- using an already-computed depth map (e.g. from
+the image, using an already-computed depth map (e.g. from
 Depth-Anything-3, which this project's own depth investigation found
 reliable), never GVHMR's own retargeted joint position.
 """
@@ -39,7 +39,7 @@ from scipy.ndimage import distance_transform_edt, maximum_filter1d
 # from 1.0 (inside the mask) to 0.0 at this distance. Loose enough to bridge
 # a real, temporary retargeted-hand-position drift during fast object motion
 # (a continuous grip measured a drift of up to ~32px mid-lift, which a
-# tighter threshold split into two events with a gap in between) -- safe to
+# tighter threshold split into two events with a gap in between), safe to
 # keep loose because `depth_gap_for_joint` is the actual arbiter of real
 # contact vs. incidental occlusion; this threshold only decides what's worth
 # proposing as a candidate.
@@ -60,7 +60,7 @@ CONTACT_WINDOW = 5
 # spine1, l/r knee, spine2, l/r ankle, spine3, l/r foot, neck, l/r collar,
 # head, l/r shoulder, l/r elbow, l/r wrist). Each hand's 15 finger joints run
 # [Index1-3, Middle1-3, Pinky1-3, Ring1-3, Thumb1-3]; the "tip" of each finger
-# is its 3rd (last) phalanx joint -- not the literal fingertip surface point,
+# is its 3rd (last) phalanx joint, not the literal fingertip surface point,
 # but a good-enough proxy for contact detection, consistent with this
 # module's other geometric approximations.
 LEFT_WRIST_JOINT = 20
@@ -84,13 +84,13 @@ LEFT_ANKLE_JOINT = 7
 RIGHT_ANKLE_JOINT = 8
 
 # Not a real SMPL-X skeletal joint. HEAD_JOINT (above) sits at the base of
-# the skull/top of the neck -- fine for a chin/face/back-of-neck contact, but
+# the skull/top of the neck, fine for a chin/face/back-of-neck contact, but
 # measured up to ~250px short of an object resting on the crown (a hat), far
 # past CONTACT_PIXEL_THRESHOLD, because that's just not where the joint is
 # anatomically. `stage_7_annotate_contacts._all_frame_joints` appends one
-# synthetic "joint" instead -- the SMPL-X mesh's own head-top vertex (see
+# synthetic "joint" instead, the SMPL-X mesh's own head-top vertex (see
 # that function's own SMPLX_HEAD_TOP_VERTEX), which rides the actual scalp
-# surface and so tracks head tilts correctly -- as the LAST column of
+# surface and so tracks head tilts correctly, as the LAST column of
 # whatever (F, J, 3) array it builds. 127 is
 # `smplx.create(..., use_pca=False, flat_hand_mean=True).joints.shape[1]`
 # for this project's SMPL-X neutral model; asserted at the append site so a
@@ -100,14 +100,14 @@ HEAD_TOP_JOINT_INDEX = 127
 _HAND_JOINT_NAMES = ["index_tip", "middle_tip", "pinky_tip", "ring_tip", "thumb_tip", "wrist"]
 
 # Body region -> candidate SMPL-X joint indices to test for proximity to the
-# object mask. Deliberately coarse -- 9 regions total, including the two
-# hands -- rather than a separate region per limb segment (upper arm vs.
+# object mask. Deliberately coarse, 9 regions total, including the two
+# hands, rather than a separate region per limb segment (upper arm vs.
 # forearm, thigh vs. shin vs. foot): a finer split would just fragment one
 # real limb-object contact into several near-duplicate events without adding
 # information this project needs. Each non-hand region uses its own joint
 # chain's endpoints plus midpoint (e.g. shoulder/elbow/wrist for an arm) so a
 # contact anywhere along that limb's length is caught, not just at one end.
-# "head_top" is the one exception -- see HEAD_TOP_JOINT_INDEX's own comment
+# "head_top" is the one exception, see HEAD_TOP_JOINT_INDEX's own comment
 # for why it's a mesh vertex, not a skeletal joint.
 REGION_JOINTS: dict[str, list[int]] = {
     "left_hand": LEFT_FINGERTIP_JOINTS + [LEFT_WRIST_JOINT],
@@ -121,7 +121,7 @@ REGION_JOINTS: dict[str, list[int]] = {
     "right_leg": [RIGHT_HIP_JOINT, RIGHT_KNEE_JOINT, RIGHT_ANKLE_JOINT],
 }
 
-# Parallels REGION_JOINTS, one name per candidate joint -- purely for a
+# Parallels REGION_JOINTS, one name per candidate joint, purely for a
 # human-readable event label, never used for indexing.
 REGION_JOINT_NAMES: dict[str, list[str]] = {
     "left_hand": _HAND_JOINT_NAMES,
@@ -141,7 +141,7 @@ REGION_NAMES: list[str] = list(REGION_JOINTS.keys())
 @dataclass
 class ContactEvent:
     regions: list[str]  # usually one region; >1 after consolidate_overlapping_events merges a shared-joint pair
-    joint: str  # one of REGION_JOINT_NAMES[regions[0]] -- the same joint in every region in `regions`
+    joint: str  # one of REGION_JOINT_NAMES[regions[0]], the same joint in every region in `regions`
     start_frame: int
     end_frame: int  # inclusive
     peak_frame: int  # frame with this event's own highest confidence
@@ -153,12 +153,12 @@ def candidate_joint_indices(region: str) -> list[int]:
     return REGION_JOINTS[region]
 
 
-# stage 8/10's own rigid-attachment joint for a region -- almost always
+# stage 8/10's own rigid-attachment joint for a region, almost always
 # REGION_JOINTS[region][-1] (see hoi_object_pose.py's own NUM_BODY_JOINTS
 # comment: every real REGION_JOINTS attachment joint falls within
 # SmplxSkeleton's 22-joint body scope). "head_top" is the one exception: its
 # REGION_JOINTS entry is a synthetic mesh-vertex index (HEAD_TOP_JOINT_INDEX),
-# not a real skeletal joint -- there's no bone in the exported rig to rigidly
+# not a real skeletal joint, there's no bone in the exported rig to rigidly
 # attach to at that vertex, so a head_top contact still attaches to the same
 # real HEAD_JOINT the "head" region already uses. Detection benefits from the
 # accurate mesh-surface point; attachment needs an actual bone, and the
@@ -172,10 +172,10 @@ def attachment_joint_index(region: str) -> int:
 
 # Regions that can genuinely grip an object closely enough to depress the
 # observable 2D/depth signal for reasons unrelated to whether contact is
-# real -- a hand wrapped around/behind an object, or an arm cradling one.
+# real, a hand wrapped around/behind an object, or an arm cradling one.
 # Both real-clip cases motivating stage 7's own weak-2D-confidence/large-
 # depth-gap rescue logic (see `stage_7_annotate_contacts._is_low_confidence`)
-# were hands specifically -- unvalidated for any other region, and much less
+# were hands specifically, unvalidated for any other region, and much less
 # physically plausible for most of them: a leg/foot's real interaction with
 # an object is typically a brief kick, not a sustained hold, and this
 # project's rigid-attachment model (stage 8) has no representation for
@@ -208,7 +208,7 @@ def _confidence_from_distance_field(pixels: np.ndarray, dist_outside: np.ndarray
 
 def _confidence_from_mask_distance(pixels: np.ndarray, object_mask: np.ndarray) -> np.ndarray:
     """(N,) confidence: 1.0 if a pixel lands inside the mask, decaying to 0 at
-    CONTACT_PIXEL_THRESHOLD -- distance to the mask's nearest True pixel."""
+    CONTACT_PIXEL_THRESHOLD, distance to the mask's nearest True pixel."""
     height, width = object_mask.shape
     dist_outside = distance_transform_edt(~object_mask)
     return _confidence_from_distance_field(pixels, dist_outside, height, width)
@@ -218,7 +218,7 @@ def frame_confidence_for_region(
     joints_xyz: np.ndarray, region: str, K: np.ndarray, object_masks: list[np.ndarray | None]
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per frame, the MAX confidence across this region's candidate joints
-    (which joint is closest can vary frame to frame -- a grip might shift from
+    (which joint is closest can vary frame to frame, a grip might shift from
     fingertip-only contact to the whole hand, or an object might slide from a
     forearm towards the wrist). Returns `(confidence, joint_idx)`, both (F,);
     `joint_idx` indexes into `candidate_joint_indices(region)`, or -1 on a
@@ -254,7 +254,7 @@ def per_frame_region_confidence(
 ) -> dict[str, tuple[float, int]]:
     """Confidence + winning candidate-joint index for every region, for a
     SINGLE frame. Computes the mask's own distance field once and shares it
-    across all 8 regions -- calling `frame_confidence_for_region` once per
+    across all 8 regions, calling `frame_confidence_for_region` once per
     region instead would recompute that same distance field 8 times over,
     real wasted work once a caller (stage 7) needs every region for the same
     frame anyway. Returns `{region: (confidence, joint_idx)}`; `joint_idx`
@@ -279,7 +279,7 @@ def per_frame_region_confidence(
 
 def contiguous_true_runs(mask: np.ndarray) -> list[tuple[int, int]]:
     """(start, end) inclusive index pairs for each contiguous True run. Public
-    -- shared with gvhmr_postprocess.py's own hysteresis lock/release logic,
+   , shared with gvhmr_postprocess.py's own hysteresis lock/release logic,
     the same run-finding need for a different (per-joint) confidence signal."""
     runs = []
     n, i = len(mask), 0
@@ -336,14 +336,14 @@ def _merge_two_events(a: ContactEvent, b: ContactEvent) -> ContactEvent:
 
 def consolidate_overlapping_events(events: list[ContactEvent]) -> list[ContactEvent]:
     """Merges events from different regions that are really the same
-    physical contact reported twice -- e.g. `left_hand` and `left_arm` both
+    physical contact reported twice, e.g. `left_hand` and `left_arm` both
     include the wrist as a candidate joint (see `REGION_JOINTS`), so a single
     wrist-driven grip produces one event per region unless merged here. Two
     events merge when they resolve to the same actual SMPL-X joint index
-    (never just the same joint *name* -- "wrist" means a different index
+    (never just the same joint *name*, "wrist" means a different index
     under `left_arm` vs. `right_arm`) and their frame ranges overlap. The
     merged event's `mean_confidence`/`peak_frame` come from whichever
-    original event was itself more confident -- the two aren't independent
+    original event was itself more confident, the two aren't independent
     evidence, just the same signal seen through two regions, so this doesn't
     average or add them.
     """
@@ -367,7 +367,7 @@ def consolidate_overlapping_events(events: list[ContactEvent]) -> list[ContactEv
     return consolidated
 
 
-# Regions a gap is allowed to bridge across -- deliberately scoped to the one
+# Regions a gap is allowed to bridge across, deliberately scoped to the one
 # case real footage has actually validated (a hand-to-hand pass, or a single
 # hand's own brief tracking dropout mid-grip), not every region: bridging a
 # leg or head event into a hand event would assume a physically nonsensical
@@ -377,7 +377,7 @@ BRIDGEABLE_REGIONS = frozenset({"left_hand", "right_hand", "left_arm", "right_ar
 
 # Max gap (seconds) between two otherwise-separate events, within
 # BRIDGEABLE_REGIONS, that gets closed rather than left as a frozen "held"
-# stretch in the final animation -- covers a single joint's own brief
+# stretch in the final animation, covers a single joint's own brief
 # tracking dropout mid-grip, and a fast hand-to-hand pass (the object is
 # never actually let go, just briefly ambiguous which hand is holding it
 # while both are close together). An initial estimate, same caveat as every
@@ -418,7 +418,7 @@ def bridge_short_gaps(events: list[ContactEvent], fps: float) -> list[ContactEve
 
 
 def _nearest_depth(depth: np.ndarray, mask: np.ndarray, pixel: np.ndarray) -> float | None:
-    """DA3's own depth value at `mask`'s own pixel nearest to `pixel` -- not a
+    """DA3's own depth value at `mask`'s own pixel nearest to `pixel`, not a
     literal same-pixel lookup, since `pixel` (a joint's 2D projection) can
     land on a pixel the OTHER mask owns (e.g. the object occluding the joint
     it's testing against), in which case `mask` itself has no pixel there at
@@ -434,15 +434,15 @@ def depth_gap_for_joint(
     depth: np.ndarray, object_mask: np.ndarray, human_mask: np.ndarray, joint_pixel: np.ndarray,
 ) -> float | None:
     """Metric depth gap, at one frame, between the tracked object and the
-    body surface right where a candidate joint projects -- using an
+    body surface right where a candidate joint projects, using an
     already-computed depth map (e.g. Depth-Anything-3's own estimate of the
     real photographed frame), never GVHMR's own retargeted joint Z (this
     project's depth investigation found GVHMR's own estimate unreliable
-    there, but never found DA3's own monocular depth unreliable -- this
+    there, but never found DA3's own monocular depth unreliable, this
     reuses the latter, not the former). A small gap means the object and
     body are physically close where their 2D masks overlapped in image space
     (plausible contact); a large gap means that overlap was incidental
-    occlusion -- one merely passing in front of or behind the other from the
+    occlusion, one merely passing in front of or behind the other from the
     camera's viewpoint, not actually touching. Returns None if either mask is
     empty this frame (nothing to compare).
     """

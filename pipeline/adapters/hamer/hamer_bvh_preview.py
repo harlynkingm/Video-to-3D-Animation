@@ -7,7 +7,7 @@ fingers directly.
 
 Each hand is re-parented under a synthetic root and offset sideways so the two
 hands sit apart. Wrist orientation is the predicted `global_orient` (in the
-hand crop's camera frame -- this previews the raw stage 4 output, before any
+hand crop's camera frame, this previews the raw stage 4 output, before any
 body reconciliation, which is stage 5's job). Stage 4 already fills in frames
 it couldn't detect (interpolating a recovered occlusion, freezing one that runs
 to either end of the clip), so this preview uses every frame's pose as-is; a
@@ -69,7 +69,7 @@ def _build_skeleton():
             rot_sources.append((f"{side.lower()}_finger", k))
 
     # Offsets are in raw camera-space X before CAMERA_TO_BVH_ROOT_ROTATION is
-    # applied to the root below, which maps camera-space +X to world +Z -- and
+    # applied to the root below, which maps camera-space +X to world +Z, and
     # the real SMPL-X rest template has anatomical-left at positive camera-space
     # X (confirmed against SMPLX_NEUTRAL.npz: LeftWrist x=+0.670, RightWrist
     # x=-0.672), so "Left" gets the positive offset here, not negative.
@@ -98,12 +98,12 @@ def render_hands_bvh(hand_data: dict, fps: float, out_path: Path) -> None:
                 continue
             side = src[0].split("_")[0] if isinstance(src, tuple) else src.split("_")[0]
             if not valid[side].any():
-                continue  # never detected anywhere in the clip -- nothing to show but rest pose
+                continue  # never detected anywhere in the clip, nothing to show but rest pose
             aa = pose[src][f] if isinstance(src, str) else pose[f"{side}_finger"][f, src[1]]
             rotations[f, j] = Rotation.from_rotvec(aa).as_matrix()
     # The synthetic root never gets a predicted rotation (it's just an anchor),
     # so its identity default needs setting to the camera-space -> BVH fix
-    # directly -- unlike smplx_bvh_preview.py, there's no real root rotation to
+    # directly, unlike smplx_bvh_preview.py, there's no real root rotation to
     # left-multiply it onto.
     rotations[:, 0] = CAMERA_TO_BVH_ROOT_ROTATION
 

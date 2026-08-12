@@ -1,6 +1,6 @@
 """Converts the officially-released FLAME 2020 model (a chumpy-pickled .pkl)
 into a plain .npz that `smplx`'s own native FLAME loader reads directly
-(`smplx.body_models.FLAME`, `ext='npz'` branch -- a bare `np.load`, no chumpy).
+(`smplx.body_models.FLAME`, `ext='npz'` branch, a bare `np.load`, no chumpy).
 
 Run once, under the `flame-convert` pixi environment (see pixi.toml for why
 that environment exists and why chumpy can't live anywhere near `main`):

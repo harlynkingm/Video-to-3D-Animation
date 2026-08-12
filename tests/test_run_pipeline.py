@@ -44,7 +44,7 @@ def _fake_run_stage_subprocess(calls: list[StageName]):
     real `python -m pipeline.stages...` subprocess) so plumbing-only tests
     don't need any GPU/checkpoints. Marks the stage complete itself,
     mirroring what the real subprocess's own `cli_entrypoint`/`run_stage`
-    would do -- reloading from disk first since that's genuinely a separate
+    would do, reloading from disk first since that's genuinely a separate
     process there, not the same `runRecord` object the test holds."""
     def fake(stage_name: StageName, progress_dir: Path, force: bool) -> None:
         calls.append(stage_name)
@@ -148,7 +148,7 @@ def test_run_stage_subprocess_tolerates_a_crash_after_the_stage_already_complete
     """Regression test: a stage's own subprocess (`bpy` in particular is
     known to do this) can crash during its own interpreter teardown *after*
     already saving its real output and marking the stage complete in
-    `progress.json` -- that shouldn't be treated as a failure."""
+    `progress.json`, that shouldn't be treated as a failure."""
     runRecord = _make_runRecord(tmp_path)
     runRecord.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs={"fake": "output"})
     monkeypatch.setattr(
@@ -212,7 +212,7 @@ def test_main_resumes_without_requiring_run_input_flags(tmp_path, monkeypatch, c
     """Regression test: resuming an existing run used to fail with argparse's
     own "required" error for --input-video/--human-prompt/etc., since those
     flags were registered as required regardless of whether a run already
-    existed at --output-dir -- only --output-dir itself should still be
+    existed at --output-dir, only --output-dir itself should still be
     required when resuming.
     """
     progress_dir = tmp_path / "run"
@@ -302,7 +302,7 @@ def test_main_force_all_resets_completed_stages_with_a_single_save(tmp_path, mon
     run_pipeline_module.main()
     capsys.readouterr()
 
-    # update_schema()'s own save() + the trailing save() -- not one more per
+    # update_schema()'s own save() + the trailing save(), not one more per
     # stage reset, even though every implemented stage just got reset.
     assert len(save_calls) == 2
 
@@ -335,7 +335,7 @@ pytestmark_end_to_end = pytest.mark.skipif(
 
 @pytestmark_end_to_end
 def test_pipeline_run_end_to_end(tmp_path):
-    """Capped at stage 7 -- `export` needs `bpy` from a separate pixi
+    """Capped at stage 7, `export` needs `bpy` from a separate pixi
     environment this test's own `main`-env interpreter can't provide (see
     `tests/test_stage_10_export.py` for its own dedicated coverage)."""
     run_dir = tmp_path / "run"

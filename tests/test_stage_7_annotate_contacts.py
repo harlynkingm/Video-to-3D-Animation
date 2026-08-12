@@ -1,5 +1,5 @@
 """Stage 7 tests: a real-data regression test (needs GPU/checkpoints, skipped
-otherwise -- see conftest.py) plus a synthetic unit test for the contacts
+otherwise, see conftest.py) plus a synthetic unit test for the contacts
 preview renderer, which has no model/GPU dependency of its own and so always
 runs.
 """
@@ -60,7 +60,7 @@ def test_all_frame_joints_appends_a_head_top_point_above_the_head_joint():
     """head_top (the appended SMPL-X mesh vertex, see
     contact_detection.HEAD_TOP_JOINT_INDEX's own comment) should sit
     measurably above HEAD_JOINT (the skeletal joint, near the base of the
-    skull) in a neutral standing pose -- that gap is the entire reason
+    skull) in a neutral standing pose, that gap is the entire reason
     head_top exists: HEAD_JOINT alone measured ~150-250px short of a hat
     resting on the crown in a real clip, which motivated this region."""
     if not SMPLX_MODEL_PATH.exists():
@@ -233,13 +233,13 @@ def test_event_to_dict_trusts_a_long_sustained_confident_event_despite_a_large_d
 
 def test_event_to_dict_flags_a_small_depth_gap_for_a_non_grip_region():
     """Real case from `testCoffeeMug` that motivated this: a mug resting on
-    the floor happened to sit right next to a passing foot -- weak 2D
+    the floor happened to sit right next to a passing foot, weak 2D
     confidence (0.55), and, since the object and foot really are close in
     real space (both near the floor), also a small depth gap (0.043m), even
     though the foot never touched it. A hand grip gets the benefit of the
     doubt here (see the test above) because a real grip's own wrap-around
     geometry is a known, validated reason for a small gap to under-represent
-    confidence -- there's no equivalent reason for a leg, so a small gap
+    confidence, there's no equivalent reason for a leg, so a small gap
     alone shouldn't rescue a weak score for a non-`GRIP_CAPABLE_REGIONS`
     region the way it does for a hand/arm."""
     event = ContactEvent(
@@ -250,7 +250,7 @@ def test_event_to_dict_flags_a_small_depth_gap_for_a_non_grip_region():
 
 
 class _FakeDepthAdapter:
-    """Stands in for DepthAnything3Adapter -- returns a fixed, caller-supplied
+    """Stands in for DepthAnything3Adapter, returns a fixed, caller-supplied
     depth map regardless of which frame is asked for, so the filtering logic
     in `_verify_events_with_depth` can be tested without a GPU/checkpoint."""
 
@@ -270,15 +270,15 @@ class _FakeDepthAdapter:
 def test_verify_events_with_depth_never_drops_events_only_records_the_gap(tmp_path, monkeypatch):
     """`_verify_events_with_depth` used to drop a large-depth-gap event
     outright; it no longer does (see this module's docstring for why a large
-    gap isn't reliable evidence of incidental occlusion on its own) -- both
+    gap isn't reliable evidence of incidental occlusion on its own), both
     events must survive, each carrying its own measured `depth_gap_m` for
     `_is_low_confidence` to interpret later."""
     native_hw = (20, 20)
     depth = np.ones(native_hw, dtype=np.float32)
     depth[0:3, 0:3] = 1.0    # frame 0's object region
-    depth[0:3, 5:8] = 1.02   # frame 0's human region -- 0.02m gap, real contact
+    depth[0:3, 5:8] = 1.02   # frame 0's human region, 0.02m gap, real contact
     depth[10:13, 0:3] = 1.0  # frame 1's object region
-    depth[10:13, 5:8] = 2.0  # frame 1's human region -- 1.0m gap, incidental occlusion
+    depth[10:13, 5:8] = 2.0  # frame 1's human region, 1.0m gap, incidental occlusion
     monkeypatch.setattr(stage_7_annotate_contacts, "DepthAnything3Adapter", lambda: _FakeDepthAdapter(depth))
 
     object_mask_0 = np.zeros(native_hw, dtype=bool); object_mask_0[0:3, 0:3] = True
@@ -311,7 +311,7 @@ def test_verify_events_with_depth_never_drops_events_only_records_the_gap(tmp_pa
 
 def test_verify_events_with_depth_keeps_an_event_it_cannot_verify(tmp_path, monkeypatch):
     """A frame with no tracked object/human mask can't be depth-verified
-    either way -- the event should survive unverified (depth_gap_m stays
+    either way, the event should survive unverified (depth_gap_m stays
     None), not be dropped for lack of evidence."""
     native_hw = (20, 20)
     monkeypatch.setattr(
@@ -333,7 +333,7 @@ def test_verify_events_with_depth_keeps_an_event_it_cannot_verify(tmp_path, monk
 
 
 def _save_packed_masks(path: Path, raw_masks: torch.Tensor) -> None:
-    """`raw_masks`: (n_frames, 1, H, W) bool, W divisible by 8 -- same shape
+    """`raw_masks`: (n_frames, 1, H, W) bool, W divisible by 8, same shape
     stage 1 itself writes, packed the same way (`pack_masks`)."""
     torch.save({KEY_PACKED_MASKS: pack_masks(raw_masks)}, path)
 
@@ -341,7 +341,7 @@ def _save_packed_masks(path: Path, raw_masks: torch.Tensor) -> None:
 def test_lazy_mask_loader_decodes_and_resizes_each_frame_on_access(tmp_path):
     """Regression test for a real crash: the old eager loader unpacked and
     native-resized every frame up front, holding the whole clip's masks in
-    memory at once -- on a real 4K/675-frame clip (two such lists: object +
+    memory at once, on a real 4K/675-frame clip (two such lists: object +
     human) that was 10+GB simultaneously, and caused a hard Windows access
     violation later in this same stage. This loader must decode lazily,
     per-frame, instead.
@@ -349,7 +349,7 @@ def test_lazy_mask_loader_decodes_and_resizes_each_frame_on_access(tmp_path):
     working_h, working_w = 8, 16  # W must be divisible by 8 for pack_masks
     raw_masks = torch.zeros((3, 1, working_h, working_w), dtype=torch.bool)
     raw_masks[0, 0, 2:5, 4:10] = True  # frame 0: a real mask
-    # frame 1 left all-False -- nothing tracked that frame
+    # frame 1 left all-False, nothing tracked that frame
     raw_masks[2, 0, 0:3, 0:3] = True  # frame 2: another real mask
 
     masks_path = tmp_path / "masks.pt"
@@ -375,7 +375,7 @@ def test_lazy_mask_loader_decodes_and_resizes_each_frame_on_access(tmp_path):
 
 def test_lazy_mask_loader_returns_none_past_the_end_of_the_packed_tensor(tmp_path):
     """The clip's masks can end before the retargeted motion does (an
-    occlusion gap running to the end of the clip) -- indices beyond the
+    occlusion gap running to the end of the clip), indices beyond the
     packed tensor's own frame count should return None, not raise."""
     raw_masks = torch.zeros((2, 1, 8, 16), dtype=torch.bool)  # only 2 frames of masks
     raw_masks[0, 0, 0:2, 0:2] = True

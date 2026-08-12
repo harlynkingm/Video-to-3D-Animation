@@ -1,13 +1,13 @@
 """Object shape/extent fit: given the tracked object's back-projected point
 cloud at the anchor frame (already in the same metric space as the SMPL-X
-human body -- see `similarity_transform.fit_scene_scale`), fits a simple
+human body, see `similarity_transform.fit_scene_scale`), fits a simple
 proxy primitive (oriented box, ellipsoid, or cylinder) that approximates its
 shape. Ports the "object shape" half of open4dhoi's `make_hoi.py`, but fits a
 primitive instead of resizing a reconstructed mesh (no SAM-3D-Objects on
 this hardware).
 
 Box and ellipsoid both get independent extents per axis (not a cube / a
-single-radius sphere) -- a real "rectangular object" or "circular object" has
+single-radius sphere), a real "rectangular object" or "circular object" has
 different depth/height/width, and PCA already gives an oriented frame to
 measure them in. Cylinder covers a real gap between the two: bottles, cans,
 and cups have a flat-ended, constant-radius profile that a box wastes residual
@@ -20,7 +20,7 @@ to the *surface* of the fitted primitive (not just whether it's contained
 inside), so a shape that doesn't match the object's real profile scores worse
 regardless of which one it is. `auto` picks whichever residual is lower; the
 box is fit to exactly span the point cloud along its own principal axes, so
-its residual is always an interior (inside-to-nearest-face) distance -- the
+its residual is always an interior (inside-to-nearest-face) distance, the
 "outside" branch of `_point_to_box_surface_distance` exists for reuse (e.g. a
 future stage 8 contact-distance cost term), not because this fit itself ever
 produces exterior points.
@@ -29,8 +29,8 @@ Before any of that, `_reject_depth_outliers` trims the raw point cloud: DA3
 (like any monocular depth model) blurs/bleeds its estimate across a real
 depth discontinuity, so a handful of pixels right on the object mask's own
 silhouette edge can read meters deeper than the object's real surface. A
-plain min/max (box) or std (ellipsoid) fit -- and even the PCA orientation
-every fitter starts from -- is not robust to that tail, so it gets dropped
+plain min/max (box) or std (ellipsoid) fit, and even the PCA orientation
+every fitter starts from, is not robust to that tail, so it gets dropped
 before fitting rather than corrected after.
 """
 
@@ -70,7 +70,7 @@ def _pca_frame(points: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
 def _point_to_box_surface_distance(points_local: np.ndarray, half_extents: np.ndarray) -> np.ndarray:
     """Distance from each point (already in the box's own centered, axis-aligned
-    local frame) to the box's surface -- positive whether the point is outside
+    local frame) to the box's surface, positive whether the point is outside
     (distance to the nearest corner/edge/face) or inside (distance to the
     nearest face)."""
     q = np.abs(points_local)
@@ -85,7 +85,7 @@ def _point_to_ellipsoid_surface_distance(points_local: np.ndarray, semi_axes: np
     difference between the point's own radius and the radius of the ellipsoid
     surface along that *same direction* from the center (exact for a sphere;
     a standard, cheap approximation of the true nearest-surface-point distance
-    for a general ellipsoid -- good enough for comparing candidate shapes)."""
+    for a general ellipsoid, good enough for comparing candidate shapes)."""
     r = np.linalg.norm(points_local, axis=1)
     r_safe = np.maximum(r, 1e-9)
     directions = points_local / r_safe[:, None]
@@ -96,13 +96,13 @@ def _point_to_ellipsoid_surface_distance(points_local: np.ndarray, semi_axes: np
 
 def _point_to_cylinder_surface_distance(points_local: np.ndarray, radius: float, half_height: float) -> np.ndarray:
     """Approximate distance from each point (in the cylinder's own centered
-    frame, local axis 0 = the cylinder's length) to its surface -- the curved
+    frame, local axis 0 = the cylinder's length) to its surface, the curved
     side plus two flat end caps. `axial`/`radial` decompose each point into its
     position along the length vs. its distance from the central axis; overhang
     past either bound combines via Pythagoras (same style as the box's
     corner-distance), matching the true nearest-point distance for a point
-    outside near an edge, and a cheap lower-bound-ish approximation elsewhere
-    -- consistent with the other two shapes' "good enough to compare" bar."""
+    outside near an edge, and a cheap lower-bound-ish approximation elsewhere,
+    consistent with the other two shapes' "good enough to compare" bar."""
     axial = points_local[:, 0]
     radial = np.linalg.norm(points_local[:, 1:3], axis=1)
 
@@ -118,13 +118,13 @@ def _fit_cylinder(points: np.ndarray) -> tuple[dict, float]:
     """PCA-oriented cylinder. Local axis 0 (the cylinder's length) is picked
     from the two axes *not* aligned with the camera's own viewing direction
     (`_depth_axis_index`), whichever of those two has the larger point-cloud
-    spread -- comparing only the two lateral axes, never the depth axis
+    spread, comparing only the two lateral axes, never the depth axis
     itself, since depth noise can otherwise spread the cloud further along
     the depth axis than the object's real length, getting mistaken for it.
     Radius is the median cross-section distance from the length axis
     (robust to a few outlier depth points, same choice `_fit_ellipsoid`
     makes). Both are typically overwritten by `correct_cylinder_extent_
-    from_mask` right after -- see that function's own docstring for why the
+    from_mask` right after, see that function's own docstring for why the
     raw point-cloud spread isn't trusted for either dimension, only for the
     length axis's *direction*."""
     centroid, rotation, local = _pca_frame(points)
@@ -213,7 +213,7 @@ def _reject_depth_outliers(points: np.ndarray) -> np.ndarray:
 
 
 def fit_position_and_orientation(points: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-    """Position + orientation only, no shape/dimension fit -- reuses the same
+    """Position + orientation only, no shape/dimension fit, reuses the same
     outlier rejection and PCA machinery `fit_object_shape` itself builds on,
     for a caller that already knows the object's own fixed dimensions (e.g.
     re-deriving *where* the object is at some other frame, not what size it
@@ -221,7 +221,7 @@ def fit_position_and_orientation(points: np.ndarray) -> tuple[np.ndarray, np.nda
 
     Returns `None` if there aren't enough points to trust a fit (mirrors
     `fit_object_shape`'s own `MIN_OBJECT_POINTS` gate, but returns a sentinel
-    instead of raising -- a caller re-deriving pose at an arbitrary frame
+    instead of raising, a caller re-deriving pose at an arbitrary frame
     expects this to sometimes fail, e.g. a heavily hand-occluded grip, not a
     hard error).
     """
@@ -245,7 +245,7 @@ def _depth_axis_index(rotation: np.ndarray) -> int:
     camera's own viewing direction. `align_scene_scale`'s scale+translation
     fit is a pure per-axis scale between camera space and body space (no
     rotation involved), so the camera's forward direction is exactly the
-    body-space Z axis regardless of the fitted anisotropic scale -- no
+    body-space Z axis regardless of the fitted anisotropic scale, no
     extra information beyond the shape's own already-fitted rotation is
     needed to find it."""
     rotation = np.asarray(rotation)
@@ -254,7 +254,7 @@ def _depth_axis_index(rotation: np.ndarray) -> int:
 
 def mask_metric_extent(mask: np.ndarray, depth: np.ndarray, K: np.ndarray) -> tuple[float, float] | None:
     """The object's own real-world lateral width/height (meters, camera
-    space -- not yet scaled into body space, see `correct_lateral_axes_from_
+    space, not yet scaled into body space, see `correct_lateral_axes_from_
     mask`), measured directly from the mask's own oriented 2D bounding box
     and a representative depth, via the pinhole relation `real_size =
     pixel_size * depth / focal_length_px`.
@@ -297,7 +297,7 @@ def correct_lateral_axes_from_mask(descriptor: dict, mask_extent_m: tuple[float,
     the shared X/Y component of `similarity_transform.fit_scene_scale`'s own
     anisotropic scale), matched to the fitted axes by magnitude rank (the
     larger mask dimension replaces the larger fitted lateral axis) rather
-    than exact 3D correspondence -- simple, and good enough for a roughly
+    than exact 3D correspondence, simple, and good enough for a roughly
     front-facing view of a handheld object, without needing to project each
     fitted axis into image space to find its own exact 2D counterpart.
 
@@ -306,7 +306,7 @@ def correct_lateral_axes_from_mask(descriptor: dict, mask_extent_m: tuple[float,
     are currently stored as "lateral", so it should see these better,
     directly-measured values, not the original std-based ones.
 
-    Cylinder is returned unchanged here -- it has its own sibling function,
+    Cylinder is returned unchanged here, it has its own sibling function,
     `correct_cylinder_extent_from_mask`, since it only exposes two size
     fields (`radius`/`half_height`) rather than three, so the "which fields
     are lateral" bookkeeping this function does doesn't apply as-is.
@@ -333,24 +333,24 @@ def correct_lateral_axes_from_mask(descriptor: dict, mask_extent_m: tuple[float,
 
 
 def correct_cylinder_extent_from_mask(descriptor: dict, mask_extent_m: tuple[float, float], scale_xy: float) -> dict:
-    """Cylinder's own sibling to `correct_lateral_axes_from_mask` -- but
+    """Cylinder's own sibling to `correct_lateral_axes_from_mask`, but
     unlike box/ellipsoid (which keep their depth-axis size and only replace
     it via `correct_foreshortened_axis`'s harmonic-mean formula), this
     replaces *both* of the cylinder's size fields, `half_height` and
     `radius`, directly from the mask. A cylinder only ever exposes two size
     numbers, and `_fit_cylinder` already excludes the depth axis entirely
     when picking which two axes they come from (see that function's own
-    docstring) -- so there's no third, depth-derived value worth preserving
+    docstring), so there's no third, depth-derived value worth preserving
     here the way there is for box/ellipsoid.
 
     Checked against real reference dimensions: the point-cloud-derived
     radius overestimates a small, glossy object's diameter by ~14-20%, most
     likely a depth-estimation bias on small, low-texture, reflective
-    surfaces (ruled out mask-pixel precision -- the error got slightly
+    surfaces (ruled out mask-pixel precision, the error got slightly
     worse, not better, at a higher DA3 `process_res`). The same bias can
     inflate `half_height` far worse, up to badly mistaking the depth axis
     itself for the length axis (see `_fit_cylinder`). The mask's own pixel
-    extent carries no such bias -- assumed here to be the object's true
+    extent carries no such bias, assumed here to be the object's true
     width/length as long as the view is roughly front-on or side-on (a
     reasonable default for a handheld object, not a geometric guarantee),
     the larger of the two mask dimensions becoming `half_height` and the
@@ -372,21 +372,21 @@ def correct_foreshortened_axis(descriptor: dict) -> dict:
     """A single camera view only ever sees a convex object's near-facing
     surface, so whichever fitted axis is most aligned with the camera's own
     viewing direction (`_depth_axis_index`) is foreshortened toward roughly
-    half the object's true extent along that axis -- a systematic bias, not
+    half the object's true extent along that axis, a systematic bias, not
     noise, so multi-frame averaging alone can't fix it.
 
     Corrects that axis using the harmonic mean of the other two (real,
     laterally-observed) dimensions: equal to their shared value when
     similar (a round or square cross-section), leaning toward the smaller
     of the two the more they diverge (an elongated/flattened object's own
-    depth tends to track its narrower visible dimension, not its wider one
-    -- a book's thickness follows its short edge, not its long one). Center
+    depth tends to track its narrower visible dimension, not its wider one,
+    a book's thickness follows its short edge, not its long one). Center
     and rotation are untouched, only the one corrected axis's size changes.
 
     Cylinder is returned unchanged: it only ever exposes two size fields
     (`radius`/`half_height`), both of which `_fit_cylinder` already assigns
     from the two axes *not* aligned with the camera (see that function's own
-    docstring) -- there's no third, depth-axis-aligned field left over here
+    docstring), there's no third, depth-axis-aligned field left over here
     to foreshorten-correct the way box/ellipsoid's third axis is.
     """
     kind = descriptor[KEY_KIND]
@@ -409,7 +409,7 @@ def correct_foreshortened_axis(descriptor: dict) -> dict:
 # Verified analytically and numerically (a Monte Carlo check against the
 # closed form matched to 4 decimal places): the mean depth of a sphere's
 # near-facing hemisphere, sampled image-plane-uniformly (as a real depth
-# back-projection does -- see mask_metric_extent's own docstring for why
+# back-projection does, see mask_metric_extent's own docstring for why
 # that sampling isn't surface-uniform), is exactly -2/3 of the radius from
 # the sphere's own center. See correct_center_depth's own docstring.
 _HEMISPHERE_CENTROID_DEPTH_FACTOR = 2 / 3
@@ -417,8 +417,8 @@ _HEMISPHERE_CENTROID_DEPTH_FACTOR = 2 / 3
 
 def correct_center_depth(descriptor: dict) -> dict:
     """The fitted `center` is the mean position of one camera view's own
-    back-projected points, which -- for the same reason `correct_
-    foreshortened_axis`'s depth-axis size is biased -- only ever samples a
+    back-projected points, which, for the same reason `correct_
+    foreshortened_axis`'s depth-axis size is biased, only ever samples a
     convex object's near-facing surface. That surface's mean depth sits
     closer to the camera than the object's true center: for a sphere viewed
     head-on with image-plane-uniform sampling, the mean visible-surface
@@ -434,11 +434,11 @@ def correct_center_depth(descriptor: dict) -> dict:
     reasonable first pass. Skipped for cylinder: `_fit_cylinder` does now
     identify its own depth axis (see that function's own docstring), but the
     2/3-of-radius derivation above is specific to a sphere's hemisphere, not
-    yet verified for a cylinder's curved surface -- left unimplemented
+    yet verified for a cylinder's curved surface, left unimplemented
     rather than reusing an unverified formula.
 
     Run this *after* `correct_foreshortened_axis` and after any multi-frame
-    size aggregation -- the shift should use the most trustworthy size
+    size aggregation, the shift should use the most trustworthy size
     estimate available.
     """
     kind = descriptor[KEY_KIND]
@@ -475,12 +475,12 @@ def fit_object_shape(points: np.ndarray, shape_hint: ObjectShapeHint = ObjectSha
     `{"kind": "ellipsoid", "center": [...], "semi_axes": [...], "rotation": [[...], ...]}`,
     `{"kind": "cylinder", "center": [...], "radius": ..., "half_height": ..., "rotation": [[...], ...]}`.
 
-    This fits whatever point cloud it's given, full stop -- it does not
+    This fits whatever point cloud it's given, full stop, it does not
     assume single-camera-view geometry (a synthetic full-surface test cloud
     is exactly as valid an input as a real one-sided depth back-projection).
     A caller whose points genuinely come from one camera view (every real
     pipeline caller) should apply `correct_foreshortened_axis` to the
-    result -- kept as an explicit, separate step rather than folded in here,
+    result, kept as an explicit, separate step rather than folded in here,
     since "fit a shape to points" and "correct for single-view foreshortening"
     are different concerns with different validity conditions.
     """
@@ -501,13 +501,13 @@ def fit_object_shape(points: np.ndarray, shape_hint: ObjectShapeHint = ObjectSha
 
 
 def mask_circularity(mask: np.ndarray) -> float:
-    """4*pi*area/perimeter^2 of a 2D binary mask's largest contour -- 1.0 for
+    """4*pi*area/perimeter^2 of a 2D binary mask's largest contour, 1.0 for
     a perfect circle, lower for anything elongated, notched, or fragmented.
     Used to rank candidate frames for `align_scene_scale`'s multi-frame size
     aggregation: a real round object's silhouette should read close to
     circular when it's cleanly, fully visible, and reads lower when it's
     motion-blurred (smeared, elongated) or occluded (a bite taken out of the
-    silhouette by a gripping hand) -- either failure mode breaks circularity,
+    silhouette by a gripping hand), either failure mode breaks circularity,
     even though neither reliably breaks SAM's own per-frame tracking
     confidence (which answers "is the object still here", not "is this
     frame's silhouette clean"). Not a guarantee on its own (a partial,
@@ -529,17 +529,17 @@ def mask_circularity(mask: np.ndarray) -> float:
 
 
 def mask_solidity(mask: np.ndarray) -> float:
-    """contour_area / convex_hull_area of a 2D binary mask's largest contour
-    -- 1.0 for a fully convex silhouette, lower once something bites a
-    concave notch out of it. The shape-agnostic sibling of `mask_circularity`
-    -- a box, cylinder, *and* ellipsoid are all convex solids, so any of
+    """contour_area / convex_hull_area of a 2D binary mask's largest contour,
+    1.0 for a fully convex silhouette, lower once something bites a
+    concave notch out of it. The shape-agnostic sibling of `mask_circularity`,
+    a box, cylinder, *and* ellipsoid are all convex solids, so any of
     their clean, unoccluded silhouettes should read close to 1.0 regardless
     of which one it is, while a gripping hand's occlusion breaks convexity
     the same way for all three. What it does NOT catch, unlike circularity:
-    motion blur -- a linear blur smears a silhouette into an elongated but
+    motion blur, a linear blur smears a silhouette into an elongated but
     still-convex "stadium" shape, so a blurred frame can still read fully
     solid. Use `mask_circularity` instead when the object is already known
-    (or expected) to be round -- it catches both failure modes there, at
+    (or expected) to be round, it catches both failure modes there, at
     the cost of not generalizing to box/cylinder shapes. Returns 0.0 for an
     empty or degenerate mask."""
     import cv2  # local: see mask_circularity's own comment on why
@@ -556,12 +556,12 @@ def mask_solidity(mask: np.ndarray) -> float:
 
 
 def equivalent_radius(descriptor: dict) -> float:
-    """A single rotation-invariant "effective size" for any fitted shape kind
-    -- the geometric mean of its own size dimensions, useful for a caller
+    """A single rotation-invariant "effective size" for any fitted shape kind,
+    the geometric mean of its own size dimensions, useful for a caller
     that just needs one overall scale without resolving which axis in one
     frame's fit corresponds to which axis in another's (PCA's own axis
     assignment has no stable answer frame to frame for a near-symmetric
-    object -- the same problem this project already hit once for
+    object, the same problem this project already hit once for
     orientation, in the free-tracking rotation-instability fix)."""
     kind = descriptor[KEY_KIND]
     if kind == KIND_BOX:
@@ -579,8 +579,8 @@ def equivalent_radius(descriptor: dict) -> float:
 def sample_shape_surface(descriptor: dict, points_per_line: int = 20) -> np.ndarray:
     """Samples a wireframe outline of a fitted shape descriptor, for visual
     verification in a point-cloud preview (box: 12 edges; ellipsoid: a handful
-    of latitude/longitude rings; cylinder: two end-cap rims + side meridians)
-    -- not a filled surface, so it reads as an outline overlaid on the real
+    of latitude/longitude rings; cylinder: two end-cap rims + side meridians),
+    not a filled surface, so it reads as an outline overlaid on the real
     point cloud rather than another solid blob.
     """
     if descriptor[KEY_KIND] == KIND_BOX:

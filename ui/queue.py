@@ -26,7 +26,7 @@ UI_QUEUE_IDLE = "Queue idle"
 UI_QUEUE_STOPPED = "Queue stopped"
 UI_QUEUE_COMPLETE = "Queue complete"
 
-# What a freshly-constructed RunFormState looks like -- summarize_run_form_state
+# What a freshly-constructed RunFormState looks like, summarize_run_form_state
 # below only reports a field when it differs from this, so "what counts as
 # worth showing" can never drift out of sync with RunFormState's own defaults.
 _DEFAULT_STATE = RunFormState(destination_folder="")
@@ -75,7 +75,7 @@ def summarize_run_form_state(state: RunFormState) -> list[str]:
 def next_pending_index(queue: list[QueueItem]) -> int | None:
     """The item the queue runs next: the first still-PENDING one. COMPLETE
     items are done; FAILED items are never auto-resumed (matching
-    halt-on-failure) -- retrying one means re-queueing it or fixing the issue
+    halt-on-failure), retrying one means re-queueing it or fixing the issue
     and running again.
     """
     for index, item in enumerate(queue):
@@ -90,9 +90,9 @@ def compute_queue_progress(
     current_run_record: RunRecord | None,
 ) -> StageProgress:
     """Whole-queue equivalent of compute_stage_progress: completed/total
-    stage counts summed across every item -- a full item is worth its own
+    stage counts summed across every item, a full item is worth its own
     stage count, not a flat 1, so the bar "fragments by stage AND queue
-    item" -- plus one status line naming whichever item is currently
+    item", plus one status line naming whichever item is currently
     running (or the failure that halted the queue, if any).
     """
     completed = 0
@@ -130,9 +130,9 @@ def compute_queue_progress(
 
 class QueueRunner(QObject):
     """Runs each PENDING QueueItem in `self.queue` in order through one
-    reused PipelineRunner (never recreated -- the same "one subprocess at a
+    reused PipelineRunner (never recreated, the same "one subprocess at a
     time" shape PipelineRunner itself already has for a single run), halting
-    -- not advancing -- on a non-zero exit.
+   , not advancing, on a non-zero exit.
     """
 
     output_received = Signal(str)
@@ -150,7 +150,7 @@ class QueueRunner(QObject):
         self.current_index: int | None = None
         self._stop_requested = False
         # Tracks the queue's own logical running state explicitly, rather
-        # than deriving it from `_pipeline_runner.is_running()` -- that
+        # than deriving it from `_pipeline_runner.is_running()`, that
         # process isn't actually started until partway through
         # `_run_next_pending()`, so a listener reading is_running() during
         # the *same* running_changed(True) emit (e.g. to enable/disable

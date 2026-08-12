@@ -11,13 +11,13 @@ add it once a GVHMR/depth adapter actually exists too.
 **Human and object are tracked via two independent `track_video_with_detection`
 calls, not one joint call with both prompts.** SAM 3.1's multi-entity detection
 concatenates every prompt's candidate queries into one pool before running NMS
-and assigning multiplex slots -- there is no query-to-prompt identity preserved
+and assigning multiplex slots, there is no query-to-prompt identity preserved
 across that step, so a single joint call can't reliably say which tracked
 object is "the human" versus "the object" (in the tracker's own verification
 test, the human happened to score higher and land first only by coincidence --
 not something to rely on). Two separate calls make each entity's identity
 unambiguous by construction, at the cost of running the ViTDet backbone twice
-per frame instead of once -- a real but bounded runtime cost, not a VRAM one
+per frame instead of once, a real but bounded runtime cost, not a VRAM one
 (frames are still processed one at a time either way). This still avoids
 loading the checkpoint into VRAM twice, which is what this project's original
 "merge human+object into one stage" scope decision was actually about.
@@ -60,7 +60,7 @@ KEY_DETECTOR = "detector"
 KEY_TRACKER = "tracker"
 
 # This adapter's own per-entity result dict keys.
-KEY_SCORE = "score"  # singular -- highest first-detection confidence among the slots that
+KEY_SCORE = "score"  # singular, highest first-detection confidence among the slots that
                      # ended up contributing a frame (see _stitch_tracked_slots), distinct
                      # from the tracker's own per-slot KEY_SCORES list
 
@@ -71,7 +71,7 @@ KEY_OBJECT = "object"
 
 def _load_checkpoint_state(checkpoint_path: Path) -> dict[str, dict]:
     """Split the checkpoint's flat tensor keys into each module's own state dict,
-    stripping its key prefix -- the same slicing verified in each module's own
+    stripping its key prefix, the same slicing verified in each module's own
     test harness while writing it.
     """
     vision_backbone, text_tower, detector, resizer, tracker = {}, {}, {}, {}, {}
@@ -101,7 +101,7 @@ class _LazyFrameLoader:
     without ever materializing the whole clip in memory at once.
 
     The tracker only ever reads one frame at a time (`images[frame_idx:frame_idx+1]`,
-    via `_prep_frame` in `sam31_tracker.py` -- its only call site), so this decodes
+    via `_prep_frame` in `sam31_tracker.py`, its only call site), so this decodes
     just that one frame from disk on each access instead of preloading every frame
     as a float32 CPU tensor up front. That preload was the real memory bottleneck
     for long videos (~11MB/frame at 720p, scaling linearly with clip length) --
@@ -130,11 +130,11 @@ class _LazyFrameLoader:
 
 # How far (pixels) a chosen mask's own centroid may move between two
 # consecutive resolved frames before being treated as a different, wrongly-
-# matched object rather than the same one continuing to move -- confirmed
+# matched object rather than the same one continuing to move, confirmed
 # on real footage that a genuine identity switch jumps 900+ pixels in a
 # single frame, while even the fastest real motion seen (an object mid-
 # throw) stayed under 35px/frame. A wide margin either direction, not
-# independently calibrated per clip/resolution -- a fast enough real throw
+# independently calibrated per clip/resolution, a fast enough real throw
 # could in principle still exceed it and get wrongly treated as a gap
 # (left to `max_bridge_frames` to paper over), same tradeoff any
 # continuity-based check has.
@@ -158,7 +158,7 @@ def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_b
     same prompt and get its own slot.
 
     Per frame: among slots with a nonempty mask, pick whichever centroid is
-    closest to the previously chosen frame's centroid -- not whichever has
+    closest to the previously chosen frame's centroid, not whichever has
     the higher fixed (first-detection) score, which can favor a completely
     different, unmoving object over the genuinely-tracked one. Even a lone
     active slot is checked this way: if it's farther than `MAX_PLAUSIBLE_
@@ -194,7 +194,7 @@ def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_b
         centroids = {s: _mask_centroid(packed_masks[f, s]) for s in candidates}
         chosen = min(candidates, key=lambda s: math.dist(centroids[s], prev_centroid))
         if math.dist(centroids[chosen], prev_centroid) > MAX_PLAUSIBLE_JUMP_PX:
-            continue  # every candidate implausibly far -- leave this frame a gap for bridging to fill
+            continue  # every candidate implausibly far, leave this frame a gap for bridging to fill
         winner[f] = chosen
         prev_centroid = centroids[chosen]
 
@@ -204,11 +204,11 @@ def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_b
     merged[frame_idx, 0] = packed_masks[frame_idx, winner[frame_idx]]
 
     # Bridging holds the previous frame's already-resolved MASK CONTENT forward
-    # across the gap -- not the winning slot index re-looked-up at the gap frame
+    # across the gap, not the winning slot index re-looked-up at the gap frame
     # itself, which is empty there by definition (that's why it's a gap).
     for start, end in contiguous_true_runs((winner == -1).numpy()):
         if start == 0 or end == n_frames - 1:
-            continue  # leading/trailing -- no prior mask to hold from / never recovers
+            continue  # leading/trailing, no prior mask to hold from / never recovers
         if end - start + 1 <= max_bridge_frames:
             merged[start:end + 1] = merged[start - 1]
 
@@ -219,7 +219,7 @@ def _stitch_tracked_slots(packed_masks: torch.Tensor, scores: list[float], max_b
 
 class Sam31Adapter:
     """`load()` once per stage run, `infer()` for the whole clip, `unload()` before
-    the process exits -- brackets the checkpoint's time on the GPU to match this
+    the process exits, brackets the checkpoint's time on the GPU to match this
     project's one-model-at-a-time VRAM budget.
     """
 
@@ -261,7 +261,7 @@ class Sam31Adapter:
         self, images: _LazyFrameLoader, prompt: str, progress_label: str, max_bridge_frames: int
     ) -> dict:
         """Run one full-clip tracking pass for a single prompt. Returns a single-object
-        result -- see this module's docstring for why one prompt is tracked at a time.
+        result, see this module's docstring for why one prompt is tracked at a time.
         """
         with torch.inference_mode():
             text_emb, text_mask = encode_prompt(prompt, self.text_tower, self.tokenizer, self.device, self.dtype)
@@ -297,7 +297,7 @@ class Sam31Adapter:
         """Track `human_prompt` (always) and `object_prompt` (if given) across the
         whole clip.
 
-        `max_bridge_frames`: see `_stitch_tracked_slots` -- how many consecutive
+        `max_bridge_frames`: see `_stitch_tracked_slots`, how many consecutive
         frames with no active detection get bridged by holding the last tracked
         mask forward, before a gap is left genuinely empty.
 

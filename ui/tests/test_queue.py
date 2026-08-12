@@ -41,7 +41,7 @@ def test_summarize_run_form_state_includes_camera_when_set():
 
 
 def test_summarize_run_form_state_omits_camera_when_only_one_value_set():
-    # Half-populated camera info isn't meaningful to show -- both or neither.
+    # Half-populated camera info isn't meaningful to show, both or neither.
     lines = summarize_run_form_state(_state(focal_length_mm=26.0))
 
     assert not any("focal" in line.lower() for line in lines)

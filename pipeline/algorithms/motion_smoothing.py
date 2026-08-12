@@ -6,7 +6,7 @@ Why the two stages need very different strengths: GVHMR (stage 2) runs a
 temporal transformer over the whole clip, so the body arrives with frame-to-frame
 consistency and only needs light polish. HaMeR (stage 4) infers every frame
 independently from an isolated crop with no temporal model at all, so the hands
-are far jitterier and need heavier smoothing -- plus per-frame validity handling,
+are far jitterier and need heavier smoothing, plus per-frame validity handling,
 since a hand that wasn't detected on some frames must not bleed its placeholder
 identity pose into its detected neighbours.
 
@@ -16,14 +16,14 @@ across an axis-angle wraparound produces spikes instead of removing them.
 Translation is smoothed with a zero-phase (filtfilt) Butterworth low-pass, which
 adds no lag. Ported from this project's own ComfyUI `SmoothSMPLMotion` node
 (savgol-in-quaternion + butterworth-filtfilt), extended here with validity-aware
-gap handling for the hands -- including `cap_long_gaps_with_hold`, which keeps
+gap handling for the hands, including `cap_long_gaps_with_hold`, which keeps
 a long invalid run's straight-line interpolation from sweeping through a large,
 visibly implausible rotation by holding most of the gap instead.
 
 Finger joints go through `one_euro_filter_rotation_sequence` instead: an
 adaptive filter that stays heavy (kills small residual wobble) while a joint is
 nearly still and loosens automatically (tracks with low lag) once it starts
-moving, all as one continuous blend -- no separate smoothing-then-hysteresis
+moving, all as one continuous blend, no separate smoothing-then-hysteresis
 passes, and no discrete hold/release states to produce a stop-motion look. It
 replaced an earlier two-stage design (savgol, then a hard hold-until-threshold
 deadzone) that fixed a circular-precession artifact on still joints but visibly
@@ -40,13 +40,13 @@ from .contact_detection import contiguous_true_runs
 
 POSE_AXIS_DIM = 3
 
-# Internal defaults -- the exposed knobs are the savgol *window* (per stage),
+# Internal defaults, the exposed knobs are the savgol *window* (per stage),
 # the butterworth *cutoff* (body only), and the one-euro filter's *min_cutoff*/
 # *beta* (fingers only); polynomial/filter order and the one-euro filter's own
 # derivative cutoff are left fixed at values that rarely need touching.
 DEFAULT_POLYORDER = 3
 DEFAULT_BUTTER_ORDER = 2
-DEFAULT_ONE_EURO_DCUTOFF_HZ = 1.0  # the "1€" in One Euro Filter -- the paper's own standard default
+DEFAULT_ONE_EURO_DCUTOFF_HZ = 1.0  # the "1€" in One Euro Filter, the paper's own standard default
 
 
 def _odd_window(window: int, n_frames: int) -> int | None:
@@ -65,12 +65,12 @@ def fill_invalid(values: np.ndarray, valid: np.ndarray) -> np.ndarray:
     the filter downstream never sees the placeholder poses on undetected frames.
     `np.interp`'s own default boundary behavior gives exactly the two occlusion
     cases their right treatment for free: an *interior* run of invalid frames
-    (bounded by a valid frame on both sides -- the tracked thing reappears) is
+    (bounded by a valid frame on both sides, the tracked thing reappears) is
     linearly interpolated between those two real values; a *leading* or
-    *trailing* run (invalid all the way to one end of the clip -- it never
+    *trailing* run (invalid all the way to one end of the clip, it never
     reappears, or wasn't yet detected at the start) has no second real endpoint
     to interpolate toward, so `np.interp` holds it constant at the one real
-    value it does have (`left`/`right` default to `fp[0]`/`fp[-1]`) -- a freeze,
+    value it does have (`left`/`right` default to `fp[0]`/`fp[-1]`), a freeze,
     not a fabricated guess. This is the caller's actual occlusion contract, not
     just an internal filtering detail, so downstream code depends on it.
 
@@ -92,8 +92,8 @@ def cap_long_gaps_with_hold(
     values: np.ndarray, valid: np.ndarray, max_bridge_frames: int
 ) -> tuple[np.ndarray, np.ndarray]:
     """For any *interior* invalid run longer than `max_bridge_frames`, freeze
-    its early portion at the last known-good (entry) value and mark it valid
-    -- `fill_invalid` then only has the final `max_bridge_frames` left to
+    its early portion at the last known-good (entry) value and mark it valid,
+    `fill_invalid` then only has the final `max_bridge_frames` left to
     interpolate across, blending into the recovery instead of sweeping across
     the whole gap.
 
@@ -118,11 +118,11 @@ def cap_long_gaps_with_hold(
 
     for start, end in contiguous_true_runs(~valid):  # inclusive
         if start == 0 or end == len(valid) - 1:
-            continue  # leading/trailing -- fill_invalid already freezes these correctly
+            continue  # leading/trailing, fill_invalid already freezes these correctly
         run_length = end - start + 1
         if run_length <= max_bridge_frames:
             continue  # short enough to interpolate as-is
-        held_end = end - max_bridge_frames + 1  # exclusive -- [start, held_end) gets held
+        held_end = end - max_bridge_frames + 1  # exclusive, [start, held_end) gets held
         held_values[start:held_end] = values[start - 1]
         held_valid[start:held_end] = True
 
@@ -133,7 +133,7 @@ def hemisphere_aligned_quats(joint_axis_angle: np.ndarray, valid: np.ndarray | N
     """One joint's (T, 3) axis-angle sequence -> (T, 4) xyzw quaternions, sign
     -continuity enforced across *detected* frames (a unit quaternion and its
     negation are the same rotation, so each is flipped to share a hemisphere
-    with the previous real one -- otherwise interpolation/filtering treats a
+    with the previous real one, otherwise interpolation/filtering treats a
     sign flip as a huge jump), then gap-filled per `fill_invalid` if `valid` is
     given. Shared by both rotation-smoothing functions below (and by
     `gvhmr_postprocess.pp_bridge_low_confidence_root_motion`, which needs the
@@ -159,13 +159,13 @@ def smooth_rotation_sequence(
 
     Args:
         axis_angle: (T, ...) where the trailing dims flatten to a multiple of 3
-            (e.g. (T, 3), (T, 63), (T, 15, 3)) -- each 3-vector a joint rotation.
+            (e.g. (T, 3), (T, 63), (T, 15, 3)), each 3-vector a joint rotation.
         window: Savitzky-Golay window in frames (clamped to odd, <= T, >= 3).
         polyorder: polynomial order fit within each window (< window).
         valid: optional (T,) bool. Where given, invalid frames are filled before
             filtering: interpolated if bounded by valid frames on both sides
             (the tracked thing reappears), held constant at the nearest valid
-            frame if not (occlusion runs to either end of the clip) -- see
+            frame if not (occlusion runs to either end of the clip), see
             `fill_invalid`. The filter then runs over the filled series.
 
     Returns the same shape/dtype, smoothed. Returned unchanged when the clip is
@@ -217,7 +217,7 @@ def slerp(q0: np.ndarray, q1: np.ndarray, frac: float) -> np.ndarray:
     if dot < 0.0:
         q1, dot = -q1, -dot
     dot = min(dot, 1.0)
-    if dot > 0.9995:  # nearly identical -- linear blend avoids dividing by sin(angle)~0
+    if dot > 0.9995:  # nearly identical, linear blend avoids dividing by sin(angle)~0
         result = q0 + frac * (q1 - q0)
         return result / np.linalg.norm(result)
     angle = np.arccos(dot)
@@ -235,7 +235,7 @@ def one_euro_filter_rotation_sequence(
 ) -> np.ndarray:
     """Adaptively smooth a per-frame rotation sequence: heavy smoothing while
     a joint is nearly still, loosening automatically (low lag) once it
-    starts moving -- the One Euro Filter (Casiez, Roussel & Vogel 2012),
+    starts moving, the One Euro Filter (Casiez, Roussel & Vogel 2012),
     adapted for rotations.
 
     Filtering each quaternion component independently (as the paper does
@@ -245,12 +245,12 @@ def one_euro_filter_rotation_sequence(
     *signed* angular-velocity vector between consecutive raw samples
     (relative rotation's axis-angle / dt), smoothed component-wise
     (`dcutoff_hz`) *before* taking its norm. Filtering the signed vector
-    first matters -- opposite-direction noise cancels on averaging; an
+    first matters, opposite-direction noise cancels on averaging; an
     earlier version filtered the magnitude instead, which can't cancel
     (never negative), leaving a persistent nonzero "speed" floor at rest
     even under heavy smoothing, confirmed on real data. That scalar speed
     sets one adaptive cutoff per frame, blending the previous filtered
-    orientation toward the new raw one via proper quaternion slerp -- one
+    orientation toward the new raw one via proper quaternion slerp, one
     rotation-aware decision per frame, not four independent scalar ones.
 
     Args:
@@ -283,14 +283,14 @@ def one_euro_filter_rotation_sequence(
             return axis_angle  # too few real frames to estimate speed from
 
     dt = 1.0 / fps
-    speed_alpha = _one_euro_alpha(dcutoff_hz, dt)  # fixed given dcutoff/dt -- same every frame
+    speed_alpha = _one_euro_alpha(dcutoff_hz, dt)  # fixed given dcutoff/dt, same every frame
     out = np.zeros_like(joints)
     for j in range(n_joints):
         quats = hemisphere_aligned_quats(joints[:, j, :], valid)
 
         # Signed angular-velocity vector between every consecutive pair of raw
         # samples, computed once for the whole sequence (not recursive, so no
-        # need for a per-frame loop here) -- the relative rotation's own
+        # need for a per-frame loop here), the relative rotation's own
         # axis-angle, scaled by 1/dt.
         r = Rotation.from_quat(quats)
         omega_seq = (r[1:] * r[:-1].inv()).as_rotvec() / dt  # (T-1, 3)
@@ -320,7 +320,7 @@ def one_euro_filter_sequence(
 ) -> np.ndarray:
     """Linear-vector counterpart to `one_euro_filter_rotation_sequence`, for
     per-frame quantities that aren't rotations (e.g. FLAME's PCA `expression`
-    coefficients) -- same adaptive heavy-at-rest/loose-while-moving behavior,
+    coefficients), same adaptive heavy-at-rest/loose-while-moving behavior,
     exponential blending in place of slerp.
 
     Shares the parent filter's own reasoning for using one scalar speed to
@@ -370,7 +370,7 @@ def one_euro_filter_sequence(
 
 def _rdp_knot_indices(n_frames: int, tol: float, fit, error) -> np.ndarray:
     """Ramer-Douglas-Peucker knot selection, generalized over what "straight-line
-    fit" and "deviation" mean -- the same recursive tree shared by both rotation
+    fit" and "deviation" mean, the same recursive tree shared by both rotation
     (quaternion slerp, geodesic error) and translation (linear interpolation,
     Euclidean error) decimation below; only `fit`/`error` differ per domain.
 
@@ -409,13 +409,13 @@ def _rdp_knot_indices(n_frames: int, tol: float, fit, error) -> np.ndarray:
 
 def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, valid: np.ndarray | None = None) -> np.ndarray:
     """Replace a per-frame rotation sequence with a mathematically smooth
-    curve fit through a sparse set of keyframes -- keyframe reduction, the
+    curve fit through a sparse set of keyframes, keyframe reduction, the
     way an animator cleans up mocap by hand (Blender's Decimate), done in
     quaternion space instead of per Euler channel. Unlike a filter (a
     moving average that always leaves some residual jitter), the fitted
     curve has no degrees of freedom to wiggle between keyframes, so
     high-frequency content is gone by construction. `tolerance_deg` is the
-    one knob -- max angular deviation (degrees) the fit is allowed from the
+    one knob, max angular deviation (degrees) the fit is allowed from the
     original; larger means fewer keyframes and a flatter curve, smaller
     hugs the input more tightly (and past a point starts preserving jitter
     again).
@@ -432,7 +432,7 @@ def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, val
             convention as the smoothing functions above).
         tolerance_deg: max allowed angular deviation of the fit, degrees.
         valid: optional (T,) bool, gap-filled before fitting (`fill_
-            invalid`) -- the occlusion contract survives decimation: a
+            invalid`), the occlusion contract survives decimation: a
             frozen trailing gap needs no interior knots, an interpolated
             interior gap is already representable by its two bounding knots.
 
@@ -468,7 +468,7 @@ def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, val
             return (fitted * Rotation.from_quat(quats[idx]).inv()).magnitude()
 
         knots = _rdp_knot_indices(n_frames, tol_rad, fit, error)
-        if knots.shape[0] >= n_frames:  # every frame kept -- nothing to fit
+        if knots.shape[0] >= n_frames:  # every frame kept, nothing to fit
             out[:, j, :] = joints[:, j, :]
             continue
         arc = Slerp(knots.astype(float), Rotation.from_quat(quats[knots]))
@@ -480,7 +480,7 @@ def decimate_rotation_sequence(axis_angle: np.ndarray, tolerance_deg: float, val
 def decimate_translation_sequence(transl: np.ndarray, tolerance_m: float) -> np.ndarray:
     """Translation counterpart to `decimate_rotation_sequence`, sharing its RDP
     core (`_rdp_knot_indices`) with a Euclidean fit/error instead of a
-    geodesic/slerp one -- straight-line RDP is in fact the classic Douglas-
+    geodesic/slerp one, straight-line RDP is in fact the classic Douglas-
     Peucker algorithm's original domain (cartographic point simplification);
     quaternion decimation above is the generalization, not the other way round.
 
@@ -515,7 +515,7 @@ def decimate_translation_sequence(transl: np.ndarray, tolerance_m: float) -> np.
         return np.linalg.norm(fitted - transl[idx], axis=1)
 
     knots = _rdp_knot_indices(n_frames, tolerance_m, fit, error)
-    if knots.shape[0] >= n_frames:  # every frame kept -- nothing to fit
+    if knots.shape[0] >= n_frames:  # every frame kept, nothing to fit
         return transl
 
     knot_mask = np.zeros(n_frames, dtype=bool)
@@ -527,7 +527,7 @@ def smooth_position_sequence(
     positions: np.ndarray, window: int, polyorder: int = DEFAULT_POLYORDER, valid: np.ndarray | None = None
 ) -> np.ndarray:
     """Smooth a per-frame Euclidean/pixel-position sequence
-    with a centered Savitzky-Golay filter -- no quaternion
+    with a centered Savitzky-Golay filter, no quaternion
     reprojection needed afterward, unlike `smooth_rotation_sequence`, so this
     is a single vectorized `savgol_filter` call over all flattened trailing
     dims at once. Shares this module's gap-handling (`fill_invalid`) and

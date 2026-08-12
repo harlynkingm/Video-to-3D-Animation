@@ -1,19 +1,19 @@
 """SAM 3.1's text-conditioned detector: a DETR-style transformer encoder/decoder over
 the vision backbone's top FPN level, a small geometry encoder (only its unconditional
-cls-token path is used here -- see below), a segmentation head that upsamples decoder
+cls-token path is used here, see below), a segmentation head that upsamples decoder
 queries back through the FPN to per-query masks, and a dot-product query/prompt scorer.
 
 Ported from `comfy/ldm/sam3/detector.py`, replacing `comfy.ops`/`optimized_attention`
 with plain PyTorch (this project has no ComfyUI runtime dependency, to avoid the
 GPL-3.0/Apache-2.0 conflict that would come with vendoring ComfyUI's own code).
 Only `forward_from_trunk` is ported (given an already-computed ViTDet trunk
-output plus one already-encoded text prompt, returns boxes/scores/masks) -- the
+output plus one already-encoded text prompt, returns boxes/scores/masks), the
 source's other entry points (`forward`, `forward_segment`) exist for single-image and
 interactive point/box-prompted use, which this project's pure text-prompt video
 tracking never calls.
 
 Mask convention throughout: boolean, True = attend (matches `sam31_clip_text.py` and
-the rest of this port) -- NOT `nn.MultiheadAttention`'s inverted `key_padding_mask`
+the rest of this port), NOT `nn.MultiheadAttention`'s inverted `key_padding_mask`
 convention, which is why attention here is built from a fused `in_proj`/`out_proj`
 (matching the checkpoint's own parameter layout exactly, so no weight remapping is
 needed) plus a manual `F.scaled_dot_product_attention` call, rather than
@@ -63,7 +63,7 @@ def gen_sineembed_for_position(pos_tensor: torch.Tensor, num_feats: int = D_MODE
 
 
 class SimpleMLP(nn.Module):
-    """Plain N-layer MLP with ReLU between layers (no residual/norm) -- used for the
+    """Plain N-layer MLP with ReLU between layers (no residual/norm), used for the
     various small prediction heads (reference points, boxes, presence, box-RPB, masks).
     """
 
@@ -103,7 +103,7 @@ class MLPWithNorm(nn.Module):
 
 class CrossAttention(nn.Module):
     """Multi-head attention with a single fused in_proj (matching the checkpoint's own
-    parameter layout exactly -- same as nn.MultiheadAttention's native parameter names,
+    parameter layout exactly, same as nn.MultiheadAttention's native parameter names,
     zero remapping needed), supporting separate query/key/value inputs for
     cross-attention. Mask convention: boolean, True = attend (see module docstring).
     """
@@ -295,7 +295,7 @@ class PositionEmbeddingSine2(nn.Module):
 
 class GeometryEncoder(nn.Module):
     """Only the unconditional cls-token path is actually run by this project (see module
-    docstring) -- the point/box projection layers below are defined for a clean
+    docstring), the point/box projection layers below are defined for a clean
     `strict=True` load but their forward-pass logic (`_encode_points`/`_encode_boxes` in
     the source) is deliberately not ported.
     """
@@ -355,7 +355,7 @@ class MaskPredictor(nn.Module):
 
 class SegmentationHead(nn.Module):
     """`semantic_seg_head` is defined (checkpoint has it) but never invoked, matching the
-    source exactly -- it's an auxiliary training-time head, unused at inference.
+    source exactly, it's an auxiliary training-time head, unused at inference.
     """
 
     def __init__(self):
@@ -412,7 +412,7 @@ class Sam31Detector(nn.Module):
     """Ties the pieces above together. Deliberately decoupled from
     `Sam31VisionBackbone`: `forward_from_trunk` takes already-computed FPN features and
     positions (the caller runs the vision backbone itself), not a raw trunk output plus
-    an internal backbone reference -- this keeps the two files independently loadable
+    an internal backbone reference, this keeps the two files independently loadable
     and testable, matching how their checkpoint weights are genuinely separate tensor
     groups (only `text_resizer` bridges CLIP's 1024-dim space to this detector's 256-dim
     working space; matches `detector.backbone.language_backbone.resizer` exactly).
@@ -430,7 +430,7 @@ class Sam31Detector(nn.Module):
                             text_embeddings: torch.Tensor, text_mask: torch.Tensor) -> dict:
         """features/positions: the 3 FPN levels (288/144/72) from Sam31VisionBackbone, already
         computed by the caller. text_embeddings: raw (1, L, 1024) from sam31_clip_text.py
-        (NOT yet resized -- this method applies text_resizer itself). text_mask: (1, L)
+        (NOT yet resized, this method applies text_resizer itself). text_mask: (1, L)
         boolean, True = real token (same convention as sam31_clip_text.py).
 
         Returns {"boxes": normalized xyxy, "scores": (1, num_queries), "masks": (1, num_queries, 288, 288)}.

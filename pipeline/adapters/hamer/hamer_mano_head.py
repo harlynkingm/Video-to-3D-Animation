@@ -5,7 +5,7 @@ released config (`JOINT_REP='6d'`, `TRANSFORMER_INPUT='zero'`, `IEF_ITERS=1`).
 
 The head's initial-mean buffers (`init_hand_pose`/`init_betas`/`init_cam`) are
 baked into the checkpoint, so they're registered here as correctly-shaped zeros
-and filled by the strict weight load -- the separate `mano_mean_params.npz` is
+and filled by the strict weight load, the separate `mano_mean_params.npz` is
 only a training-time construction detail, not needed at inference.
 """
 
@@ -35,7 +35,7 @@ def rot6d_to_rotmat(x: torch.Tensor) -> torch.Tensor:
     """(..., 6) 6D rotation -> (..., 3, 3) rotation matrix, via Gram-Schmidt
     (Zhou et al., CVPR 2019). Ported exactly from HaMeR: the 6 values are read
     as two columns (reshape to (2,3) then transpose), which is a *different*
-    layout than pytorch3d's row-major `rotation_6d_to_matrix` -- reusing that
+    layout than pytorch3d's row-major `rotation_6d_to_matrix`, reusing that
     would silently transpose every predicted joint rotation.
     """
     x = x.reshape(-1, 2, 3).permute(0, 2, 1).contiguous()  # (B, 3, 2)
@@ -65,7 +65,7 @@ class MANOTransformerDecoderHead(nn.Module):
     def forward(self, vit_features: torch.Tensor) -> dict[str, torch.Tensor]:
         """vit_features: (B, CONTEXT_DIM, H, W) channel-first ViT output.
         Returns global_orient (B,1,3,3), hand_pose (B,15,3,3), betas (B,10),
-        pred_cam (B,3) -- all in the hand crop's camera frame."""
+        pred_cam (B,3), all in the hand crop's camera frame."""
         batch_size = vit_features.shape[0]
         context = einops.rearrange(vit_features, "b c h w -> b (h w) c")
 

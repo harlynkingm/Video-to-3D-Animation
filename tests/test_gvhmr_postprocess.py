@@ -65,7 +65,7 @@ def test_static_label_never_locks_a_joint_below_seed():
 
 def test_static_label_hysteresis_prevents_chatter_at_the_seed_boundary():
     # Alternates just below/above STATIC_CONF_SEED (0.8) but always above
-    # STATIC_CONF_RELEASE (0.5) -- a bare `> 0.8` threshold would flicker
+    # STATIC_CONF_RELEASE (0.5), a bare `> 0.8` threshold would flicker
     # locked/unlocked every other frame; hysteresis should hold the lock
     # through the whole run once any single frame clears the seed.
     assert 0.79 < STATIC_CONF_SEED < 0.81
@@ -124,7 +124,7 @@ def test_static_joint_drift_zero_vertical_flag():
 
 def _synthetic_incam_outputs(n_frames: int, drift_per_frame: tuple[float, float, float]) -> dict:
     """A rigid, unarticulated (all-zero body_pose/global_orient/betas) body
-    whose root drifts by `drift_per_frame` every frame -- every joint,
+    whose root drifts by `drift_per_frame` every frame, every joint,
     including both ankles, moves by exactly that same rigid displacement, so
     flagging one ankle confidently static gives `pp_static_joint_incam`
     everything it needs to recover the injected drift exactly."""
@@ -173,7 +173,7 @@ def test_pp_static_joint_incam_is_a_noop_when_nothing_is_confidently_static():
 
 
 def test_unreliable_pose_label_flags_a_genuine_confidence_collapse():
-    # Steadily below POSE_CONF_SEED for a whole run -- the real shape a fast,
+    # Steadily below POSE_CONF_SEED for a whole run, the real shape a fast,
     # motion-blurred tumble produces (mean body-keypoint confidence measured
     # on a real clip: ~0.75 baseline, ~0.25-0.5 through the bad stretch).
     assert POSE_CONF_SEED > 0.3
@@ -191,7 +191,7 @@ def test_unreliable_pose_label_never_flags_confidence_that_stays_above_release()
 
 def test_unreliable_pose_label_ignores_a_dip_that_never_reaches_seed():
     # Dips below POSE_CONF_RELEASE (a "candidate" region) but never down to
-    # POSE_CONF_SEED -- should not be confirmed as unreliable, same seed-
+    # POSE_CONF_SEED, should not be confirmed as unreliable, same seed-
     # requirement logic as _static_label's own boundary test.
     midpoint = (POSE_CONF_SEED + POSE_CONF_RELEASE) / 2
     assert POSE_CONF_SEED < midpoint < POSE_CONF_RELEASE
@@ -205,7 +205,7 @@ def _framewise_pose_params(n_frames: int) -> dict:
     encodes t itself, so a bridged frame's post-fix value can be checked
     exactly against whichever real frame(s) it should have been
     interpolated/frozen from. global_orient is a small rotation about Z
-    (0.05 * t radians) instead of the same frame-index encoding -- keeps
+    (0.05 * t radians) instead of the same frame-index encoding, keeps
     quaternion interpolation well clear of any large-rotation wraparound
     edge case, which isn't what these tests are checking."""
     return {
@@ -225,7 +225,7 @@ def test_pp_bridge_low_confidence_root_motion_interpolates_an_interior_run():
     # boundary tests above for that widening behavior in isolation).
     n_frames = 16
     params = _framewise_pose_params(n_frames)
-    # Corrupt the flagged run's own raw transl -- this is the actual point of
+    # Corrupt the flagged run's own raw transl, this is the actual point of
     # the fix (GVHMR's raw estimate during a real confidence collapse is
     # garbage, not just numerically off-trend), and a plain linear-in-frame-
     # index fixture can't otherwise prove interpolation actually overwrote
@@ -248,14 +248,14 @@ def test_pp_bridge_low_confidence_root_motion_interpolates_an_interior_run():
     assert not torch.allclose(bridged["transl"][0, 6:9], params["transl"][0, 6:9])
 
     # global_orient: bridged result should exactly match calling the same
-    # shared helper directly on the raw input -- confirms correct wiring,
+    # shared helper directly on the raw input, confirms correct wiring,
     # not re-deriving slerp math by hand.
     quats = hemisphere_aligned_quats(params["global_orient"][0].numpy(), valid)
     quats = quats / np.linalg.norm(quats, axis=-1, keepdims=True)
     expected_orient = Rotation.from_quat(quats).as_rotvec()
     assert np.allclose(bridged["global_orient"][0].numpy(), expected_orient, atol=1e-6)
 
-    # body_pose is out of scope for root-motion bridging by design -- never
+    # body_pose is out of scope for root-motion bridging by design, never
     # touched, even during the flagged run.
     assert torch.allclose(bridged["body_pose"], params["body_pose"])
 
@@ -264,7 +264,7 @@ def test_pp_bridge_low_confidence_root_motion_freezes_a_leading_run():
     n_frames = 8
     params = _framewise_pose_params(n_frames)
     confidence = torch.full((1, n_frames), 0.9)
-    confidence[0, 0:3] = POSE_CONF_SEED - 0.1  # unreliable from frame 0 -- no earlier real frame
+    confidence[0, 0:3] = POSE_CONF_SEED - 0.1  # unreliable from frame 0, no earlier real frame
 
     bridged, label = pp_bridge_low_confidence_root_motion(params, confidence)
     label = label[0]
@@ -302,7 +302,7 @@ def test_pp_bridge_low_confidence_root_motion_leaves_betas_untouched():
 
     bridged, _ = pp_bridge_low_confidence_root_motion(params, confidence)
 
-    assert torch.allclose(bridged["betas"], params["betas"])  # shape param, not motion -- never touched
+    assert torch.allclose(bridged["betas"], params["betas"])  # shape param, not motion, never touched
 
 
 def test_pp_bridge_low_confidence_root_motion_is_a_noop_when_nothing_is_flagged():

@@ -1,14 +1,14 @@
 """mask_and_track: tracks the human (and optional object) across the whole clip
-using SAM 3.1, text-prompted -- no manual clicks or boxes.
+using SAM 3.1, text-prompted, no manual clicks or boxes.
 
 Also resolves `scene.anchor_frame_index`: the frame later stages use for
 object-shape fitting and scale alignment. Uses the user's override if given,
 otherwise the frame where the tracked object's mask has the largest area (a
-simple, real heuristic -- a refined version that also penalizes occlusion/
+simple, real heuristic, a refined version that also penalizes occlusion/
 fragmentation would be a reasonable future improvement, but isn't needed yet).
 
 If `RunInput.render_mask_previews` is set, also writes one black/white JPEG per
-frame per tracked entity (white = masked region) -- a quick way to eyeball
+frame per tracked entity (white = masked region), a quick way to eyeball
 whether SAM 3.1 actually tracked the right thing, without writing a separate
 viewer. Off by default: it roughly doubles this stage's disk writes and isn't
 needed once tracking quality on a given prompt/video is already trusted.
@@ -46,7 +46,7 @@ OUTPUT_OBJECT_MASKS_PREVIEW = "object_masks_preview"
 
 def _resolve_anchor_frame(object_result: dict | None) -> int:
     """Frame index with the largest tracked-object mask area, or 0 if there's no
-    object (or it was never detected) -- see this module's docstring.
+    object (or it was never detected), see this module's docstring.
     """
     if object_result is None or object_result[KEY_PACKED_MASKS] is None:
         return 0
@@ -56,7 +56,7 @@ def _resolve_anchor_frame(object_result: dict | None) -> int:
 
 def _render_mask_previews(packed_masks: torch.Tensor, out_dir: Path, native_hw: tuple[int, int]) -> None:
     """One black/white JPEG per frame (white = the first tracked object's masked
-    region -- this project only ever tracks one instance per prompt, see
+    region, this project only ever tracks one instance per prompt, see
     `sam31_adapter.py`'s module docstring), resized from SAM 3.1's own fixed
     working resolution to the source video's actual resolution (`native_hw`) so
     previews aren't stretched to a square aspect ratio for widescreen video.

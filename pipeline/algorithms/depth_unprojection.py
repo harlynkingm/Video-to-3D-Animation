@@ -1,6 +1,6 @@
 """Depth map -> 3D point cloud, pure math (numpy only, no model/GPU). Shared by
 stage_3_estimate_depth.py's optional preview output and align_scene_scale's
-depth-cloud<->SMPL-X similarity fit -- this project's port of open4dhoi's
+depth-cloud<->SMPL-X similarity fit, this project's port of open4dhoi's
 make_hoi.py scale-alignment step needs exactly this same unprojection.
 """
 
@@ -13,7 +13,7 @@ def scale_intrinsics_to_resolution(
     K: np.ndarray, native_hw: tuple[int, int], target_hw: tuple[int, int]
 ) -> np.ndarray:
     """Rescale a camera intrinsics matrix `K` (built for `native_hw`) to match
-    a different resolution `target_hw` -- needed because Depth-Anything-3
+    a different resolution `target_hw`, needed because Depth-Anything-3
     (like SAM 3.1) resizes internally to its own working resolution rather
     than the source frame's native size.
     """

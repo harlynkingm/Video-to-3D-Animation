@@ -4,7 +4,7 @@ SMPL-X human mesh.
 
 Both point sets live in the *same camera coordinate frame* already (GVHMR's
 "incam" SMPL-X and the depth cloud are both camera-space), so there is no
-rotation to solve -- only a scale and a translation `b`. This is the
+rotation to solve, only a scale and a translation `b`. This is the
 static-camera, metric-depth specialization of `open4dhoi`'s
 `preprocessing/scripts/hoi_utils.py::align` (which had to first normalize a
 *relative*-depth map and use an orthographic back-projection; DA3METRIC-LARGE
@@ -18,16 +18,16 @@ the ratio of spatial spreads for scale, the centroid offset for translation --
 not individual point matches. This mirrors the reference's own deliberate
 robustness choice.
 
-The scale is anisotropic -- one value shared by the lateral X/Y (image-plane)
-axes, a separate value for Z (the camera's own depth axis) -- confirmed on
+The scale is anisotropic, one value shared by the lateral X/Y (image-plane)
+axes, a separate value for Z (the camera's own depth axis), confirmed on
 real data: monocular depth (DA3METRIC-LARGE here) is measurably less
 reliable specifically along Z than laterally. On a real clip, the
 per-point ratio needed to reconcile depth against the SMPL-X body was a tight
 ~2.1 for X/Y but a noisy ~0.9 (with points closer to the camera needing
-noticeably less than points farther away) for Z -- a single isotropic scalar
+noticeably less than points farther away) for Z, a single isotropic scalar
 structurally cannot correct that, no matter how it's tuned. This still won't
 fully close the gap (the underlying per-point noise along Z is real, not just
-a missing constant -- monocular depth is known to flatten/underestimate
+a missing constant, monocular depth is known to flatten/underestimate
 foreshortened, camera-facing protrusions like a reaching arm), but it removes
 the average bias an isotropic fit leaves on the table for free.
 """
@@ -49,7 +49,7 @@ MIN_CORRESPONDENCE_POINTS = 50
 
 
 def _mean_pairwise_distance(points: np.ndarray) -> float:
-    """Mean Euclidean distance between all point pairs -- a spread measure that,
+    """Mean Euclidean distance between all point pairs, a spread measure that,
     unlike an axis-aligned bounding box, is rotation-invariant and robust to a
     few outliers."""
     from scipy.spatial.distance import pdist
@@ -92,7 +92,7 @@ def _correspond_human_to_depth(
     on_mask = human_mask[v[in_frame_idx], u[in_frame_idx]]
     candidate_idx = in_frame_idx[on_mask]
 
-    # Among vertices sharing a pixel, keep the nearest (smallest Z) -- the front surface.
+    # Among vertices sharing a pixel, keep the nearest (smallest Z), the front surface.
     pixel_key = v[candidate_idx] * width + u[candidate_idx]
     nearest_first = candidate_idx[np.argsort(smplx_verts[candidate_idx, 2])]
     pixel_key_sorted = pixel_key[np.argsort(smplx_verts[candidate_idx, 2])]
@@ -107,7 +107,7 @@ def _correspond_human_to_depth(
 
 def _fit_anisotropic_scale(body_pts: np.ndarray, scene_pts: np.ndarray) -> np.ndarray:
     """(3,) array: a shared spread-ratio scale for the lateral X/Y (image-plane)
-    axes, and a separate one for Z (the camera's own depth axis) -- see this
+    axes, and a separate one for Z (the camera's own depth axis), see this
     module's docstring for why a single isotropic scalar can't be trusted here."""
     scale_xy = _mean_pairwise_distance(scene_pts[:, :2]) / _mean_pairwise_distance(body_pts[:, :2])
     scale_z = _mean_pairwise_distance(scene_pts[:, 2:3]) / _mean_pairwise_distance(body_pts[:, 2:3])
@@ -120,19 +120,19 @@ def fit_scene_scale(
     """Fit `(scale, translation)` mapping SMPL-X metric space onto the depth
     cloud's space: a depth-space point `p` maps back into SMPL-X space via
     `(p - translation) / scale`, and a SMPL-X point `q` maps into depth space
-    via `q * scale + translation` (elementwise -- `scale` is a (3,) array, not
+    via `q * scale + translation` (elementwise, `scale` is a (3,) array, not
     a scalar, so this broadcasts against an (N, 3) point array either way).
 
     Args:
         smplx_verts: (V, 3) SMPL-X vertices, camera-space metric (GVHMR incam).
         depth: (H, W) metric depth map.
         K: (3, 3) intrinsics matching `depth`'s resolution (rescale first if the
-            depth map isn't at native resolution -- see
+            depth map isn't at native resolution, see
             `depth_unprojection.scale_intrinsics_to_resolution`).
         human_mask: (H, W) bool, True on the person, at `depth`'s resolution.
 
     Returns:
-        `(scale, translation, n_correspondences)` -- `scale` is `[scale_xy,
+        `(scale, translation, n_correspondences)`, `scale` is `[scale_xy,
         scale_xy, scale_z]`, a (3,) array.
     """
     body_pts, scene_pts = _correspond_human_to_depth(smplx_verts, depth, K, human_mask)

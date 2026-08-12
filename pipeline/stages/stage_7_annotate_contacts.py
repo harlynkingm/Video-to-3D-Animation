@@ -7,7 +7,7 @@ via hysteresis (same lock/release pattern as the stage 4 wrist gate).
 
 Reads stage 2's pre-foot-lock incam translation, not stage 5's corrected
 one: foot-locking's rigid per-frame root offset helps cross-frame stability
-but has no bearing on -- and can distort -- whether a joint's 2D projection
+but has no bearing on, and can distort, whether a joint's 2D projection
 lands on the object's mask *this frame*.
 
 Three refinement passes in `contact_detection.py` (see each one's own
@@ -67,8 +67,8 @@ SMPLX_GENDER = "neutral"
 SMPLX_NUM_BETAS = 10
 
 # The SMPL-X neutral mesh's own fixed topology (vertex indices are the same
-# across every body shape/pose, only the topology itself would change them)
-# -- found empirically as the highest (+Y, this project's up axis) vertex
+# across every body shape/pose, only the topology itself would change them),
+# found empirically as the highest (+Y, this project's up axis) vertex
 # within 15cm of the rest-pose HEAD_JOINT, i.e. the top of the scalp. Used
 # instead of a skeletal joint for the "head_top" region (see
 # contact_detection.HEAD_TOP_JOINT_INDEX's own comment for why): a mesh
@@ -81,7 +81,7 @@ CONTACTS_DIRNAME = f"stage{StageName.STAGE_7_ANNOTATE_CONTACTS.stage_number}_con
 CONTACT_EVENTS_FILENAME = "contact_events.json"
 CONTACTS_PREVIEW_DIRNAME = "contacts_preview"
 
-# Preview circle/text styling -- BGR (cv2's own channel order). A normal event
+# Preview circle/text styling, BGR (cv2's own channel order). A normal event
 # gets a bright cyan/orange that reads clearly against most skin tones and
 # object colors alike; a low-confidence one gets a distinct red so it stands
 # out as worth a second look while flipping through the preview folder.
@@ -95,13 +95,13 @@ OUTPUT_CONTACT_EVENTS = "contact_events"
 OUTPUT_CONTACTS_PREVIEW = "contacts_preview"
 
 # Below this mean confidence, an event is flagged as low-confidence rather than
-# trusted outright -- purely a passive data flag (see this module's docstring),
+# trusted outright, purely a passive data flag (see this module's docstring),
 # not a gate on whether the event gets used.
 LOW_CONFIDENCE_THRESHOLD = 0.85
 
 # An event whose 2D mask overlap stays at/above LOW_CONFIDENCE_THRESHOLD for at
 # least this long is trusted outright, without the depth gap able to override
-# it -- a person's body part briefly passing in front of/behind a stationary
+# it, a person's body part briefly passing in front of/behind a stationary
 # object is implausible to hold that level of sustained overlap this long, so
 # duration + confidence alone already rule out the incidental-occlusion case
 # depth verification exists to catch (see this module's docstring for why the
@@ -114,14 +114,14 @@ SUSTAINED_CONTACT_DURATION_SECONDS = 1.0
 
 # Beyond this metric depth gap (meters), a 2D-detected event reads as
 # confidently incidental occlusion by depth alone (see depth_gap_for_joint's
-# own docstring) -- but a real grip's own near-side-of-object-vs-wrapped-
+# own docstring), but a real grip's own near-side-of-object-vs-wrapped-
 # behind-it geometry can trigger this just as easily as an actual pass-through
 # occlusion can (see this module's docstring), so this only ever flags
 # `is_low_confidence`, never drops the event. At or below it, the gap is
 # treated as confirming real contact, which overrides a merely-noisy 2D
 # confidence score in `_event_to_dict`. An initial estimate: on real test
 # data, genuine contact measured 0.01-0.05m and false-positive occlusion
-# measured 0.25-1.7m -- but real full-grip contact on other footage has also
+# measured 0.25-1.7m, but real full-grip contact on other footage has also
 # measured up to ~0.39m, overlapping that same "occlusion" range, so this
 # cutoff alone can't reliably separate the two on its own.
 DEPTH_GAP_OCCLUSION_THRESHOLD_M = 0.15
@@ -129,7 +129,7 @@ DEPTH_GAP_OCCLUSION_THRESHOLD_M = 0.15
 
 def _all_frame_joints(motion: dict) -> np.ndarray:
     """Forward-kinematics the full retargeted body+hands sequence in one
-    batched call. Returns (F, J, 3) camera-space joint positions -- GVHMR/
+    batched call. Returns (F, J, 3) camera-space joint positions, GVHMR/
     HaMeR's own space, not real-world/depth-aligned (see this module's
     docstring). The last column is not a real skeletal joint: it's
     SMPLX_HEAD_TOP_VERTEX, appended so contact_detection.HEAD_TOP_JOINT_INDEX
@@ -151,7 +151,7 @@ def _all_frame_joints(motion: dict) -> np.ndarray:
     )
     joints = output.joints.detach().numpy()
     assert joints.shape[1] == HEAD_TOP_JOINT_INDEX, (
-        f"smplx returned {joints.shape[1]} joints, expected {HEAD_TOP_JOINT_INDEX} -- "
+        f"smplx returned {joints.shape[1]} joints, expected {HEAD_TOP_JOINT_INDEX}, "
         "contact_detection.HEAD_TOP_JOINT_INDEX needs updating to match."
     )
     head_top = output.vertices[:, SMPLX_HEAD_TOP_VERTEX, :].detach().numpy()[:, None, :]
@@ -168,13 +168,13 @@ class _LazyMaskLoader:
     The eager version of this (unpack every frame, resize to native, hold
     the whole list) is a real, demonstrated memory bottleneck at high
     resolution: a single native mask is ~7.9MB at 3840x2160, and this stage
-    needs two independent mask tracks (object + human) -- on a real
+    needs two independent mask tracks (object + human), on a real
     675-frame 4K clip that's over 10GB held simultaneously, which caused a
     hard Windows access violation (not a clean Python `MemoryError`) later
     in this same stage, on a 16GB machine, right after GVHMR and HaMeR had
     already run in the same process. The packed tensor this reads from is
     both bit-packed (8 pixels/byte, `sam31_tracker.pack_masks`) AND stored
-    at SAM 3.1's own small working resolution, not native -- tiny by
+    at SAM 3.1's own small working resolution, not native, tiny by
     comparison, so keeping it packed until each frame is actually needed
     removes the bottleneck entirely; each frame's mask is used at most twice
     (once during detection, once more only if that exact frame becomes an
@@ -203,7 +203,7 @@ class _LazyMaskLoader:
 
 
 def _is_low_confidence(event: ContactEvent, fps: float) -> bool:
-    """A large depth gap flags an event as low-confidence -- unless the
+    """A large depth gap flags an event as low-confidence, unless the
     event's own sustained 2D confidence already rules out incidental
     occlusion on its own (see `SUSTAINED_CONTACT_DURATION_SECONDS`), in which
     case the depth gap is ignored entirely rather than overriding strong 2D
@@ -211,7 +211,7 @@ def _is_low_confidence(event: ContactEvent, fps: float) -> bool:
     (mask missing that frame), falls back to 2D confidence alone.
 
     A *small* gap overriding a merely-noisy 2D score is only trusted for
-    `GRIP_CAPABLE_REGIONS` (see that constant's own comment) -- real
+    `GRIP_CAPABLE_REGIONS` (see that constant's own comment), real
     evidence motivating this override was a hand grip specifically (0.01m
     gap, 0.49 mean confidence, on a real clip). Elsewhere, a small depth gap
     is common even without contact (e.g. an object resting on the floor near
@@ -247,7 +247,7 @@ def _verify_events_with_depth(
     between the object and the body surface at the contact joint's
     projection (`contact_detection.depth_gap_for_joint`), stashing it on the
     event as `depth_gap_m` for `_event_to_dict`/`_is_low_confidence` to read
-    later. Never drops an event -- see this module's docstring for why a
+    later. Never drops an event, see this module's docstring for why a
     large gap isn't reliable evidence of incidental occlusion on its own; the
     accept/reject call belongs to whatever consumes `is_low_confidence`, not
     here. An event whose masks were missing that frame (can't verify either
@@ -288,14 +288,14 @@ def _render_contacts_preview(
     events: list[ContactEvent], joints: np.ndarray, K: np.ndarray, frames_dir: Path, out_dir: Path, fps: float,
 ) -> None:
     """One annotated JPEG per contact event, at that event's own peak-
-    confidence frame -- a human-reviewable spot-check, since this stage has no
+    confidence frame, a human-reviewable spot-check, since this stage has no
     learned model whose confidence can otherwise be sanity-checked visually.
     Draws a circle around whichever candidate joint triggered the event,
     projected to its actual pixel location via the same intrinsics used for
     detection, on top of the real source frame (stage 0's own extracted
     frames, not a mask or a rendered scene). Labeled with the event's own
     mean confidence as a percentage, and colored/marked distinctly when
-    `is_low_confidence` -- purely a visual aid for a human who chooses to
+    `is_low_confidence`, purely a visual aid for a human who chooses to
     look, not a gate on which events actually get used (see this module's
     docstring).
 
@@ -341,7 +341,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         runRecord.stages[StageName.STAGE_5_RETARGET_HANDS].outputs[OUTPUT_RETARGET_MOTION], weights_only=False,
     ))
     # Swap in stage 2's pre-foot-lock translation for this stage's own joint
-    # projections -- see this module's own docstring for why. body_pose/
+    # projections, see this module's own docstring for why. body_pose/
     # global_orient/betas/hand poses are untouched by that correction already,
     # so only the translation needs substituting.
     human_motion = torch.load(

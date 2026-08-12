@@ -80,7 +80,7 @@ def test_build_run_argv_stage_range_and_object_shape():
 
 def test_build_run_argv_omits_optional_fields_when_resuming():
     # Only destination_folder given (as when resuming/re-running an existing
-    # output folder without re-filling the rest of the form) -- pipeline.run
+    # output folder without re-filling the rest of the form), pipeline.run
     # itself fills in everything else from the existing run's stored input,
     # so none of these should be sent as empty/zero overrides.
     argv = build_run_argv(RunFormState(destination_folder="C:/runs/my_clip"))
@@ -128,7 +128,7 @@ def test_compute_stage_progress_partial_complete_and_running():
 
     assert progress.completed == 2
     assert progress.total == 11
-    # Exact phrasing is free to change -- what matters is the currently-
+    # Exact phrasing is free to change, what matters is the currently-
     # running stage's own label is what gets reported.
     assert StageName.STAGE_2_ESTIMATE_HUMAN_MOTION.label in progress.status_text
 

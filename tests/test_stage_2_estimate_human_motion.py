@@ -1,8 +1,8 @@
 """Stage 2 regression test: runs real GVHMR on stage 1's tracked human mask
-and checks the resulting SMPL-X body pose looks correct -- right shapes, no
+and checks the resulting SMPL-X body pose looks correct, right shapes, no
 NaN/Inf, physically plausible joint rotations and translation, and (since
 `--render-motion-preview` is on for these tests) a structurally valid AMASS
-preview file. Needs the real GVHMR checkpoints and a CUDA GPU -- skipped
+preview file. Needs the real GVHMR checkpoints and a CUDA GPU, skipped
 automatically otherwise (see conftest.py).
 """
 
@@ -64,8 +64,8 @@ def test_global_translation_does_not_explode_or_teleport(stage_2_result):
 
 
 def test_incam_translation_does_not_explode_or_teleport(stage_2_result):
-    # incam (not global) is what every stage past this one actually consumes
-    # -- worth its own bounded-delta check now that gvhmr_postprocess.
+    # incam (not global) is what every stage past this one actually consumes,
+    # worth its own bounded-delta check now that gvhmr_postprocess.
     # pp_static_joint_incam actively corrects it, not just global's.
     result = _load_motion(stage_2_result)
     transl = result[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL]
@@ -75,8 +75,8 @@ def test_incam_translation_does_not_explode_or_teleport(stage_2_result):
 
 def test_incam_translation_raw_is_saved_separately_from_the_corrected_one(stage_2_result):
     # KEY_TRANSL_INCAM_RAW exists specifically so stage 7 can see the
-    # pre-foot-lock signal (see gvhmr_adapter.py's own comment on that key)
-    # -- shape/no-NaN sanity, plus confirming it's genuinely a distinct array
+    # pre-foot-lock signal (see gvhmr_adapter.py's own comment on that key),
+    # shape/no-NaN sanity, plus confirming it's genuinely a distinct array
     # from the corrected transl (not an aliased/copied reference).
     result = _load_motion(stage_2_result)
     raw = result[KEY_TRANSL_INCAM_RAW]
@@ -88,7 +88,7 @@ def test_incam_translation_raw_is_saved_separately_from_the_corrected_one(stage_
 
 
 def test_root_motion_unreliable_mask_has_correct_shape_and_dtype(stage_2_result):
-    # Real, well-tracked test clip -- expect nothing flagged, but the field
+    # Real, well-tracked test clip, expect nothing flagged, but the field
     # itself must exist with the right shape/dtype regardless, since stage
     # 5/10 both read it unconditionally.
     result = _load_motion(stage_2_result)
@@ -109,7 +109,7 @@ def test_motion_preview_npz_is_a_valid_amass_file(stage_2_result):
 
 def test_motion_preview_uses_incam_reoriented_upright(stage_2_result):
     # The preview must show what actually ships (incam, per stage 10's own
-    # export), not the vestigial "global" frame -- reoriented the identical
+    # export), not the vestigial "global" frame, reoriented the identical
     # way stage 10 reorients it, not a separately-derived transform.
     result = _load_motion(stage_2_result)
     incam = result[KEY_PRED_SMPL_PARAMS_INCAM]
@@ -121,5 +121,5 @@ def test_motion_preview_uses_incam_reoriented_upright(stage_2_result):
         assert np.allclose(data["trans"], expected_transl, atol=1e-5)
         assert np.allclose(data["poses"][:, :3], expected_orient, atol=1e-5)
         # body_pose (poses[:, 3:66]) also comes from incam, shared with global
-        # via process_ik -- but confirm against incam specifically, not assumed.
+        # via process_ik, but confirm against incam specifically, not assumed.
         assert np.allclose(data["poses"][:, 3:66], incam[KEY_BODY_POSE].numpy(), atol=1e-5)

@@ -5,11 +5,11 @@ Ported from `comfyui-motioncapture/nodes/vitpose/model.py` (backbone+head) and
 restricted to the single configuration and code path this project actually uses:
 the "ViTPose_huge_coco_256x192" config (the only one the reference itself defines),
 and UDP-style decoding with `target_type="GaussianHeatmap"` (the only branch the
-reference's own extractor calls) -- dropped the unbiased/megvii/CombinedTarget
+reference's own extractor calls), dropped the unbiased/megvii/CombinedTarget
 decode variants and the config-name lookup table entirely.
 
 Also dropped: flip-test (running the horizontally-flipped crop too and averaging
-heatmaps) -- a real but optional test-time accuracy boost, not essential
+heatmaps), a real but optional test-time accuracy boost, not essential
 correctness; skipped for a simpler first version, easy to add back if real output
 quality ever calls for it.
 """
@@ -29,7 +29,7 @@ DECONV_FILTERS = 256
 HEATMAP_H, HEATMAP_W = 64, 48  # 16x12 patch grid, upsampled 4x by two stride-2 deconvs
 
 # COCO-17 keypoint order, unchanged from the reference's own `keypoints_from_heatmaps`
-# output -- named here, once, since every (17, 3) [x, y, confidence] array this project
+# output, named here, once, since every (17, 3) [x, y, confidence] array this project
 # passes around (estimate_keypoints's return value and anything derived from it)
 # indexes into this exact order by raw integer.
 KP_NOSE, KP_LEYE, KP_REYE, KP_LEAR, KP_REAR = 0, 1, 2, 3, 4
@@ -40,7 +40,7 @@ KP_LHIP, KP_RHIP = 11, 12
 KP_LKNEE, KP_RKNEE = 13, 14
 KP_LANKLE, KP_RANKLE = 15, 16
 
-# Shoulder->wrist, hip->ankle -- everything but the face (nose/eyes/ears,
+# Shoulder->wrist, hip->ankle, everything but the face (nose/eyes/ears,
 # KP_NOSE..KP_REAR above). Face-keypoint confidence is a poor proxy for
 # whether a frame's *body* pose evidence is trustworthy (confirmed against a
 # real clip, where a fast tumble crashed confidence across every body joint
@@ -79,7 +79,7 @@ class GVHMRViTPoseModel(nn.Module):
         self.keypoint_head = KeypointHead()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (B, 3, 256, 192) -- returns (B, 17, 64, 48) heatmaps."""
+        """x: (B, 3, 256, 192), returns (B, 17, 64, 48) heatmaps."""
         return self.keypoint_head(self.backbone(x))
 
 

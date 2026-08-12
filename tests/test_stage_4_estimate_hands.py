@@ -1,8 +1,8 @@
 """Stage 4 regression test: runs real HaMeR on the test clip and checks the
-per-frame MANO hand pose looks correct -- right shapes, no NaN, physically
+per-frame MANO hand pose looks correct, right shapes, no NaN, physically
 plausible finger rotations, both hands detected on this clearly-two-handed
 tennis clip, and smooth frame-to-frame motion (a broken crop/flip would produce
-jumpy garbage). Needs the HaMeR + ViTPose checkpoints and a CUDA GPU -- skipped
+jumpy garbage). Needs the HaMeR + ViTPose checkpoints and a CUDA GPU, skipped
 automatically otherwise (see conftest.py).
 """
 
@@ -64,7 +64,7 @@ def test_hand_motion_is_temporally_smooth(stage_4_result):
 def test_confidence_gate_rejects_a_low_confidence_stretch():
     """A body-occluded wrist (real HaMeR still returns *a* pose, confidently
     wrong) is caught by dips in wrist keypoint confidence, not by the pose
-    itself -- see hamer_adapter's module docstring for why a kinematic check
+    itself, see hamer_adapter's module docstring for why a kinematic check
     was tried and rejected in favor of this."""
     n = 30
     valid = np.ones(n, bool)
@@ -83,7 +83,7 @@ def test_confidence_gate_rejects_a_low_confidence_stretch():
 def test_confidence_gate_catches_a_blip_inside_an_occluded_stretch():
     """A single frame's confidence can bounce back above threshold in the
     middle of an otherwise-occluded stretch (ViTPose momentarily picking up a
-    partial cue) -- the rolling MIN, not the frame's own raw confidence, is
+    partial cue), the rolling MIN, not the frame's own raw confidence, is
     what still rejects it, since its neighbors are still low."""
     n = 30
     valid = np.ones(n, bool)
@@ -93,13 +93,13 @@ def test_confidence_gate_catches_a_blip_inside_an_occluded_stretch():
 
     gated = _reject_low_confidence_stretches(valid, conf)
 
-    assert not gated[16]  # still rejected -- neighbors are still low
+    assert not gated[16]  # still rejected, neighbors are still low
     assert not gated[12:20].any()
 
 
 def test_confidence_gate_never_resurrects_an_already_invalid_frame():
     """A frame already marked invalid upstream (no box at all) must stay
-    invalid regardless of confidence -- the gate can only narrow validity, not
+    invalid regardless of confidence, the gate can only narrow validity, not
     widen it."""
     n = 10
     valid = np.zeros(n, bool)

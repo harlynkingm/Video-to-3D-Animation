@@ -1,10 +1,10 @@
 """Stage 3 regression test: runs real Depth-Anything-3 (DA3METRIC-LARGE) on
 the anchor frame `mask_and_track` resolved, and checks the resulting metric
-depth map looks correct -- no NaN/Inf, and depth values in a physically
+depth map looks correct, no NaN/Inf, and depth values in a physically
 plausible range for a person standing a few meters from a handheld/tripod
 camera. Also checks the optional PLY point-cloud preview (on for these tests,
 see conftest.py's `render_depth_preview=True`) is structurally valid. Needs a
-CUDA GPU -- skipped automatically otherwise (see conftest.py). The checkpoint
+CUDA GPU, skipped automatically otherwise (see conftest.py). The checkpoint
 itself auto-downloads on first use, so no manual setup is needed for it.
 """
 

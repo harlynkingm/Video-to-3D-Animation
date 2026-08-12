@@ -5,7 +5,7 @@ child's own exit code.
 
 bpy (Blender-as-a-Python-module, not the full application) has a
 reproducible access-violation crash during its own interpreter teardown on
-Windows -- well after every test has already finished and pytest has already
+Windows, well after every test has already finished and pytest has already
 written its results to disk (confirmed: the junit report is written before
 the crash happens). See `pipeline/run.py`'s own module docstring for the
 same crash class hit elsewhere in this project. Trusting the child's exit
@@ -32,9 +32,9 @@ def main() -> int:
 
         if not junit_path.exists():
             # No report at all means pytest crashed before finishing (or
-            # before writing one), not after -- a real failure, not the
+            # before writing one), not after, a real failure, not the
             # benign post-success crash this script exists to tolerate.
-            print("export-env pytest produced no junit report -- treating as a real failure.")
+            print("export-env pytest produced no junit report, treating as a real failure.")
             return 1
 
         root = ET.parse(junit_path).getroot()

@@ -1,7 +1,7 @@
 """A cheap, betas-to-rest-pose-skeleton function for SMPL-X: given a body shape
 (betas), returns where each joint sits before any pose is applied. Needed by
 `gvhmr_endecoder.py`'s forward-kinematics step (turning predicted joint
-rotations into actual 3D joint positions), and nothing else -- this project's
+rotations into actual 3D joint positions), and nothing else, this project's
 final SMPL-X mesh/vertex output is a separate, later pipeline stage, not this one.
 
 Ported from `comfyui-motioncapture/nodes/body_model/smplx_lite.py`'s
@@ -11,7 +11,7 @@ precomputed once from the real model file), so this never needs the source
 class's full vertex/mesh machinery (`posedirs`, `lbs_weights`, hand-pose
 defaults, linear blend skinning) at all.
 
-Needs the real SMPL-X model file (`SMPLX_NEUTRAL.npz`) -- the same one this
+Needs the real SMPL-X model file (`SMPLX_NEUTRAL.npz`), the same one this
 project's README already asks you to register for and download, placed at
 `body_models/smplx/SMPLX_NEUTRAL.npz` in the repo root (gitignored, same as
 `checkpoints/`; kept as a separate folder since these files carry their own
@@ -35,7 +35,7 @@ DEFAULT_MODEL_PATH = (
 
 
 class SmplxSkeleton:
-    """Not an `nn.Module` -- no learned weights, just fixed data loaded once
+    """Not an `nn.Module`, no learned weights, just fixed data loaded once
     from the real SMPL-X model file, matching `EnDecoder`'s own treatment of
     the equivalent object as a plain attribute, not a checkpoint-loaded submodule."""
 

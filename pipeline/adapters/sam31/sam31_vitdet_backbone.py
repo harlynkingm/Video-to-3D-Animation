@@ -8,7 +8,7 @@ Ported from `comfy/ldm/sam3/sam.py`'s `ViTDet`/`SAM3VisionBackbone`, with
 conflict that would come with vendoring ComfyUI's own code). The 2D RoPE math
 (`rope`, `EmbedND`, `apply_rope`) is borrowed from ComfyUI's own Flux
 implementation (`comfy/ldm/flux/math.py`, `comfy/ldm/flux/layers.py`), which
-SAM3.1 itself reuses -- credited here, not vendored, since it's plain rotation
+SAM3.1 itself reuses, credited here, not vendored, since it's plain rotation
 math with no SAM3-specific weights.
 
 Deliberately NOT ported: the interactive SAM prompt-encoder/mask-decoder
@@ -16,7 +16,7 @@ classes in the same source file (`SAMAttention`, `TwoWayTransformer`,
 `PositionEmbeddingRandom`, the point/box `MLP` head). Those exist only to
 support click/box-prompted conditioning (`initial_masks`), which this project
 never uses (all detections come from text prompts, matched to tracked objects
-by `sam31_tracker.py`) -- confirmed while writing the tracker port that nothing
+by `sam31_tracker.py`), confirmed while writing the tracker port that nothing
 here needs them; `sam31_tracker.py` has its own, separate copy of similar
 classes for its own interactive mask decoder, not shared with this file.
 """
@@ -35,14 +35,14 @@ class TrackerMode(enum.StrEnum):
     """Which of `Sam31VisionBackbone`'s two tracker-only FPN conv groups to run.
     `PROPAGATION` is per-frame mask propagation (this project's only real usage);
     `INTERACTIVE` seeds tracking state from a freshly detected mask (loaded for a
-    clean `strict=True` checkpoint load, but never actually invoked -- see this
+    clean `strict=True` checkpoint load, but never actually invoked, see this
     module's docstring).
     """
 
     PROPAGATION = "propagation"
     INTERACTIVE = "interactive"
 
-# These are fixed by the checkpoint's own training configuration -- not free parameters,
+# These are fixed by the checkpoint's own training configuration, not free parameters,
 # and not something read from the checkpoint file itself (there's no "img_size" tensor).
 # The RoPE position buffers below are precomputed once, at construction, for exactly a
 # 72x72 patch grid (IMG_SIZE // PATCH_SIZE). They do NOT adapt to a differently-sized
@@ -205,7 +205,7 @@ class PatchEmbed(nn.Module):
 
 class ViTDet(nn.Module):
     """The SAM 3.1 image encoder trunk. Fixed configuration (see the module-level
-    constants above) -- there's no legitimate reason for this project to construct it
+    constants above), there's no legitimate reason for this project to construct it
     any other way, so it's not parameterized like the source's more general version.
     Expects input already resized to exactly IMG_SIZE x IMG_SIZE.
     """
@@ -237,7 +237,7 @@ class ViTDet(nn.Module):
 
     def _get_pos_embed(self, num_tokens: int) -> torch.Tensor:
         """Absolute position embedding, tiled (not interpolated) from the pretrain grid to the
-        current grid size -- matches the source exactly, since that's how these particular
+        current grid size, matches the source exactly, since that's how these particular
         weights were adapted, not a generic choice.
         """
         pos = self.pos_embed
@@ -334,7 +334,7 @@ class FPNScaleConv(nn.Module):
 
 class PositionEmbeddingSine(nn.Module):
     """2D sinusoidal position encoding (DETR-style), computed in fp32 for numerical
-    stability then cast to match the caller's working dtype -- not just a generic
+    stability then cast to match the caller's working dtype, not just a generic
     choice, replicating a precision detail from the source: certain positional-encoding
     math stays fp32 internally regardless of the surrounding working dtype (e.g. fp16),
     cast back only at the end, for numerical stability.
@@ -371,7 +371,7 @@ class Sam31VisionBackbone(nn.Module):
     `sam2_convs` single group.
 
     `interactive_convs` is loaded (needed for a clean strict=True checkpoint load) but
-    this project's own code never calls `tracker_mode=TrackerMode.INTERACTIVE` -- that
+    this project's own code never calls `tracker_mode=TrackerMode.INTERACTIVE`, that
     path only matters for `initial_masks`-based conditioning, which this project doesn't use.
     """
 
@@ -392,12 +392,12 @@ class Sam31VisionBackbone(nn.Module):
         tracker_only: bool = False,
         cached_trunk: torch.Tensor | None = None,
     ):
-        """Returns (features, positions, tracker_features, tracker_positions) -- any pair may be
+        """Returns (features, positions, tracker_features, tracker_positions), any pair may be
         None depending on tracker_only/tracker_mode, matching the source's calling convention.
 
         `cached_trunk` lets a caller that already ran `self.trunk(images)` (e.g. the tracker's
         per-frame `backbone_fn`, which needs both detector and tracker FPN outputs from the same
-        frame) skip a second, redundant ViTDet trunk forward pass -- the trunk is by far the most
+        frame) skip a second, redundant ViTDet trunk forward pass, the trunk is by far the most
         expensive part of this backbone.
         """
         backbone_out = cached_trunk if cached_trunk is not None else self.trunk(images)

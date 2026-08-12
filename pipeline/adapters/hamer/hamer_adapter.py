@@ -5,7 +5,7 @@ licensed) that reuses this project's existing pieces heavily:
   - the shared ViT-H backbone (`VitHugeBackbone`, same weights family, loaded
     here from `hamer.safetensors`),
   - our COCO-17 ViTPose (`gvhmr_vitpose`) for the wrist/elbow keypoints that
-    locate each hand -- HaMeR's demo uses a whole-body ViTPose for tight hand
+    locate each hand, HaMeR's demo uses a whole-body ViTPose for tight hand
     boxes, which this project doesn't have; see `hamer_preprocess`,
   - the SAM 3.1 human mask (stage 1) for the person box, rescaled from SAM's
     1008x1008 working resolution to native like `gvhmr_adapter` does,
@@ -15,7 +15,7 @@ The head outputs rotation matrices in the hand crop's camera frame; this adapter
 converts them to axis-angle and, for left hands (which are flipped to look like
 right hands before inference), applies HaMeR's `fliplr` correction (negate the
 y/z axis-angle components). Reconciling the wrist orientation with GVHMR's
-forearm is deliberately left to stage 5 (retarget_hands) -- this stage only
+forearm is deliberately left to stage 5 (retarget_hands), this stage only
 produces the raw per-hand MANO pose.
 """
 
@@ -51,12 +51,12 @@ HAMER_CHECKPOINT = CHECKPOINT_DIR / "hamer.safetensors"
 _BACKBONE_PREFIX = "backbone."
 _MANO_HEAD_PREFIX = "mano_head."
 # The backbone is trained on 256x192; the crop is 256x256, so trim 32px off each
-# side of the width -- matching HaMeR's `self.backbone(x[:,:,:,32:-32])`.
+# side of the width, matching HaMeR's `self.backbone(x[:,:,:,32:-32])`.
 _WIDTH_CROP = 32
 
 HAND_POSE_DIM = 45  # 15 MANO joints x 3 axis-angle
 
-# HaMeR has no visibility/occlusion signal of its own -- it regresses *a* MANO
+# HaMeR has no visibility/occlusion signal of its own, it regresses *a* MANO
 # pose from whatever's in the crop regardless of whether the hand is actually
 # there, and `hand_box_from_body_kpts`'s own keypoint-confidence gate (0.3)
 # doesn't catch this: a body-occluded wrist (e.g. gripping something out of view
@@ -68,10 +68,10 @@ HAND_POSE_DIM = 45  # 15 MANO joints x 3 axis-angle
 # A kinematic (angular-velocity) outlier check was tried first and rejected: on
 # a real clip mixing walking and reaching, legitimate motion is itself fast and
 # noisy enough that there's no velocity threshold separating it from an occluded
-# stretch's per-frame noise -- both cover the same range. Wrist keypoint
+# stretch's per-frame noise, both cover the same range. Wrist keypoint
 # confidence is a much cleaner signal because it's a direct estimate of
 # visibility rather than an inference from motion. On the same clip, confidence
-# alone (thresholded on a rolling window, not a single frame -- confidence can
+# alone (thresholded on a rolling window, not a single frame, confidence can
 # blip back up mid-occlusion for a stray frame or two) isolated exactly the
 # visually-confirmed occluded stretch with zero false positives anywhere else in
 # 700 frames across both hands.
@@ -85,7 +85,7 @@ WRIST_CONFIDENCE_WINDOW_FRAMES = 7  # centered rolling window
 
 def _reject_low_confidence_stretches(valid: np.ndarray, wrist_conf: np.ndarray) -> np.ndarray:
     """Demote to invalid any frame whose wrist-keypoint confidence, over a
-    centered rolling window, dips below `MIN_ROLLING_WRIST_CONFIDENCE` -- the
+    centered rolling window, dips below `MIN_ROLLING_WRIST_CONFIDENCE`, the
     rolling min (rather than the frame's own raw confidence) is what catches a
     frame that happens to look momentarily confident in the middle of an
     otherwise-occluded stretch."""
@@ -96,7 +96,7 @@ def _reject_low_confidence_stretches(valid: np.ndarray, wrist_conf: np.ndarray) 
 
 # infer() output keys (per-frame arrays). KEY_LEFT_VALID/KEY_RIGHT_VALID are
 # this stage's detection-based validity (did HaMeR find something here at all,
-# confidently) -- gates finger smoothing directly, and is the base that
+# confidently), gates finger smoothing directly, and is the base that
 # stage_4_estimate_hands's own KEY_LEFT_WRIST_VALID/KEY_RIGHT_WRIST_VALID
 # (computed downstream, not produced by infer() itself, since it needs GVHMR's
 # elbow) narrows further for the wrist specifically. Kept as two separate
@@ -177,7 +177,7 @@ class HamerAdapter:
             KEY_LEFT_VALID: np.zeros(n, bool),
             KEY_RIGHT_VALID: np.zeros(n, bool),
         }
-        # Wrist keypoint confidence per frame, per hand -- collected for the
+        # Wrist keypoint confidence per frame, per hand, collected for the
         # rolling-confidence outlier pass below, which needs the whole sequence
         # (including frames after each one) so it can't run inline in this loop.
         wrist_conf = {True: np.zeros(n, np.float32), False: np.zeros(n, np.float32)}

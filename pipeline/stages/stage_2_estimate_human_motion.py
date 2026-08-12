@@ -3,17 +3,17 @@ full-clip SMPL-X body pose, in both camera-space ("incam") and
 world-grounded ("global") coordinates.
 
 Depends on stage 1's human mask (for the per-frame bbox GVHMR needs), not
-just stage 0's frames -- see `gvhmr_adapter.py`'s module docstring for why no
+just stage 0's frames, see `gvhmr_adapter.py`'s module docstring for why no
 mask-to-video conversion is needed anywhere in this step.
 
 If `RunInput.render_motion_preview` is set, also writes an AMASS-format `.npz`
 of the incam motion, reoriented upright the same way stage 10's own export
-does (`bvh_export.root_camera_to_upright`) -- importable into Blender via the
+does (`bvh_export.root_camera_to_upright`), importable into Blender via the
 already-installed `jtesch/smplx_blender_addon`'s own "Add Animation" operator
 (`anim_format="AMASS"`) for visual verification against a real, correctly-shaped
 and -posed SMPL-X body, not just raw numbers. incam, not the vestigial
 "global" frame, since every stage past this one (and the real export) reads
-incam exclusively -- this preview should show what will actually ship. This
+incam exclusively, this preview should show what will actually ship. This
 is not a from-scratch export format: it's the exact input format that
 operator (and this project's own export stage) already expects, so writing
 it here is a small step, not new infrastructure.
@@ -58,7 +58,7 @@ OUTPUT_MOTION_PREVIEW = "motion_preview"
 def _smooth_body_params(params: dict, window: int, cutoff: float) -> None:
     """In place: temporally smooth one GVHMR param sub-dict's rotation
     (global_orient + body_pose) and translation. betas is a shape parameter, not
-    motion, so it is left untouched. Always on -- GVHMR's raw output still has
+    motion, so it is left untouched. Always on, GVHMR's raw output still has
     residual jitter its temporal transformer doesn't fully remove."""
     for rotation_key in (KEY_GLOBAL_ORIENT, KEY_BODY_POSE):
         original = params[rotation_key]
@@ -98,7 +98,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     # Same translation smoothing as the corrected incam transl above (just not
     # the foot-lock drift correction, which this value is deliberately kept
-    # free of -- see gvhmr_adapter.KEY_TRANSL_INCAM_RAW's own comment) so
+    # free of, see gvhmr_adapter.KEY_TRANSL_INCAM_RAW's own comment) so
     # stage 7 sees a signal that's smoothed the same way it always has been,
     # not a differently-conditioned one.
     raw_transl = result[KEY_TRANSL_INCAM_RAW]
@@ -114,7 +114,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
     if runRecord.input.render_motion_preview:
         preview_path = motion_dir / MOTION_PREVIEW_FILENAME
-        # incam, reoriented upright -- see module docstring for why incam,
+        # incam, reoriented upright, see module docstring for why incam,
         # not the vestigial "global" frame. No hand pose yet at this point
         # in the pipeline (left/right default to flat/neutral).
         incam_params = result[KEY_PRED_SMPL_PARAMS_INCAM]

@@ -1,4 +1,4 @@
-"""The ViT-Huge backbone shared by ViTPose, HMR2, and HaMeR -- three separate
+"""The ViT-Huge backbone shared by ViTPose, HMR2, and HaMeR, three separate
 checkpoints, identical architecture, different learned weights and different
 heads on top. Lives here (not inside any one adapter) because all three of
 those model adapters load their own weights into an instance of this same
@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-IMG_SIZE = (256, 192)  # (H, W) -- a single person/hand crop, not the full frame
+IMG_SIZE = (256, 192)  # (H, W), a single person/hand crop, not the full frame
 PATCH_SIZE = 16
 IN_CHANS = 3
 EMBED_DIM = 1280
@@ -29,7 +29,7 @@ DEPTH = 32
 NUM_HEADS = 16
 MLP_RATIO = 4.0
 # padding=2 is what actually makes the patch grid come out to exactly 16x12
-# (192 patches, matching the checkpoint's [1, 193, 1280] pos_embed) -- confirmed
+# (192 patches, matching the checkpoint's [1, 193, 1280] pos_embed), confirmed
 # against the real checkpoints, not a default left over from a generic formula.
 PATCH_CONV_PADDING = 2
 GRID_H, GRID_W = IMG_SIZE[0] // PATCH_SIZE, IMG_SIZE[1] // PATCH_SIZE  # 16, 12
@@ -95,7 +95,7 @@ class PatchEmbed(nn.Module):
 class VitHugeBackbone(nn.Module):
     """Expects input already cropped/resized to exactly IMG_SIZE (H, W). Matches
     `backbone.*` in `vitpose.safetensors`, `hmr2.safetensors`, and
-    `hamer.safetensors` exactly -- same architecture, loaded from different
+    `hamer.safetensors` exactly, same architecture, loaded from different
     checkpoints by the modules that each own an instance of this class.
     """
 
@@ -112,7 +112,7 @@ class VitHugeBackbone(nn.Module):
         x = self.patch_embed(x)
         # The checkpoint's pos_embed has one extra learned row beyond the 192
         # patch positions; the source adds it to every patch as a shared bias
-        # rather than treating it as a separate CLS token -- ported as-is,
+        # rather than treating it as a separate CLS token, ported as-is,
         # since this is the exact behavior the checkpoints were trained under.
         x = x + self.pos_embed[:, 1:] + self.pos_embed[:, :1]
 

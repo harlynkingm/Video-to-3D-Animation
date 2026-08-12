@@ -1,5 +1,5 @@
 """Stage 8 tests: a real-data regression test (needs GPU/checkpoints/the
-SMPL-X model file, skipped otherwise -- see conftest.py) plus pure-logic unit
+SMPL-X model file, skipped otherwise, see conftest.py) plus pure-logic unit
 tests for the attachment-event resolution pipeline (no GPU/model dependency,
 always run).
 """
@@ -66,7 +66,7 @@ def test_qualifying_attachment_events_bridges_a_direct_gap_between_two_resolved_
 
 def test_qualifying_attachment_events_leaves_a_genuine_release_ungap_bridged():
     """A gap well beyond BRIDGE_GAP_MAX_SECONDS is a real release (the object
-    was set down), not a hand-off -- must NOT be bridged."""
+    was set down), not a hand-off, must NOT be bridged."""
     contact_events = [
         _contact_event("left_hand", 0, 50, 0.9),
         _contact_event("right_hand", 200, 250, 0.9),  # ~5s gap at 30fps
@@ -82,11 +82,11 @@ def test_qualifying_attachment_events_leaves_a_genuine_release_ungap_bridged():
 def test_qualifying_attachment_events_excludes_a_low_confidence_non_grip_region():
     """Real case from `testCoffeeMug`: a mug resting on the floor near a
     passing foot produced a 16-frame `left_leg` event (0.55 mean confidence,
-    a 0.043m depth gap -- small enough to look like real contact by depth
+    a 0.043m depth gap, small enough to look like real contact by depth
     alone, since the object and foot really are close in space, just never
     touching) that cleared the duration bar and would have become a real
     (wrong) attachment. `is_low_confidence=True` (as stage 7 now flags this
-    exact case -- see `_is_low_confidence`'s own docstring) must keep a
+    exact case, see `_is_low_confidence`'s own docstring) must keep a
     non-`GRIP_CAPABLE_REGIONS` event like this one out entirely, not just
     flagged."""
     contact_events = [_contact_event("left_leg", 565, 580, 0.55, is_low_confidence=True)]
@@ -100,7 +100,7 @@ def test_qualifying_attachment_events_still_includes_a_low_confidence_hand_grip(
     """The exact concern the exclusion above must not break: a real hand
     grip can legitimately be flagged `is_low_confidence` (a full grip
     wrapped around/behind the object commonly depresses both the 2D and
-    depth signals for reasons unrelated to whether contact is real -- see
+    depth signals for reasons unrelated to whether contact is real, see
     `GRIP_CAPABLE_REGIONS`'s own comment) and must still qualify, since
     `GRIP_CAPABLE_REGIONS` is exempt from this gate entirely."""
     contact_events = [_contact_event("right_hand", 100, 130, 0.49, is_low_confidence=True)]
@@ -134,7 +134,7 @@ def test_object_pose_output_is_plausible(stage_8_result):
 
     # The test clip's own racket-holding grip spans (close to) the whole clip
     # (already confirmed by stage 7's own real-data test: one continuous,
-    # full-confidence contact event) -- most frames should be a real
+    # full-confidence contact event), most frames should be a real
     # attachment, not a fallback/never-tracked flag.
     assert is_low_confidence.float().mean() < 0.5
 

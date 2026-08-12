@@ -16,8 +16,8 @@ from pathlib import Path
 # that's deliberately set either of these keeps their own value.
 #
 # DA3_LOG_LEVEL: at ERROR-only, silences a harmless import-time WARN ("gsplat
-# is required for rendering 3DGS") from depth_anything_3's own gs_renderer.py
-# -- gsplat (3D Gaussian Splatting) is that package's novel-view-synthesis
+# is required for rendering 3DGS") from depth_anything_3's own gs_renderer.py,
+# gsplat (3D Gaussian Splatting) is that package's novel-view-synthesis
 # rendering feature, unrelated to and never invoked by this adapter's plain
 # metric-depth inference.
 os.environ.setdefault("DA3_LOG_LEVEL", "ERROR")
@@ -34,7 +34,7 @@ from depth_anything_3.api import DepthAnything3
 from huggingface_hub.errors import LocalEntryNotFoundError
 
 # Apache 2.0 checkpoint, single-image *metric* depth (real meters, not just
-# relative-scale) -- the monocular metric checkpoint is Apache 2.0 even at
+# relative-scale), the monocular metric checkpoint is Apache 2.0 even at
 # LARGE size, unlike DA3's CC-BY-NC multi-view checkpoints.
 MODEL_NAME = "depth-anything/DA3METRIC-LARGE"
 
@@ -44,7 +44,7 @@ MODEL_NAME = "depth-anything/DA3METRIC-LARGE"
 # every model this pipeline uses lives in one place on disk.
 CHECKPOINT_CACHE_DIR = Path(__file__).resolve().parents[2] / "checkpoints" / "depth_anything_3"
 
-# DA3METRIC-LARGE's raw network output is not already in meters -- this is the
+# DA3METRIC-LARGE's raw network output is not already in meters, this is the
 # model's own documented conversion (its repo README's FAQ section), confirmed
 # against the real Hugging Face checkpoint card before relying on it.
 METRIC_DEPTH_DIVISOR = 300.0
@@ -59,7 +59,7 @@ class DepthAnything3Adapter:
 
     def load(self) -> None:
         # Try the local cache first (silent, no network call at all once this
-        # checkpoint has been downloaded once -- matches this project's
+        # checkpoint has been downloaded once, matches this project's
         # offline-first rule). Only reaches the Hub, and only prints the
         # "unauthenticated requests" notice, on a genuine first-time download.
         try:
@@ -71,14 +71,14 @@ class DepthAnything3Adapter:
         self._model = self._model.to(device="cuda").eval()
 
     def infer(self, frame_path: str, focal_length_px: float) -> dict[str, np.ndarray]:
-        # DA3METRIC-LARGE's forward pass never populates "depth_conf" -- confirmed
+        # DA3METRIC-LARGE's forward pass never populates "depth_conf", confirmed
         # by real inference, prediction.conf is always None for this checkpoint
         # (unlike the Any-view/Nested checkpoints this project doesn't use). No
         # confidence output exists to return here. It does populate a sky mask
         # (also confirmed via real inference), useful for excluding sky pixels
         # (set to max depth by the model) from any point-cloud visualization.
         prediction = self._model.inference([frame_path])
-        raw_depth = prediction.depth[0]  # (H, W) float32 -- net output, not yet in meters
+        raw_depth = prediction.depth[0]  # (H, W) float32, net output, not yet in meters
         metric_depth = raw_depth * (focal_length_px / METRIC_DEPTH_DIVISOR)
         result = {KEY_DEPTH: metric_depth}
         if prediction.sky is not None:

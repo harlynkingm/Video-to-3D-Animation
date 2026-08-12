@@ -1,10 +1,10 @@
 """Convert the upstream MICA checkpoint into this project's checkpoints/ folder.
 
 Like DECA's, `mica.tar` is a raw `torch.save()` pickle despite the `.tar`
-extension -- `torch.load` reads it directly. Its top-level dict holds
+extension, `torch.load` reads it directly. Its top-level dict holds
 `arcface` (the ArcFace identity backbone) and `flameModel` (a `regressor`
 mapping ArcFace embeddings to FLAME shape, plus a `generator` sub-dict that's
-just MICA's own bundled copy of FLAME's generic-model data -- this project
+just MICA's own bundled copy of FLAME's generic-model data, this project
 already has that from `scripts/convert_flame_model.py`, so it's dropped
 here), plus training-only optimizer/scheduler bookkeeping (also dropped).
 

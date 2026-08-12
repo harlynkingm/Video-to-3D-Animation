@@ -28,7 +28,7 @@ QPushButton:disabled { background-color: #999999; color: #dddddd; }
 class DroppableLineEdit(QLineEdit):
     """A read-only path field: typing stays blocked (setReadOnly), but it
     still accepts a single file/folder dragged in from Explorer and fills
-    itself with that path -- setText() works fine on a read-only QLineEdit,
+    itself with that path, setText() works fine on a read-only QLineEdit,
     same as a paired Browse button already relies on.
     """
 
@@ -52,7 +52,7 @@ class ConsoleLog(QPlainTextEdit):
     """Read-only, fixed-width process-output viewer that understands a bare
     "\\r" (tqdm's per-frame progress bar) as "overwrite the current line"
     instead of appending a new one, and only follows new output to the
-    bottom when the viewport was already there -- a user who's scrolled up
+    bottom when the viewport was already there, a user who's scrolled up
     to read something shouldn't get yanked back down on every update.
     """
 
@@ -67,7 +67,7 @@ class ConsoleLog(QPlainTextEdit):
         at_bottom = scrollbar.value() >= scrollbar.maximum() - 4
         # A plain QTextCursor (as returned by textCursor()) still edits the
         # widget's real document regardless of whether it's ever handed back
-        # via setTextCursor() -- so the insert/select operations below always
+        # via setTextCursor(), so the insert/select operations below always
         # take effect. Only setTextCursor() itself (which moves the widget's
         # own visible caret) triggers Qt's auto-scroll-into-view; calling it
         # unconditionally would override the at_bottom check below and force
@@ -114,7 +114,7 @@ SECTION_SPACING = 12
 
 
 def build_vertical_spacer(height: int = SECTION_SPACING) -> QWidget:
-    """A fixed-height, initially-hidden gap -- unlike a bare layout spacing
+    """A fixed-height, initially-hidden gap, unlike a bare layout spacing
     value, this can be shown/hidden in step with a sibling widget (see
     RunStatusIndicator's own spacer, tied to the progress bar's visibility)
     so the gap doesn't linger as dead space once that sibling disappears.
@@ -132,7 +132,7 @@ class RunStatusIndicator:
     centralizes the begin/apply/end show-hide-and-text logic both windows
     need around a running process. `spacer`, if given (see
     build_vertical_spacer()), is shown/hidden in lockstep with the progress
-    bar -- e.g. a gap between the progress bar and the console below it that
+    bar, e.g. a gap between the progress bar and the console below it that
     should only take up space while the progress bar itself is visible.
     """
 

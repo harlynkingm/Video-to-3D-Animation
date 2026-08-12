@@ -44,7 +44,7 @@ def _render_pointcloud_preview(
     out_path: Path,
 ) -> None:
     """Colored point cloud for visual spot-checking in Blender (File > Import
-    > Stanford (.ply) -- built in, no addon needed, unlike stage 2's SMPL-X
+    > Stanford (.ply), built in, no addon needed, unlike stage 2's SMPL-X
     preview). Excludes sky pixels (set to max depth by the model) so they
     don't dominate the point cloud as a distracting dome.
 

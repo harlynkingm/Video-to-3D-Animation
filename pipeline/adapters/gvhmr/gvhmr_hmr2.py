@@ -1,22 +1,22 @@
 """HMR2's per-frame image-feature extractor: its own ViT backbone instance
 (separate weights from ViTPose's, same architecture) feeding a small
 cross-attention transformer, of which GVHMR only ever consumes the pooled
-output token (`token_out`, i.e. `f_imgseq` -- GVHMR's per-frame image feature
+output token (`token_out`, i.e. `f_imgseq`, GVHMR's per-frame image feature
 conditioning). Ported from `comfyui-motioncapture/nodes/hmr2/model.py`.
 
 **Only the `token_out` path is implemented.** The source's `SMPLTransformerDecoderHead`
 can also directly decode its own SMPL pose/shape/camera prediction from `token_out`
 (`decpose`/`decshape`/`deccam` + `init_body_pose`/`init_betas`/`init_cam` mean-pose
-buffers) -- GVHMR's own pipeline never calls that path (only `feat_mode=True`, i.e.
+buffers), GVHMR's own pipeline never calls that path (only `feat_mode=True`, i.e.
 `only_return_token_out=True` in the source), so it's provably dead code for this
 port and isn't ported. The buffers/layers themselves are still declared (as
-zero-initialized -- their real values come from the checkpoint at load time either
+zero-initialized, their real values come from the checkpoint at load time either
 way) so `strict=True` loading still proves this module matches the checkpoint's
 actual architecture, same reasoning as `sam31_vitdet_backbone.py`'s `interactive_convs`.
 
 Module nesting below (`PreNorm` wrapping each sub-layer, `to_out`/`net` as a
 `Sequential` with an inert `Dropout` placeholder shifting indices) looks more
-convoluted than a hand-rolled version would -- it's ported to match the
+convoluted than a hand-rolled version would, it's ported to match the
 checkpoint's actual parameter names exactly (confirmed against the real
 `hmr2.safetensors` keys), not a style choice.
 """
@@ -139,7 +139,7 @@ class TokenTransformerDecoder(nn.Module):
 
 class SMPLTransformerDecoderHead(nn.Module):
     """Matches `smpl_head.*` exactly. Only `forward()`'s `token_out` path is
-    implemented -- see module docstring."""
+    implemented, see module docstring."""
 
     def __init__(self):
         super().__init__()
@@ -169,5 +169,5 @@ class GVHMRHMR2(nn.Module):
         self.smpl_head = SMPLTransformerDecoderHead()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """x: (B, 3, 256, 192) -- returns (B, 1024) f_imgseq, one token per frame."""
+        """x: (B, 3, 256, 192), returns (B, 1024) f_imgseq, one token per frame."""
         return self.smpl_head(self.backbone(x))

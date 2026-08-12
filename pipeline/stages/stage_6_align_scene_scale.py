@@ -8,7 +8,7 @@ clip), so this stage fits the scale + translation that reconciles them
 (`similarity_transform.fit_scene_scale`). The object's mask is back-projected
 through the same depth map and the same fitted `(scale, translation)`, then
 `object_extent_fit.fit_object_shape` picks a box, ellipsoid, or cylinder primitive (or the
-user's `--object-shape-hint` override) -- see that module's own docstring for
+user's `--object-shape-hint` override), see that module's own docstring for
 why a primitive instead of a reconstructed mesh.
 
 This stage uses the body-only SMPL-X from `estimate_human_motion` (hands
@@ -85,7 +85,7 @@ OUTPUT_SCENE_PREVIEW = "scene_preview"
 KEY_SCALE = "scale"
 KEY_TRANSLATION = "translation"
 KEY_N_CORRESPONDENCES = "n_correspondences"
-# Only present when an object was tracked -- see _pelvis_rest_position's own
+# Only present when an object was tracked, see _pelvis_rest_position's own
 # docstring for why stage 10's object placement needs this.
 KEY_PELVIS_REST = "pelvis_rest_incam"
 
@@ -112,7 +112,7 @@ def _object_points_in_body_space(
 
 def _build_smplx_anchor_mesh(incam_params: dict, anchor_frame_index: int) -> np.ndarray:
     """Build the SMPL-X vertex mesh (camera-space, metric) at the anchor frame
-    from GVHMR's incam body params. Hands/expression are left neutral -- they
+    from GVHMR's incam body params. Hands/expression are left neutral, they
     don't affect the body's overall scale, which is all this stage needs."""
     import smplx
 
@@ -136,14 +136,14 @@ def _build_smplx_anchor_mesh(incam_params: dict, anchor_frame_index: int) -> np.
 
 def _pelvis_rest_position(betas: torch.Tensor) -> np.ndarray:
     """The pelvis joint's own position at zero pose/orientation/translation,
-    for these betas -- SMPL-X's `global_orient` rotates the body *about this
+    for these betas, SMPL-X's `global_orient` rotates the body *about this
     point*, not the world origin (confirmed empirically: with `transl=0`,
     changing `global_orient` leaves the reported pelvis joint position
     unchanged). A skeleton joint's own world position already accounts for
     this automatically via forward kinematics; a standalone point that isn't
     part of the kinematic chain (the fitted object's own `center`) needs this
     pivot explicitly to undergo the *same* rigid transform stage 10 applies to
-    the body -- see that stage's `_object_shape_to_blender_world`.
+    the body, see that stage's `_object_shape_to_blender_world`.
     """
     import smplx
 
@@ -217,10 +217,10 @@ def _load_mask_at_depth_res(masks_path: str, anchor: int, depth_hw: tuple[int, i
 def _score_frames_by_mask(masks_path: str, score_fn) -> list[tuple[float, int]]:
     """Scores every frame with a real object mask via `score_fn`
     (`mask_circularity` or `mask_solidity`), descending. Works directly on
-    the bit-packed masks, one frame at a time -- unpacking every frame of a
+    the bit-packed masks, one frame at a time, unpacking every frame of a
     long clip at once risks the same OOM `sam31_adapter._stitch_tracked_
     slots` was written to avoid. Shared by `_select_shape_candidate_frames`
-    and `_resolve_auto_shape_hint` below -- both need the same per-frame
+    and `_resolve_auto_shape_hint` below, both need the same per-frame
     scan, just a different slice of the result."""
     packed = torch.load(masks_path, weights_only=False)[KEY_PACKED_MASKS]
     n_frames = packed.shape[0]
@@ -240,14 +240,14 @@ def _score_frames_by_mask(masks_path: str, score_fn) -> list[tuple[float, int]]:
 def _select_shape_candidate_frames(masks_path: str, n_candidates: int) -> list[int]:
     """Ranks every frame with a real object mask by how clean/unoccluded its
     2D silhouette looks, for `run()`'s own multi-frame proportions-
-    aggregation pass below -- always via `mask_solidity`, which (per its own
+    aggregation pass below, always via `mask_solidity`, which (per its own
     docstring) reads close to 1.0 for any clean, unoccluded convex silhouette
     regardless of shape kind. `mask_circularity` is deliberately not used
     here even for an ellipsoid: the final fitted `kind` can read "ellipsoid"
     either because `_resolve_auto_shape_hint` confirmed the object is
     genuinely round somewhere in the clip, or just because `fit_object_shape`
     AUTO's residual comparison happened to favor it for a non-round object at
-    the anchor -- and for a non-round object, circularity isn't a "how clean
+    the anchor, and for a non-round object, circularity isn't a "how clean
     is this frame" signal at all (confirmed on a real clip: it ranked a
     frame with a badly inflated mask measurement as the single cleanest one,
     while `mask_solidity` correctly excluded it)."""
@@ -257,7 +257,7 @@ def _select_shape_candidate_frames(masks_path: str, n_candidates: int) -> list[i
 
 # A clean rasterized circle tops out around here under cv2's own perimeter
 # measure (confirmed both synthetically and on a real clip's own cleanest
-# frames, which read 0.88-0.89) -- see test_object_extent_fit.py's own
+# frames, which read 0.88-0.89), see test_object_extent_fit.py's own
 # circularity test for the same number.
 _ROUND_MASK_CIRCULARITY_THRESHOLD = 0.85
 
@@ -265,7 +265,7 @@ _ROUND_MASK_CIRCULARITY_THRESHOLD = 0.85
 def _resolve_auto_shape_hint(masks_path: str) -> ObjectShapeHint:
     """`fit_object_shape`'s own AUTO mode picks box/ellipsoid/cylinder by
     comparing mean point-to-surface residual on the anchor frame's own point
-    cloud alone -- confirmed unreliable for a genuinely round object on a
+    cloud alone, confirmed unreliable for a genuinely round object on a
     real clip: a single-view hemisphere sample of a sphere can score
     deceptively close to (sometimes better than) a tightly-bounding box, so
     tiny run-to-run measurement noise (DA3 depth inference isn't
@@ -280,7 +280,7 @@ def _resolve_auto_shape_hint(masks_path: str) -> ObjectShapeHint:
     silhouette found anywhere in the clip. If any frame clears
     `_ROUND_MASK_CIRCULARITY_THRESHOLD`, that's decisive: forces ELLIPSOID
     outright, skipping the unreliable residual comparison entirely.
-    Otherwise falls back to AUTO unchanged -- box vs cylinder discrimination
+    Otherwise falls back to AUTO unchanged, box vs cylinder discrimination
     from a mask silhouette alone isn't attempted here, both can read as a
     similarly non-circular "stadium" shape, so there's no equally direct
     signal to prefer one over the residual comparison for that case.
@@ -301,12 +301,12 @@ def _aggregate_object_shape_proportions(
     n_candidates: int,
 ) -> dict:
     """Corrects `object_shape`'s own proportions (not its orientation or
-    center, which stay from the anchor frame's fit -- those describe *where*
+    center, which stay from the anchor frame's fit, those describe *where*
     the object sits relative to the body at one reference moment, not
     something a differently-chosen frame could stand in for) using the
     median of several candidate frames' own directly-measured 2D mask
     extents, ranked by how unoccluded they look
-    (`_select_shape_candidate_frames`) -- the same per-frame correction
+    (`_select_shape_candidate_frames`), the same per-frame correction
     `correct_lateral_axes_from_mask`/`correct_cylinder_extent_from_mask`
     already apply using just the anchor's own mask, just aggregated across
     several frames instead of trusting whichever one happens to be the
@@ -317,7 +317,7 @@ def _aggregate_object_shape_proportions(
 
     Falls back to `object_shape` unchanged if fewer than 2 candidate frames
     yield a usable mask measurement (e.g. the object is barely ever cleanly
-    visible) -- not enough independent samples to trust a median over the
+    visible), not enough independent samples to trust a median over the
     anchor's own single measurement.
     """
     candidate_frames = _select_shape_candidate_frames(stage_1_outputs[OUTPUT_OBJECT_MASKS], n_candidates)

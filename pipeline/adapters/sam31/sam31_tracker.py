@@ -5,7 +5,7 @@ detection/reconditioning/keep-alive bookkeeping that ties them together across a
 
 Ported from `comfy/ldm/sam3/tracker.py`, replacing `comfy.ops`/`optimized_attention`/
 `comfy.model_management` with plain PyTorch (this project has no ComfyUI runtime
-dependency -- see the module docstrings in this package's other files for why).
+dependency, see the module docstrings in this package's other files for why).
 Mask convention: boolean, True = attend, same as the rest of this port.
 
 **Scope deliberately narrower than the source file.** This project only ever drives
@@ -13,7 +13,7 @@ the tracker through `track_video_with_detection` with `initial_masks=None` (dete
 come from `human_prompt`/`object_prompt` text, never from user clicks or boxes) on the
 SAM 3.1 *multiplex* checkpoint specifically. So, dropped entirely:
   - `SAM3Tracker` and its non-decoupled `MemoryAttnLayer`/`MemoryAttnEncoder`/
-    `MemoryTransformer` -- these belong to the older, non-multiplex SAM3 tracker
+    `MemoryTransformer`, these belong to the older, non-multiplex SAM3 tracker
     (a different checkpoint's tensor layout), never loaded by this project.
   - The point/box interactive-click path: `track_step`'s `point_inputs` branch,
     `SAM3Model.forward_segment`, and `SAMPromptEncoder`'s `boxes` handling. A mask is
@@ -27,9 +27,9 @@ SAM 3.1 *multiplex* checkpoint specifically. So, dropped entirely:
     simpler, easier-to-verify sequential loop. Worth adding back only if profiling on
     real clips shows it's actually needed.
 
-Everything else -- the multiplex state bookkeeping, the memory bank encode/attend
+Everything else, the multiplex state bookkeeping, the memory bank encode/attend
 cycle, mask-based NMS, reconditioning of degraded tracks, and the keep-alive hysteresis
-that prevents single-frame flicker -- is ported faithfully, since none of it is
+that prevents single-frame flicker, is ported faithfully, since none of it is
 optional for correct multi-object tracking over a real clip.
 """
 
@@ -48,7 +48,7 @@ from ...helpers.progress_reporter import frame_progress
 
 NO_OBJ_SCORE = -1024.0
 
-# `detect_fn`'s expected return-dict keys -- this project's own contract between
+# `detect_fn`'s expected return-dict keys, this project's own contract between
 # `sam31_adapter.py` (which implements `detect_fn`) and `track_video_with_detection`
 # below (which calls it), and `track_video_with_detection`'s own returned-dict keys.
 KEY_SCORES = "scores"
@@ -58,7 +58,7 @@ KEY_N_FRAMES = "n_frames"
 
 D_MODEL = 256
 NUM_MASKMEM = 7  # size of the rolling memory window (this frame's 7 most recent conditioning/tracked frames)
-NUM_MULTIPLEX = 16  # objects packed per multiplex "bucket" -- see MultiplexState
+NUM_MULTIPLEX = 16  # objects packed per multiplex "bucket", see MultiplexState
 NUM_MULTIMASK_OUTPUTS = 3
 MAX_OBJ_PTRS_IN_ENCODER = 16
 SIGMOID_SCALE_FOR_MEM_ENC = 2.0
@@ -77,7 +77,7 @@ def to_spatial(x: torch.Tensor, H: int, W: int) -> torch.Tensor:
 
 
 def _compute_mask_overlap(masks_a: torch.Tensor, masks_b: torch.Tensor) -> torch.Tensor:
-    """Max of IoU and IoM (intersection over minimum area) -- more robust to size
+    """Max of IoU and IoM (intersection over minimum area), more robust to size
     differences than IoU alone (e.g. a small hand mask fully inside a large body mask).
     """
     a_flat = (masks_a > 0).float().flatten(1)
@@ -126,7 +126,7 @@ def fill_holes_in_mask_scores(mask: torch.Tensor, max_area: int = 0) -> torch.Te
     mask = torch.where(small_bg, 0.1, mask)
 
     # Only remove a foreground sprinkle if it's smaller than both max_area and half the
-    # total foreground area -- guards against erasing a genuinely small-but-real object.
+    # total foreground area, guards against erasing a genuinely small-but-real object.
     mask_fg = (mask > 0).to(torch.uint8)
     fg_area_thresh = mask_fg.sum(dim=(2, 3), keepdim=True, dtype=torch.int32)
     fg_area_thresh.floor_divide_(2).clamp_(max=max_area)
@@ -164,7 +164,7 @@ def apply_rope_memory(
 
     Args:
         q: [B, Nq, C] projected queries (current frame features).
-        k: [B, Nk, C] projected keys (memory tokens) -- the trailing `num_k_exclude_rope`
+        k: [B, Nk, C] projected keys (memory tokens), the trailing `num_k_exclude_rope`
             tokens (object pointers, which carry no 2D spatial position) are left untouched.
         freqs: [1, 1, Nq, dim//2, 2, 2] rotation matrices for one frame's spatial grid.
     """
@@ -180,7 +180,7 @@ def apply_rope_memory(
     if num_k_rope > 0:
         Nf = freqs.shape[2]  # spatial positions in one frame
         if num_k_rope > Nf:
-            # Memory spans multiple past frames concatenated -- tile this frame's position
+            # Memory spans multiple past frames concatenated, tile this frame's position
             # table across them (each past frame reuses the same spatial grid).
             r = (num_k_rope + Nf - 1) // Nf
             pe_k = freqs.repeat(1, 1, r, 1, 1, 1)[:, :, :num_k_rope]
@@ -217,7 +217,7 @@ def compute_tpos_enc(
 
 
 def _pad_to_buckets(tensor: torch.Tensor, target_buckets: int) -> torch.Tensor:
-    """Zero-pad a [num_buckets, ...] tensor to `target_buckets` along dim 0 -- lets memory
+    """Zero-pad a [num_buckets, ...] tensor to `target_buckets` along dim 0, lets memory
     recorded before the multiplex state grew (new objects detected mid-clip) still be read
     back at the current, larger bucket count.
     """
@@ -298,7 +298,7 @@ def collect_memory_tokens(
 
 class MLP(nn.Module):
     """Plain N-layer MLP with ReLU between layers. Same shape as
-    `sam31_detector.SimpleMLP` -- duplicated rather than imported so this file and
+    `sam31_detector.SimpleMLP`, duplicated rather than imported so this file and
     `sam31_detector.py` stay independently loadable/testable (their checkpoint weights
     are separate tensor groups; see `sam31_detector.py`'s module docstring for the same
     reasoning applied there).
@@ -342,7 +342,7 @@ class SAMAttention(nn.Module):
 
 
 class MLPBlock(nn.Module):
-    """The original SAM code's own MLP block naming (`lin1`/`lin2`) -- the raw checkpoint
+    """The original SAM code's own MLP block naming (`lin1`/`lin2`), the raw checkpoint
     uses this directly. ComfyUI's own loader remaps these to `nn.Sequential`-style `0`/`2`
     keys before loading (see `comfy/supported_models.py`'s SAM3 key remap); since this
     project loads the raw checkpoint directly, matching its actual names here is simpler
@@ -502,7 +502,7 @@ class SAMMaskDecoder(nn.Module):
 class SAMPromptEncoder(nn.Module):
     """Single-object prompt encoder (the `interactive_sam_prompt_encoder`). Always
     conditions on a mask (this project's only prompt kind here); `points`/`boxes` are
-    dropped from the signature since a click is never issued -- see this module's
+    dropped from the signature since a click is never issued, see this module's
     docstring. `forward_sam_heads` below always supplies the fixed "no real point" dummy
     coordinate that the source synthesizes for the same case, since that dummy token is
     still architecturally required (its embedding is checkpoint-trained weight, not a
@@ -534,7 +534,7 @@ class SAMPromptEncoder(nn.Module):
                 masks: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         B = dummy_point_coords.shape[0]
         # The source pads an extra "not a point" token whenever no box is given (always
-        # true here) -- a fixed architectural quirk of SAM's own prompt encoder, ported
+        # true here), a fixed architectural quirk of SAM's own prompt encoder, ported
         # as-is rather than "simplified", since the two point-embedding tokens it produces
         # are what the checkpoint's `not_a_point_embed` weight was actually trained against.
         coords = torch.cat([dummy_point_coords, torch.zeros_like(dummy_point_coords)], dim=1)
@@ -583,7 +583,7 @@ def forward_sam_heads(
     obj_ptr_proj: nn.Module, no_obj_fn, mask_inputs: torch.Tensor, high_res_features: list[torch.Tensor] | None = None,
 ):
     """Run the interactive SAM prompt encoder + mask decoder on an already mask-conditioned
-    frame. Always synthesizes the fixed "no real point" dummy prompt -- see
+    frame. Always synthesizes the fixed "no real point" dummy prompt, see
     `SAMPromptEncoder`'s docstring.
     """
     device = backbone_features.device
@@ -723,7 +723,7 @@ class MemoryBackbone(nn.Module):
     """`maskmem_backbone`: downsamples the (multiplexed) mask stack, fuses it with the
     frame's own pixel features, and attaches a position encoding. SAM 3.1's checkpoint
     needs no output-channel compression (`out_dim == d_model` always), unlike the
-    older SAM3 tracker's version -- so that option is dropped here rather than ported
+    older SAM3 tracker's version, so that option is dropped here rather than ported
     as an unused branch.
     """
 
@@ -998,7 +998,7 @@ class Sam31Tracker(nn.Module):
         self.interactive_sam_mask_decoder = SAMMaskDecoder(D_MODEL, NUM_MULTIMASK_OUTPUTS)
         self.interactive_sam_prompt_encoder = SAMPromptEncoder(D_MODEL)
         # Mask-plus-conditioning-channel stack: one mask channel + one conditioning channel
-        # per multiplex slot -- see _encode_new_memory.
+        # per multiplex slot, see _encode_new_memory.
         self.maskmem_backbone = MemoryBackbone(D_MODEL, in_chans=NUM_MULTIPLEX * 2, channels=[16, 64, 256, 1024])
 
         self.maskmem_tpos_enc = nn.Parameter(torch.zeros(NUM_MASKMEM, 1, 1, D_MODEL))
@@ -1124,7 +1124,7 @@ class Sam31Tracker(nn.Module):
         mux_masks = multiplex_state.mux(mask_for_mem[:, 0])  # [num_buckets, M, H, W]
 
         # Conditioning channel: 1.0 = clean detection mask (trust it), 0.0 = propagated
-        # (noisier) mask -- tells the memory bank how much to trust each slot's mask this frame.
+        # (noisier) mask, tells the memory bank how much to trust each slot's mask this frame.
         N_obj = mask_for_mem.shape[0]
         cond_values = torch.full((N_obj,), 0.0, device=mask_for_mem.device, dtype=mask_for_mem.dtype)
         if is_conditioning:
@@ -1155,7 +1155,7 @@ class Sam31Tracker(nn.Module):
         cond_obj_mask: torch.Tensor | None = None,
     ) -> None:
         """Re-encode memory after `current_out["pred_masks"]` was modified in place
-        (reconditioning, newly-added objects, or occlusion suppression) -- keeps the
+        (reconditioning, newly-added objects, or occlusion suppression), keeps the
         memory bank consistent with whatever mask ends up being trusted for this frame.
         """
         low_res_masks = current_out["pred_masks"]  # [N_obj, 1, H_low, W_low]
@@ -1290,7 +1290,7 @@ class Sam31Tracker(nn.Module):
     def _suppress_recently_occluded(low_res_masks: torch.Tensor, last_occluded: torch.Tensor, frame_idx: int,
                                      threshold: float = 0.3) -> torch.Tensor:
         """Between two overlapping object masks, suppress whichever object was occluded
-        more recently -- prevents a just-reappeared object's corrupted mask from bleeding
+        more recently, prevents a just-reappeared object's corrupted mask from bleeding
         into a currently-stable neighbor. `last_occluded` is updated in place.
         """
         N_obj = low_res_masks.shape[0]
@@ -1351,7 +1351,7 @@ class Sam31Tracker(nn.Module):
         """Match this frame's fresh detections against currently tracked masks: refresh
         high-confidence matches (reconditioning), add unmatched detections as new objects,
         and update each object's `keep_alive` hysteresis counter (+1 matched, -1 unmatched,
-        clamped to [-4, 8]) -- the counter, not a single missed frame, is what actually
+        clamped to [-4, 8]), the counter, not a single missed frame, is what actually
         hides an object's mask (see `track_video_with_detection`), which is what prevents
         one-frame tracking glitches from flickering the object in and out.
         """

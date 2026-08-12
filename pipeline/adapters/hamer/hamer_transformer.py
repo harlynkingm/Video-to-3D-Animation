@@ -64,7 +64,7 @@ class FeedForward(nn.Module):
     def __init__(self, dim: int, hidden_dim: int):
         super().__init__()
         # Indices 0 and 3 hold the two Linears (1 = GELU, 2/4 = no-op dropout in
-        # eval) -- matching the checkpoint's `net.0`/`net.3` keys.
+        # eval), matching the checkpoint's `net.0`/`net.3` keys.
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
             nn.GELU(),
