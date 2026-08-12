@@ -103,7 +103,7 @@ def _smooth_hand_channel(
     broadband per-frame jitter, then the adaptive one-euro filter to hold
     nearly-still joints tight (killing the rest-state wobble/precession the savgol
     pass leaves) while tracking real motion, then quaternion-space decimation to
-    refit the result through sparse keyframes so it's mathematically smooth --
+    refit the result through sparse keyframes so it's mathematically smooth,
     removing residual jitter outright rather than averaging it down. The order
     matters: decimation before the one-euro pass would place keyframes on the
     noise and lock it in. Occlusion handling (interpolate a gap that recovers,
@@ -137,7 +137,7 @@ def _smooth_hand_result(
     converting back after** (`hand_retarget.wrist_relative_to_elbow` /
     `wrist_global_from_relative`). HaMeR's wrist is a *global* orientation in
     its crop's camera frame, but gap-filling (holding an occlusion, blending
-    a short one) is only anatomically meaningful relative to the forearm --
+    a short one) is only anatomically meaningful relative to the forearm,
     holding the global orientation while the arm keeps moving drags the real
     forearm-relative angle away from anything a wrist can do (measured on a
     real clip: a held stretch with an unchanged stored value still swung from

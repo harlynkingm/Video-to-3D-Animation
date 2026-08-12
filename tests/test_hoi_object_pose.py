@@ -211,7 +211,7 @@ def test_resolved_events_carries_the_joint_anchored_center_and_raw_rotation():
     """A caller that wants the object to stay correctly attached after the
     skeleton is later retargeted onto a different rig needs a *live*
     parent/constraint relationship to the joint, not the baked per-frame
-    `translation`/`rotation` above (frozen for this rig's own proportions) --
+    `translation`/`rotation` above (frozen for this rig's own proportions),
     `resolved_events` carries what's needed to build that: the event's own
     reference frame/joint, `ref_center` (the attaching joint's own position
     at the snap frame, contact-point anchoring, never the measurement's

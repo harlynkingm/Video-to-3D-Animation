@@ -62,7 +62,7 @@ def camera_to_upright_rotation_matrix(root_matrix: np.ndarray) -> np.ndarray:
 
 
 def camera_to_upright_translation(transl: np.ndarray) -> np.ndarray:
-    """A position vector needs the same reorientation a direction does --
+    """A position vector needs the same reorientation a direction does,
     applied as a per-frame matrix-vector product, not a left-multiply of a
     rotation, since translation isn't a rotation to compose."""
     return transl @ CAMERA_TO_BVH_ROOT_ROTATION.T
@@ -70,7 +70,7 @@ def camera_to_upright_translation(transl: np.ndarray) -> np.ndarray:
 
 def root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Reorients a root joint from camera space into the upright frame above,
-    given as axis-angle (SMPL-X's own convention) rather than a matrix --
+    given as axis-angle (SMPL-X's own convention) rather than a matrix,
     see `camera_to_upright_rotation_matrix`/`camera_to_upright_translation`
     for the actual reorientation math this composes. Shared by every
     consumer that has to hand GVHMR's own incam root to something expecting

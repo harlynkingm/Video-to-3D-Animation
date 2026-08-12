@@ -6,7 +6,7 @@ losing information (a stage's `depends_on` list, in case the DAG itself
 moved since that stage's own record was written).
 
 Useful after a code change adds a new `RunInput` field or a
-new pipeline stage, and an in-progress run's progress.json predates it --
+new pipeline stage, and an in-progress run's progress.json predates it,
 loading that file straight into the current `RunInput`/`RunRecord`
 dataclasses already tolerates new *fields* fine (they all have defaults), but
 a *new stage* has no record at all yet, and a stage's `depends_on` can go

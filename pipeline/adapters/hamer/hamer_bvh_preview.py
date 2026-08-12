@@ -1,6 +1,6 @@
 """Build a two-hands BVH skeleton from HaMeR's per-frame MANO pose, for the
 optional stage 4 preview. Uses the hand joints' rest offsets and hierarchy from
-SMPL-X's own model file (`SMPLX_NEUTRAL.npz`, which loads with plain numpy) --
+SMPL-X's own model file (`SMPLX_NEUTRAL.npz`, which loads with plain numpy),
 so no MANO mesh, and no chumpy. HaMeR's MANO finger order already matches
 SMPL-X's hand-joint order, so the predicted `hand_pose` drives the SMPL-X
 fingers directly.

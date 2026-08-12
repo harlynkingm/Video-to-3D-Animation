@@ -25,7 +25,7 @@ from .progress_tracker import (
 
 
 def create_run(progress_dir: Path, run_input: RunInput, run_id: str | None = None) -> RunRecord:
-    """`run_id` is just a human-readable label stored alongside the run's data --
+    """`run_id` is just a human-readable label stored alongside the run's data,
     `progress_dir` is what actually identifies a run on disk, so it defaults to
     the directory's own name rather than requiring the caller to repeat it.
     """

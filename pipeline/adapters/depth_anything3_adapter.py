@@ -1,6 +1,6 @@
 """Thin `load()`/`infer()`/`unload()` wrapper around the `depth-anything-3` pip
 package's own high-level API, producing metric depth (meters) and confidence
-for a single frame. Unlike SAM 3.1/GVHMR, this isn't a clean-room port --
+for a single frame. Unlike SAM 3.1/GVHMR, this isn't a clean-room port,
 Depth-Anything-3's official repo is a standalone, Apache 2.0-licensed Python
 package with no ComfyUI/GPL dependency, so it's used directly as a normal pip
 dependency.

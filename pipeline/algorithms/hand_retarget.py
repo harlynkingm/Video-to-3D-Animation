@@ -49,11 +49,11 @@ POSE_AXIS_DIM = 3
 LEFT_ELBOW, RIGHT_ELBOW = 18, 19
 LEFT_WRIST, RIGHT_WRIST = 20, 21
 # Middle finger's first knuckle, used only to define "which way the hand
-# points" for `rest_hand_direction`/`reject_hand_swung_past_forearm` below --
+# points" for `rest_hand_direction`/`reject_hand_swung_past_forearm` below,
 # any finger's own first knuckle would do equally well, middle was picked
 # arbitrarily for being roughly central.
 LEFT_MIDDLE1, RIGHT_MIDDLE1 = 28, 43
-# Index/pinky first knuckles, used only by `palm_normal_direction` below --
+# Index/pinky first knuckles, used only by `palm_normal_direction` below,
 # these two specifically (not e.g. middle/ring) because they're the widest
 # lateral spread across the palm, giving the most numerically stable normal.
 LEFT_INDEX1, RIGHT_INDEX1 = 25, 40
@@ -95,7 +95,7 @@ def _wrist_relative_to_elbow_matrix(elbow_global: torch.Tensor, wrist_global_aa:
 
 def wrist_relative_to_elbow(elbow_global: torch.Tensor, wrist_global_aa: torch.Tensor) -> torch.Tensor:
     """HaMeR's wrist orientation (axis-angle, in the hand crop's own camera
-    frame) expressed relative to the forearm (the elbow's global rotation) --
+    frame) expressed relative to the forearm (the elbow's global rotation),
     SMPL-X's own convention for a wrist joint's local pose, and the quantity
     that has a real biomechanical ceiling. Neither input alone does: the whole
     arm can legitimately point anywhere, so only the wrist-relative-to-forearm
@@ -143,7 +143,7 @@ def reject_biomechanically_implausible_wrist(
     A validity gate, not a clamp, marking frames invalid lets the existing
     gap-fill (`motion_smoothing.fill_invalid`) bridge across with a plausible
     transition, the same as any other occlusion, instead of visibly stopping
-    dead at a ceiling. Runs on HaMeR's raw estimate before any smoothing --
+    dead at a ceiling. Runs on HaMeR's raw estimate before any smoothing,
     a filter that's already blended a bad value in can't be un-blended after.
     """
     wrist_local_aa = wrist_relative_to_elbow(elbow_global, wrist_global_aa)
@@ -225,7 +225,7 @@ def rest_hand_direction(wrist_joint: int, middle1_joint: int) -> np.ndarray:
 
 def palm_normal_direction(wrist_joint: int, index1_joint: int, pinky1_joint: int, mirror: bool) -> np.ndarray:
     """Unit vector perpendicular to the palm (the plane spanned by the
-    wrist->index-knuckle and wrist->pinky-knuckle rest-pose vectors) --
+    wrist->index-knuckle and wrist->pinky-knuckle rest-pose vectors),
     roughly the direction a held object nestles into when the fingers curl
     around it, unlike `rest_hand_direction` (which points along the fingers
     when *extended*, not the grip direction of a curled hand). Derived
@@ -240,7 +240,7 @@ def palm_normal_direction(wrist_joint: int, index1_joint: int, pinky1_joint: int
     `index1_joint`/`pinky1_joint` order that reads correctly on one hand
     reads ~180 degrees backwards on its mirror-image counterpart. Pass
     `mirror=False` for the hand the un-mirrored convention (`cross(pinky,
-    index)`) was validated against, `mirror=True` for its mirror image --
+    index)`) was validated against, `mirror=True` for its mirror image,
     concretely, `(LEFT_WRIST, LEFT_INDEX1, LEFT_PINKY1, mirror=False)` /
     `(RIGHT_WRIST, RIGHT_INDEX1, RIGHT_PINKY1, mirror=True)`.
     """
@@ -297,7 +297,7 @@ def reject_hand_swung_past_forearm(
     way): rejecting on twist directly doesn't work, since composing two
     legitimate swing rotations (pure flex + pure deviate) produces large
     *apparent* twist purely from how compound 3D rotations compose, not from
-    real axial rotation (confirmed both synthetically and on a real clip --
+    real axial rotation (confirmed both synthetically and on a real clip,
     a strap-grip pose read swing under 30 deg while blended magnitude spiked
     past 150, almost all of it twist from adjusting the strap, correctly left
     alone). Swing has none of that artifact, it's just the angle between

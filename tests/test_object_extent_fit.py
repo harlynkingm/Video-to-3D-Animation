@@ -500,7 +500,7 @@ def test_mask_metric_extent_returns_none_for_an_empty_mask():
 def test_correct_lateral_axes_from_mask_matches_by_magnitude_rank():
     # Identity rotation -> axis 2 is the depth axis (see _depth_axis_index
     # tests above); axes 0 and 1 are lateral. Fitted axis 0 (0.05) is
-    # currently the *smaller* lateral value, axis 1 (0.3) the larger --
+    # currently the *smaller* lateral value, axis 1 (0.3) the larger,
     # the mask's own larger measured dimension should replace axis 1, not
     # axis 0, regardless of index order.
     descriptor = {
@@ -558,7 +558,7 @@ def test_correct_center_depth_shifts_away_from_camera_by_two_thirds_depth_size()
 
 
 def test_correct_center_depth_flips_a_negative_facing_depth_axis():
-    # The depth-axis column (index 2) points toward the camera (-Z) here --
+    # The depth-axis column (index 2) points toward the camera (-Z) here,
     # the shift must still move the center *away* from the camera (+Z),
     # not blindly follow the raw PCA axis direction.
     rotation = np.array([

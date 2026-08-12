@@ -86,7 +86,7 @@ def render_body_hands_bvh(
 ) -> None:
     """Write a full-body-plus-hands BVH. All pose args are per-frame axis-angle:
     global_orient (F, 3), body_pose (F, 63), left/right_hand_pose (F, 45).
-    transl (F, 3): GVHMR's own root translation, camera space (meters) --
+    transl (F, 3): GVHMR's own root translation, camera space (meters),
     reoriented into BVH space the same way the root's rotation is."""
     global_orient, body_pose = _np(global_orient), _np(body_pose)
     left_hand_pose, right_hand_pose = _np(left_hand_pose), _np(right_hand_pose)

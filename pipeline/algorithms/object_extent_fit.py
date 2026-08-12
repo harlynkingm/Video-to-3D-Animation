@@ -293,7 +293,7 @@ def mask_metric_extent(mask: np.ndarray, depth: np.ndarray, K: np.ndarray) -> tu
 def correct_lateral_axes_from_mask(descriptor: dict, mask_extent_m: tuple[float, float], scale_xy: float) -> dict:
     """Replaces a fitted shape's two non-depth-axis size fields with the
     mask's own directly-measured width/height (`mask_metric_extent`,
-    converted from camera-space meters into body-space via `scale_xy` --
+    converted from camera-space meters into body-space via `scale_xy`,
     the shared X/Y component of `similarity_transform.fit_scene_scale`'s own
     anisotropic scale), matched to the fitted axes by magnitude rank (the
     larger mask dimension replaces the larger fitted lateral axis) rather

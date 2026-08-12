@@ -38,7 +38,7 @@ FPS = 30.0
 def test_contact_events_output_is_plausible(stage_7_result):
     events = json.loads(open(stage_7_result["contact_events"]).read())
 
-    # The test clip tracks a tennis racket in the player's grip throughout --
+    # The test clip tracks a tennis racket in the player's grip throughout,
     # a real, sustained contact should show up as at least one event.
     assert len(events) >= 1
 

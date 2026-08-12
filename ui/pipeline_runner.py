@@ -102,7 +102,7 @@ def stage_count_in_range(start_stage: int, stop_stage: int) -> int:
 
 def compute_stage_progress(run_record: RunRecord, start_stage: int, stop_stage: int) -> StageProgress:
     """Summarizes a run's on-disk progress.json against the stages
-    `pipeline.run` actually executes for [start_stage, stop_stage] --
+    `pipeline.run` actually executes for [start_stage, stop_stage],
     `ORDERED_STAGES`, the same list pipeline.run itself iterates, into one
     bar-fill fraction and one human-readable status line, reusing each
     stage's own `StageName.label` rather than inventing new wording.

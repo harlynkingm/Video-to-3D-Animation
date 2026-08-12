@@ -138,7 +138,7 @@ def _load_hmr2_state(path: Path) -> dict[str, torch.Tensor]:
 
 
 def _load_gvhmr_transformer_state(path: Path) -> dict[str, torch.Tensor]:
-    """The GVHMR checkpoint nests every weight under `pipeline.denoiser3d.` --
+    """The GVHMR checkpoint nests every weight under `pipeline.denoiser3d.`,
     stripped here since `GVHMRTemporalTransformer` matches only that inner module."""
     state = {}
     with safe_open(str(path), framework="pt", device="cpu") as f:
@@ -212,7 +212,7 @@ class GVHMRAdapter:
         for module in (self.vitpose, self.hmr2, self.transformer):
             module.to(self.device).eval()
 
-        # Not checkpoint-loaded (fixed stats + the real SMPL-X model file) --
+        # Not checkpoint-loaded (fixed stats + the real SMPL-X model file),
         # kept on CPU in float32, matching the reference's own "cast to
         # float32 for post-processing" step (matrix inversion in the IK solver
         # needs real precision headroom, unlike the vision models above; the

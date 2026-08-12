@@ -273,7 +273,7 @@ def pp_static_joint_cam(outputs: dict, endecoder) -> torch.Tensor:
 
 def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
     """Cancels drift in incam's own translation the same way `pp_static_joint_cam`
-    does for `global`, lock joints the network is confident are stationary --
+    does for `global`, lock joints the network is confident are stationary,
     but self-contained: incam's own FK positions, incam's own translation, no
     camera cross-check (that function's `cp_diff` correction is inherently a
     global-vs-incam agreement check with no incam-only equivalent, and isn't
@@ -287,7 +287,7 @@ def pp_static_joint_incam(outputs: dict, endecoder) -> torch.Tensor:
     per-frame instead of zeroing it out: incam is camera-space (X-right/
     Y-down/Z-forward), and `bvh_export.CAMERA_TO_BVH_ROOT_ROTATION` (this
     project's own camera-space -> upright change of basis, applied downstream
-    at export) maps output Y to exactly `-input Y` with no mixing from X/Z --
+    at export) maps output Y to exactly `-input Y` with no mixing from X/Z,
     confirming incam's own Y axis already *is* the real vertical axis, just
     sign-flipped, not merely a convenient approximation. Locking a confidently
     -static ankle's own height the identical way its horizontal position is

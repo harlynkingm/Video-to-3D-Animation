@@ -237,7 +237,7 @@ def test_load_checkpoint_state_splits_and_strips_prefixes(tmp_path: Path):
         "detector.backbone.language_backbone.resizer.weight": torch.tensor([3.0]),
         "detector.mask_decoder.weight": torch.tensor([4.0]),
         "tracker.model.memory_encoder.weight": torch.tensor([5.0]),
-        # Under detector.backbone.* but not vision_backbone/language_backbone --
+        # Under detector.backbone.* but not vision_backbone/language_backbone,
         # the detector branch explicitly excludes anything under that prefix.
         "detector.backbone.some_other_submodule.weight": torch.tensor([6.0]),
         # Matches no recognized prefix at all, silently dropped.

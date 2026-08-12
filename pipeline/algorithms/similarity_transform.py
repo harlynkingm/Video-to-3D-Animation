@@ -13,8 +13,8 @@ gives real metric depth, so we back-project with the real intrinsics `K` instead
 Why a spread-ratio scale rather than a per-point least-squares fit: the
 correspondence between a SMPL-X surface vertex and the depth value at its
 projected pixel is only approximate (the depth surface and the SMPL-X surface
-are not the same physical points), so we trust only aggregate statistics --
-the ratio of spatial spreads for scale, the centroid offset for translation --
+are not the same physical points), so we trust only aggregate statistics,
+the ratio of spatial spreads for scale, the centroid offset for translation,
 not individual point matches. This mirrors the reference's own deliberate
 robustness choice.
 

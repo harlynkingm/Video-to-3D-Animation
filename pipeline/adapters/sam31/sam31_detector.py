@@ -22,7 +22,7 @@ needed) plus a manual `F.scaled_dot_product_attention` call, rather than
 `GeometryEncoder`'s point/box-prompt layers are defined (for a clean `strict=True`
 checkpoint load) but their forward-pass logic is not ported: this project never gives
 point or box prompts, only text, and geometry_encoder's cls-token path runs
-unconditionally whenever *any* prompt is given (confirmed by reading `_detect`) --
+unconditionally whenever *any* prompt is given (confirmed by reading `_detect`),
 so cls_embed + its small encoder + norms are load-bearing even for text-only prompts,
 while the point/box-specific projections are simply never exercised.
 """
@@ -282,7 +282,7 @@ class Transformer(nn.Module):
 
 class PositionEmbeddingSine2(nn.Module):
     """Duplicated from `sam31_vitdet_backbone.py` rather than imported: same math, but
-    `geometry_encoder`'s copy is a separate set of (non-learned, so purely functional --
+    `geometry_encoder`'s copy is a separate set of (non-learned, so purely functional,
     no weights to load) instance, matching the checkpoint's own module tree shape.
     """
 

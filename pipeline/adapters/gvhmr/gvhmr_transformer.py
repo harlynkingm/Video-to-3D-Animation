@@ -7,7 +7,7 @@ rotary-embedding/attention building blocks, confirmed against the real
 `gvhmr.safetensors` (`pipeline.denoiser3d.*`, 12 blocks, latent_dim=512).
 
 This 1D temporal RoPE is unrelated to `sam31_vitdet_backbone.py`'s 2D axial
-RoPE (different math, different checkpoint, coincidentally similar name) --
+RoPE (different math, different checkpoint, coincidentally similar name),
 not reused, ported separately here to match this checkpoint's own weights.
 
 `pred_cam_mean`/`pred_cam_std` are hardcoded constants below, not loaded from
@@ -193,7 +193,7 @@ class GVHMRTemporalTransformer(nn.Module):
             x = block(x, attn_mask=attn_mask, key_padding_mask=pad_mask)
 
         sample = self.final_layer(x)
-        # Average the predicted betas (shape params) across all real frames --
+        # Average the predicted betas (shape params) across all real frames,
         # a person's body shape doesn't change frame to frame, so pooling gives a
         # single more-stable estimate instead of 151-dim independent per-frame noise.
         betas = (sample[..., 126:136] * (~pad_mask[..., None])).sum(1) / length[:, None]

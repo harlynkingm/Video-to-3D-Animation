@@ -4,7 +4,7 @@ finish.
 
 Every stage runs as its own subprocess (`python -m
 pipeline.stages.stage_{number}_{name} --output-dir ...`), dynamically named
-off the existing `stage_{number}_{StageName.value}` file-naming convention --
+off the existing `stage_{number}_{StageName.value}` file-naming convention,
 so as later stages get real files following that same convention, this loop
 picks them up automatically; the only thing that needs updating is
 `progress_tracker.STAGE_DEPENDS_ON`, which is already the existing convention

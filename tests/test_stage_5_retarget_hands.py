@@ -131,7 +131,7 @@ def test_hand_detected_at_least_once_reconciles_every_frame():
 
 def test_wrist_invalid_does_not_block_finger_copy():
     """The whole point of splitting wrist/finger validity: a hand whose wrist is
-    never usable but whose fingers are should still get its fingers copied --
+    never usable but whose fingers are should still get its fingers copied,
     only the wrist falls back to GVHMR's own."""
     torch.manual_seed(4)
     n = 3
@@ -236,7 +236,7 @@ def test_reject_biomechanically_implausible_wrist_never_resurrects_invalid():
 
 def test_reject_biomechanically_implausible_wrist_hysteresis_expands_around_seed():
     """A moderate, individually-plausible-looking bend immediately adjacent to
-    a confirmed-implausible spike gets swept into the same rejected region --
+    a confirmed-implausible spike gets swept into the same rejected region,
     the whole point of hysteresis: catching the 'shoulder' frames of a bad
     excursion that a single instantaneous threshold alone would let through."""
     n = 7
@@ -329,7 +329,7 @@ VELOCITY_FPS = 30.0
 
 
 def test_reject_wrist_velocity_spikes_keeps_smooth_motion_valid():
-    """Ordinary continuous motion (a few degrees per frame) must stay valid --
+    """Ordinary continuous motion (a few degrees per frame) must stay valid,
     well under any physically-plausible wrist speed."""
     degs = [0.0, 5.0, 12.0, 18.0, 25.0, 30.0]
     wrist_global_aa = _wrist_aa_deg_x(degs)
@@ -364,7 +364,7 @@ def test_reject_wrist_velocity_spikes_never_resurrects_invalid():
 
 
 def test_reject_wrist_velocity_spikes_skips_delta_across_gap():
-    """A velocity computed across a frame already invalid isn't meaningful --
+    """A velocity computed across a frame already invalid isn't meaningful,
     a huge jump adjacent to a gap must not itself get treated as a spike and
     propagate a rejection onto an otherwise-fine neighboring frame."""
     degs = [0.0, 5.0, 170.0, 175.0]  # the big jump spans index 2, already invalid
@@ -403,7 +403,7 @@ def test_reject_hand_swung_past_forearm_flags_a_real_swing():
 
 def test_reject_hand_swung_past_forearm_ignores_pure_twist():
     """A rotation entirely ABOUT the rest direction itself (pronation/
-    supination-like) leaves the hand's own pointing direction unchanged --
+    supination-like) leaves the hand's own pointing direction unchanged,
     zero swing, regardless of how large the twist is. This is the whole point
     of measuring swing instead of the blended axis-angle magnitude, which
     would read this as a full 90-degree deviation."""
@@ -606,7 +606,7 @@ def test_retarget_changes_wrists_and_copies_fingers(stage_5_result, stage_2_resu
     )
     assert left_wrist_changed
 
-    # Fingers are copied verbatim from stage 4's (already gap-filled) output --
+    # Fingers are copied verbatim from stage 4's (already gap-filled) output,
     # every frame now, not just the ones flagged valid, since a hand detected at
     # least once anywhere in the clip has every frame reconciled.
     if hands["left_valid"].any():

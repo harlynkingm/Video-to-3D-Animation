@@ -238,7 +238,7 @@ def test_select_shape_candidate_frames_respects_n_candidates_limit(tmp_path):
 
 
 def test_resolve_auto_shape_hint_forces_ellipsoid_when_a_clean_circle_exists_anywhere(tmp_path):
-    # Frame 0 (the would-be "anchor") is boxy; only a later frame is round --
+    # Frame 0 (the would-be "anchor") is boxy; only a later frame is round,
     # mirrors a real case where the auto-picked anchor frame was itself
     # motion-blurred but a clean circle existed elsewhere in the clip.
     masks_path = tmp_path / "object.pt"

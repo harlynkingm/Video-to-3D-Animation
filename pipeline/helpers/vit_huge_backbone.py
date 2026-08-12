@@ -7,7 +7,7 @@ it with zero missing/unexpected keys.
 
 Restricted to the single configuration all three checkpoints actually use
 (confirmed identical in every source: `img_size=(256,192)`, `patch_size=16`,
-`embed_dim=1280`, `depth=32`, `num_heads=16`, `mlp_ratio=4`, `qkv_bias=True`) --
+`embed_dim=1280`, `depth=32`, `num_heads=16`, `mlp_ratio=4`, `qkv_bias=True`),
 not a generic, arbitrarily-configurable ViT class. Also dropped, since this
 project only ever runs inference: dropout/drop-path (no-ops in eval mode
 regardless of rate), gradient checkpointing (a training memory optimization),

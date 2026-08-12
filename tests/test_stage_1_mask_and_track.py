@@ -16,7 +16,7 @@ from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks, 
 from pipeline.stages.stage_1_mask_and_track import _render_mask_previews
 from conftest import TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH
 
-# SAM 3.1's own fixed internal mask resolution (see gvhmr_adapter.py's docstring) --
+# SAM 3.1's own fixed internal mask resolution (see gvhmr_adapter.py's docstring),
 # area fractions below are computed against this, not the video's native resolution.
 SAM31_WORKING_SIZE = 1008
 

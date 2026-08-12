@@ -5,7 +5,7 @@ clip and return its per-frame masks.
 
 Follows a `load()`/`infer()`/`unload()` convention informally, without a shared
 `ModelAdapter` base class: with only one adapter written so far, that base
-would be structure before there's a second implementation to generalize from --
+would be structure before there's a second implementation to generalize from,
 add it once a GVHMR/depth adapter actually exists too.
 
 **Human and object are tracked via two independent `track_video_with_detection`
@@ -14,7 +14,7 @@ concatenates every prompt's candidate queries into one pool before running NMS
 and assigning multiplex slots, there is no query-to-prompt identity preserved
 across that step, so a single joint call can't reliably say which tracked
 object is "the human" versus "the object" (in the tracker's own verification
-test, the human happened to score higher and land first only by coincidence --
+test, the human happened to score higher and land first only by coincidence,
 not something to rely on). Two separate calls make each entity's identity
 unambiguous by construction, at the cost of running the ViTDet backbone twice
 per frame instead of once, a real but bounded runtime cost, not a VRAM one
@@ -104,7 +104,7 @@ class _LazyFrameLoader:
     via `_prep_frame` in `sam31_tracker.py`, its only call site), so this decodes
     just that one frame from disk on each access instead of preloading every frame
     as a float32 CPU tensor up front. That preload was the real memory bottleneck
-    for long videos (~11MB/frame at 720p, scaling linearly with clip length) --
+    for long videos (~11MB/frame at 720p, scaling linearly with clip length),
     this makes stage 1's memory footprint independent of how long the clip is.
     """
 

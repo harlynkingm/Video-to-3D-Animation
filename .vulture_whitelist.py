@@ -2,7 +2,7 @@
 # only through dynamic dispatch vulture's static analysis can't trace (a
 # framework callback, a Blender API attribute, a pytest convention). Each
 # bare-attribute reference below whitelists that name everywhere it's used
-# in the scanned tree (vulture's own documented idiom), not just one class --
+# in the scanned tree (vulture's own documented idiom), not just one class,
 # confirmed appropriate here since every occurrence found by hand was the
 # same kind of framework callback, not a mix of real and false positives.
 

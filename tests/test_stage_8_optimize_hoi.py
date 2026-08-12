@@ -24,7 +24,7 @@ def _contact_event(region: str, start: int, end: int, confidence: float, is_low_
 def test_qualifying_attachment_events_re_bridges_a_gap_reopened_by_overlap_resolution():
     """Real failure mode from `testPassMugBetweenHands`: stage 7's own
     `contact_events.json` had `right_hand` (119-177), a weaker `right_arm`
-    candidate spanning the hand-off (174-184), and `left_hand` (185-262) --
+    candidate spanning the hand-off (174-184), and `left_hand` (185-262),
     the arm candidate would have bridged the two hands, but
     `_resolve_overlapping_events` gives the overlapping frames to the
     higher-confidence hand events instead, stripping the arm candidate down

@@ -1,4 +1,4 @@
-"""optimize_hoi: solves the tracked object's own per-frame 6DoF pose --
+"""optimize_hoi: solves the tracked object's own per-frame 6DoF pose,
 rigidly attached to a body joint during a genuine sustained hold, held
 perfectly still everywhere else (before the first grip, between two grips,
 and after the last one). The actual algorithm lives in
@@ -117,7 +117,7 @@ def _bridge_resolved_events(resolved: list[dict], fps: float) -> list[dict]:
     short gap behind at that boundary, even though stage 7 had none there.
     Reuses that exact same function (not a reimplementation, and not a second
     threshold to keep in sync) on this stage's own final resolved list, so
-    the very last step, the one that actually drives the animation --
+    the very last step, the one that actually drives the animation,
     still honors the same bridging decision stage 7 already made, rather
     than trusting it to survive this stage's own independent reclaiming
     untouched. `ContactEvent.joint`/`peak_frame` are unused by

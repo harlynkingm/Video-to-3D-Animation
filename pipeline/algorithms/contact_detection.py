@@ -8,7 +8,7 @@ what matters is that the body and object agree with each other in the SAME
 (GVHMR/HaMeR's own) space, not that either matches real-world ground truth.
 
 A rolling-window hysteresis (same lock/release pattern as
-`hand_retarget.reject_biomechanically_implausible_wrist`, just inverted --
+`hand_retarget.reject_biomechanically_implausible_wrist`, just inverted,
 seeding on HIGH confidence instead of rejecting on a high implausibility
 score) turns raw per-frame proximity into contact *events*: a real contact
 persists over a run of frames, so an isolated one-frame mask-jitter spike
@@ -387,7 +387,7 @@ BRIDGE_GAP_MAX_SECONDS = 0.5
 
 
 def bridge_short_gaps(events: list[ContactEvent], fps: float) -> list[ContactEvent]:
-    """Closes a short gap between two temporally-adjacent (not overlapping --
+    """Closes a short gap between two temporally-adjacent (not overlapping,
     `consolidate_overlapping_events` already handles overlap), non-consolidated
     events by extending each to meet at their shared midpoint, when both
     regions are in `BRIDGEABLE_REGIONS` and the gap is within

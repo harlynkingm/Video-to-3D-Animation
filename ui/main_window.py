@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         frame.setVisible(False)
         form = QFormLayout(frame)
         # Unlike top_form (whose text fields should fill the available width),
-        # this form's fields, the object-shape combo, the stage-range row --
+        # this form's fields, the object-shape combo, the stage-range row,
         # should only take the width their own content needs.
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
 
@@ -352,7 +352,7 @@ class MainWindow(QMainWindow):
         if not destination:
             errors.append("Output folder is required.")
 
-        # An existing run at destination already has its own stored input --
+        # An existing run at destination already has its own stored input,
         # pipeline.run resumes it, applying only whichever of these fields
         # are actually given as overrides, so none of them are required here.
         resuming = bool(destination) and (Path(destination) / PROGRESS_JSON_NAME).exists()

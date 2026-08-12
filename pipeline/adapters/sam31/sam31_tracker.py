@@ -19,7 +19,7 @@ SAM 3.1 *multiplex* checkpoint specifically. So, dropped entirely:
     `SAM3Model.forward_segment`, and `SAMPromptEncoder`'s `boxes` handling. A mask is
     always this tracker's only conditioning input here (from a detected object, not a
     click), so `boxes` is always `None` and `points` is always the same internally-
-    synthesized dummy value `forward_sam_heads` builds when no real point is given --
+    synthesized dummy value `forward_sam_heads` builds when no real point is given,
     ported directly as that fixed behavior rather than as a conditional.
   - The CUDA-stream backbone prefetch in `track_video_with_detection` (computing frame
     N+1's backbone on a second stream while frame N is processed). This is a wall-clock
@@ -291,7 +291,7 @@ def collect_memory_tokens(
 #
 # These back `interactive_sam_mask_decoder`/`interactive_sam_prompt_encoder`, used once per
 # newly-detected object to turn its detection mask into initial tracking state (see
-# `Sam31Tracker._condition_with_masks`). This project never issues real point/box clicks --
+# `Sam31Tracker._condition_with_masks`). This project never issues real point/box clicks,
 # `forward_sam_heads` below always synthesizes the same "no real point" dummy input SAM's own
 # mask-decoder architecture expects when only a mask prompt is given.
 
@@ -695,7 +695,7 @@ class Fuser(nn.Module):
 
 
 class PositionEmbeddingSine(nn.Module):
-    """2D sinusoidal position encoding, same math as `sam31_vitdet_backbone`'s copy --
+    """2D sinusoidal position encoding, same math as `sam31_vitdet_backbone`'s copy,
     duplicated (not imported) since the memory bank's copy is a separate, purely
     functional (no learned weights) instance in the checkpoint's own module tree.
     """
@@ -981,7 +981,7 @@ class MultiplexState:
 
 
 class Sam31Tracker(nn.Module):
-    """SAM 3.1 multiplex tracker. Matches `tracker.model.*` exactly (prefix stripped --
+    """SAM 3.1 multiplex tracker. Matches `tracker.model.*` exactly (prefix stripped,
     note the extra `.model` level the checkpoint uses here, unlike `detector.*`).
 
     Call pattern this project actually uses: `track_video_with_detection` with

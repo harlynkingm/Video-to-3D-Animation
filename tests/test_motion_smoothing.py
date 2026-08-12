@@ -160,7 +160,7 @@ def test_leading_gap_freezes_at_first_known_pose():
 
 
 def test_cap_long_gaps_with_hold_leaves_short_gap_untouched():
-    """A gap at or below the cap is left for the existing interpolation --
+    """A gap at or below the cap is left for the existing interpolation,
     already looks fine at that length."""
     n = 30
     values = np.zeros((n, 3))
@@ -347,7 +347,7 @@ def test_fill_invalid_interpolates_interior_and_holds_boundary():
 
 def test_decimate_zero_valid_frames_returns_unchanged():
     """Regression guard: a hand whose wrist is rejected on every single frame
-    (e.g. never once biomechanically plausible) previously crashed here --
+    (e.g. never once biomechanically plausible) previously crashed here,
     `fill_invalid` has nothing to interpolate from with zero real anchors.
     Mirrors `smooth_rotation_sequence`/`one_euro_filter_rotation_sequence`'s
     own existing guard for the same case."""
@@ -357,7 +357,7 @@ def test_decimate_zero_valid_frames_returns_unchanged():
 
 
 def test_translation_decimate_removes_jitter_outright():
-    """Same RDP core as rotation decimation, Euclidean instead of geodesic --
+    """Same RDP core as rotation decimation, Euclidean instead of geodesic,
     when the tolerance sits above the noise floor, jitter should collapse."""
     rng = np.random.default_rng(20)
     n = 200
@@ -371,7 +371,7 @@ def test_translation_decimate_removes_jitter_outright():
 
 
 def test_translation_decimate_stays_within_tolerance():
-    """The fitted curve never departs the original by more than the tolerance --
+    """The fitted curve never departs the original by more than the tolerance,
     guaranteed by construction, since reconstruction (`fill_invalid`, linear)
     matches the fit RDP selection used to check deviation."""
     rng = np.random.default_rng(21)

@@ -133,7 +133,7 @@ def test_image_folder_skips_rewriting_a_frame_when_the_source_is_frames_dir_itse
 def test_image_folder_overwrites_stale_frames_from_a_different_source(tmp_path):
     """A --force-all-style rerun pointed at a genuinely different source
     folder must actually regenerate frames_dir's own contents, even when a
-    same-named stale frame is already sitting there from a prior run --
+    same-named stale frame is already sitting there from a prior run,
     silently keeping it would defeat --force-all's whole point."""
     run_input = make_run_input(video_path="placeholder", source_fps=24.0)
     runRecord = create_run(tmp_path / "run", run_input)

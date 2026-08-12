@@ -54,7 +54,7 @@ def test_static_label_locks_a_steadily_confident_joint():
 
 
 def test_static_label_never_locks_a_joint_below_seed():
-    # Steadily above STATIC_CONF_RELEASE but never above STATIC_CONF_SEED --
+    # Steadily above STATIC_CONF_RELEASE but never above STATIC_CONF_SEED,
     # "elevated" without a "seed" frame should never start a lock, same as
     # contact_detection.detect_contact_events' own seed requirement.
     assert STATIC_CONF_RELEASE < 0.6 < STATIC_CONF_SEED
@@ -239,7 +239,7 @@ def test_pp_bridge_low_confidence_root_motion_interpolates_an_interior_run():
 
     valid = ~label[0].numpy()
 
-    # transl: linear interpolation is exactly what fill_invalid does --
+    # transl: linear interpolation is exactly what fill_invalid does,
     # check the real function's output directly against it, not a hand-
     # derived formula. Also confirms the corrupted raw values above were
     # actually discarded, not passed through.
