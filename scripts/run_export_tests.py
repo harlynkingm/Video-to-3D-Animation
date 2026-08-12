@@ -1,7 +1,7 @@
-"""Runs `tests/test_stage_10_export.py` (the only test file needing the
-`export` pixi environment's own bpy) as a child process, and reports the
-*real* pass/fail result from its `--junit-xml` report rather than the
-child's own exit code.
+"""Runs `tests/test_stage_10_export.py` and `tests/test_blender.py` (the
+only test files needing the `export` pixi environment's own bpy) as a
+child process, and reports the *real* pass/fail result from its
+`--junit-xml` report rather than the child's own exit code.
 
 bpy (Blender-as-a-Python-module, not the full application) has a
 reproducible access-violation crash during its own interpreter teardown on
@@ -22,13 +22,13 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-TEST_FILE = "tests/test_stage_10_export.py"
+TEST_FILES = ["tests/test_stage_10_export.py", "tests/test_blender.py"]
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as tmp_dir:
         junit_path = Path(tmp_dir) / "junit.xml"
-        subprocess.run([sys.executable, "-m", "pytest", TEST_FILE, f"--junit-xml={junit_path}"])
+        subprocess.run([sys.executable, "-m", "pytest", *TEST_FILES, f"--junit-xml={junit_path}"])
 
         if not junit_path.exists():
             # No report at all means pytest crashed before finishing (or

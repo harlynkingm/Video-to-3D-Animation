@@ -100,7 +100,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
         StageName.STAGE_1_MASK_AND_TRACK,
         StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
     ],
-    # retarget_hands attaches the stage-4 hands onto the stage-2 body -- it needs
+    # retarget_hands attaches the stage-4 hands onto the stage-2 body, it needs
     # both, and nothing else.
     StageName.STAGE_5_RETARGET_HANDS: [
         StageName.STAGE_2_ESTIMATE_HUMAN_MOTION,
@@ -108,7 +108,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     ],
     # align_scene_scale's eventual DAG position routes its SMPL-X input through
     # retarget_hands, but scene *scale* only needs the body's overall size,
-    # which the body-only estimate_human_motion already gives -- so it depends
+    # which the body-only estimate_human_motion already gives, so it depends
     # on that directly and does not wait on the (not-yet-built) hand stages.
     StageName.STAGE_6_ALIGN_SCENE_SCALE: [
         StageName.STAGE_1_MASK_AND_TRACK,
@@ -117,13 +117,13 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     ],
     # annotate_contacts detects hand-to-object proximity in 2D image space,
     # using the retargeted hand joints (stage 5) and the object's own 2D mask
-    # (stage 1) -- deliberately NOT align_scene_scale's 3D object primitive or
+    # (stage 1), deliberately NOT align_scene_scale's 3D object primitive or
     # real-world depth, since GVHMR's own Z estimate is measurably unreliable
     # for a reaching/foreshortened arm and an animation only needs the hand and
     # object to agree with each other in their own shared space, not with
     # absolute ground truth (see contact_detection.py's module docstring). Also
     # reads stage 2 directly (not just transitively via stage 5) for its own
-    # pre-foot-lock incam translation -- see stage_7_annotate_contacts.py's own
+    # pre-foot-lock incam translation, see stage_7_annotate_contacts.py's own
     # module docstring for why contact detection wants that instead of stage
     # 5's (foot-lock-corrected) translation.
     StageName.STAGE_7_ANNOTATE_CONTACTS: [
@@ -135,7 +135,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     # attached to a body joint during a qualifying contact event (needs
     # annotate_contacts), against the object's fitted shape and the scale/
     # translation that reconciles depth with the body (needs
-    # align_scene_scale). It never touches retarget_hands directly -- the
+    # align_scene_scale). It never touches retarget_hands directly, the
     # body/hand motion is trusted as-is, not refined.
     StageName.STAGE_8_OPTIMIZE_HOI: [
         StageName.STAGE_6_ALIGN_SCENE_SCALE,
@@ -153,7 +153,7 @@ STAGE_DEPENDS_ON: dict[StageName, list[StageName]] = {
     ],
     # export also reads retarget_hands' body motion (stage 5) and
     # align_scene_scale's object shape (stage 6) directly, but doesn't list
-    # either here -- optimize_hoi (its only real dependency now, for the
+    # either here, optimize_hoi (its only real dependency now, for the
     # object's real per-frame pose) already transitively guarantees both are
     # complete by the time it finishes: directly via align_scene_scale, and
     # via annotate_contacts -> retarget_hands. capture_face IS listed
@@ -198,7 +198,7 @@ def cli_field(
 ) -> Any:
     """Declares a dataclass field's CLI presentation (flag name, help text,
     choices, type) as part of the field's own declaration, instead of a
-    separate hand-maintained list living elsewhere -- `add_dataclass_cli_arguments`/
+    separate hand-maintained list living elsewhere, `add_dataclass_cli_arguments`/
     `build_dataclass_from_args` below read this metadata back via
     `dataclasses.fields(...)`, so a new field only needs to be declared once,
     here, to show up correctly everywhere it's used. Not `RunInput`-specific:
@@ -231,7 +231,7 @@ class RunInput:
     video_path: str = cli_field(
         flag="--input-video", metavar="INPUT_VIDEO", required=True,
         help="Path to the source video file (MP4, MOV, MPEG, FLV, or WMV), or a directory of "
-             "already-extracted JPEG/PNG frames (sorted by filename) -- "
+             "already-extracted JPEG/PNG frames (sorted by filename), "
              "--source-fps is required for the directory case.",
     )
     human_prompt: str = cli_field(flag="--human-prompt", required=True, help='e.g. "a person"')
@@ -242,20 +242,20 @@ class RunInput:
         flag="--object-shape-hint", default=ObjectShapeHint.AUTO, parse=ObjectShapeHint,
         choices=[hint.value for hint in ObjectShapeHint],
     )
-    # Camera intrinsics: either lens/sensor specs (the common case -- a real
+    # Camera intrinsics: either lens/sensor specs (the common case, a real
     # phone/camera shoot, no calibration available) or a raw K matrix (real
-    # calibration data, e.g. a research dataset's own published intrinsics --
+    # calibration data, e.g. a research dataset's own published intrinsics,
     # also strictly more accurate than the lens-spec path even when both are
     # available, since compute_intrinsics_matrix assumes a perfectly centered
     # principal point, which a raw K doesn't have to). Exactly one path must
-    # be given -- see validate_camera_input, called by both create_run.py and
+    # be given, see validate_camera_input, called by both create_run.py and
     # pipeline.run.py's own main()s (the two places a fresh RunInput gets
     # built from CLI args).
     focal_length_mm: float = cli_field(flag="--focal-length-mm", default=0.0, required=False, value_type=float)
     sensor_width_mm: float = cli_field(flag="--sensor-width-mm", default=0.0, required=False, value_type=float)
     intrinsics_k: list[list[float]] | None = cli_field(
         flag="--intrinsics-k", default=None, value_type=json.loads,
-        help='Raw 3x3 intrinsics matrix as JSON, e.g. \'[[fx,0,cx],[0,fy,cy],[0,0,1]]\' -- '
+        help='Raw 3x3 intrinsics matrix as JSON, e.g. \'[[fx,0,cx],[0,fy,cy],[0,0,1]]\', '
              "an alternative to --focal-length-mm/--sensor-width-mm for real calibration data.",
     )
     # Only meaningful when video_path (above) is a directory of images rather
@@ -263,7 +263,7 @@ class RunInput:
     # way a video container does, so this is the only way stage 0 can know
     # it. Ignored for a real video file (its own container fps is used
     # instead). Enforced required-when-a-directory-is-given by
-    # validate_video_input, not argparse itself -- same shape as the camera-
+    # validate_video_input, not argparse itself, same shape as the camera-
     # intrinsics fields above and their own validate_camera_input.
     source_fps: float | None = cli_field(
         flag="--source-fps", default=None, value_type=float,
@@ -298,10 +298,30 @@ class RunInput:
         flag="--render-contacts-preview", default=False, bool_flag=True,
         help="Stage 7 also writes one annotated JPEG per contact event for visual spot-checking",
     )
+    skip_face_capture: bool = cli_field(
+        flag="--skip-face-capture", default=False, bool_flag=True, is_render_preview=False,
+        help="Disable stage 9 (capture_face) entirely, with no output_face.csv, no facial animation",
+    )
+    render_face_preview: bool = cli_field(
+        flag="--render-face-preview", default=False, bool_flag=True,
+        help="Stage 9/10 also write FLAME_face_preview.blend (raw tracked FLAME mesh, no SMPL-X expression mapping), "
+             "landmark_preview.blend (raw vs. smoothed MediaPipe landmarks, upstream of DECA/MICA/FLAME entirely), and "
+             "ARKit_face_preview.blend (the ARKit-52 channels that feed output_face.csv) for visual spot-checking",
+    )
+
+    # Smooths stage 9's raw MediaPipe landmarks (savgol, `motion_smoothing.
+    # smooth_position_sequence`) before `fit_clip` ever sees them, not a
+    # penalty on the fitted parameters' own deltas (`face_landmark_fit.
+    # DEFAULT_TEMPORAL_WEIGHT`, left inert, see that constant's own
+    # comment for why an L2 delta penalty can't do this job: it suppresses a
+    # real blink's large frame-to-frame jump harder than the small noise
+    # deltas that make up jitter). 7 frames (~0.23s at 30fps) matches a
+    # similar project's own working default (BlendCap's smooth_face_npz.py)
+    face_smoothing_window: int = 7
 
     # Stage 1's tracker can lose and re-detect the same physical object (or the
     # human) several times in one clip, each re-detection landing as its own
-    # internal track with its own (lower, first-detection) confidence -- bridges
+    # internal track with its own (lower, first-detection) confidence, bridges
     # a real gap of up to this many frames between two such tracks by holding
     # the last tracked mask forward, so a brief re-occlusion doesn't leave a
     # true empty gap once the object is back in view. First-pass value (~0.5s
@@ -313,7 +333,7 @@ class RunInput:
 
     # A single anchor frame's own object-shape fit can be badly wrong when
     # every frame of a clip is either motion-blurred (in flight) or occluded
-    # (gripped) -- confirmed on a real clip: three different
+    # (gripped), confirmed on a real clip: three different
     # anchor-frame-selection heuristics (largest mask area, visual stillness,
     # highest 2D mask circularity) each produced a wrong overall size (over-
     # elongated or flattened-to-a-disc). `align_scene_scale` corrects the
@@ -321,13 +341,13 @@ class RunInput:
     # from the anchor) using the median of this many independently-measured
     # candidate frames' own 2D mask extents (see
     # `stage_6_align_scene_scale._aggregate_object_shape_proportions`),
-    # ranked by how unoccluded they look -- median specifically because real
+    # ranked by how unoccluded they look, median specifically because real
     # measurements showed errors in both directions (blur inflates,
     # occlusion shrinks), so a robust central estimate rejects outliers
     # either way, unlike mean or max. First-pass value, one clip.
     object_shape_candidate_frames: int = 15
 
-    # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose --
+    # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose,
     # the defaults are tuned to need no adjustment; a power user can override them
     # by hand-editing these fields in a run's progress.json before running stage
     # 2/4. Body needs only light polish (GVHMR already runs a temporal model over
@@ -338,14 +358,14 @@ class RunInput:
 
     # Both hand parts (finger articulation and wrist orientation) go through the
     # same three-pass chain, differing only in the per-part knobs below:
-    #   1. savgol pre-pass (`hand_smoothing_window`) -- zero-phase, no lag; knocks
+    #   1. savgol pre-pass (`hand_smoothing_window`), zero-phase, no lag; knocks
     #      down HaMeR's broadband per-frame jitter, the temporal pre-conditioning
     #      GVHMR gives the body for free but HaMeR never does.
-    #   2. one-euro adaptive filter (`*_min_cutoff_hz`, shared `hand_beta`) -- holds
+    #   2. one-euro adaptive filter (`*_min_cutoff_hz`, shared `hand_beta`), holds
     #      a nearly-still joint tight (killing the rest-state wobble/precession the
     #      savgol pass leaves) and loosens automatically once it moves. It replaced
     #      an earlier hard hold/snap deadzone that snapped visibly on release.
-    #   3. decimation (`*_decimate_deg`) -- keyframe reduction in quaternion space:
+    #   3. decimation (`*_decimate_deg`), keyframe reduction in quaternion space:
     #      refit the curve through a sparse set of keyframes so the result is
     #      mathematically smooth between them, removing residual jitter outright
     #      rather than just averaging it down. Without pass 2 first, decimation
@@ -353,7 +373,7 @@ class RunInput:
     # The wrist gets a lower min_cutoff (heavier hold) and a looser decimate
     # tolerance than the fingers: it starts from noisier global-orientation data
     # and is a load-bearing joint, so it needs more smoothing. Tuned on a real
-    # clip -- fingers land below the body's own jitter, the wrist a few times above
+    # clip, fingers land below the body's own jitter, the wrist a few times above
     # it (its noisier input floors higher without risking arm-detachment lag).
     hand_smoothing_window: int = 15  # savgol pre-pass window, both wrist and fingers
     hand_beta: float = 0.3  # one-euro speed responsiveness, both wrist and fingers
@@ -363,26 +383,26 @@ class RunInput:
     hand_wrist_decimate_deg: float = 3.0
 
     # A real human wrist cannot rotate further than roughly `hand_wrist_max_deviation_deg`
-    # relative to the forearm in any direction -- calibrated against two clean,
+    # relative to the forearm in any direction, calibrated against two clean,
     # previously-verified real clips (max ever observed combined: ~95 degrees
     # across 1200+ frames of legitimate motion, on two different people/
     # activities). HaMeR sometimes regresses a wrist orientation well past this
     # on an ambiguous frame (e.g. a foreshortened forearm mid-reach, or a
-    # genuine rotation-from-monocular-view ambiguity) -- sometimes a slow,
+    # genuine rotation-from-monocular-view ambiguity), sometimes a slow,
     # smooth drift, sometimes a CHAOTIC stretch bouncing between clearly-
     # implausible values and moderate ones that look individually plausible in
     # isolation (a clean clip's own legitimate motion also reaches ~95-103
     # degrees at its peak). The moderate "shoulder" frames of a chaotic bad
     # stretch would otherwise still anchor the smoothing chain, so an
     # instantaneous-only threshold isn't enough on its own: this uses hysteresis
-    # (the same lock/release pattern as a noise gate) -- `_max_deviation_deg` is
+    # (the same lock/release pattern as a noise gate), `_max_deviation_deg` is
     # the strict threshold that seeds detection, then the invalid region expands
     # outward while a `_deviation_window`-frame rolling max stays above the
     # lower `_release_deviation_deg`, so it can only ever expand from a
     # confirmed-bad seed frame; a clip that never crosses the strict threshold
     # is unaffected regardless of the release value. `_deviation_window` needs
     # care too: a window that's too wide relative to a clip's own natural
-    # busyness merges the rolling max across genuinely separate local peaks --
+    # busyness merges the rolling max across genuinely separate local peaks,
     # confirmed on a short, energetic reference clip, where window=7 let one
     # isolated real spike's rolling max touch nearly the whole clip (every
     # frame had SOME elevated neighbor within reach) and reject all of it;
@@ -390,7 +410,7 @@ class RunInput:
     # capturing the full multi-frame chaotic stretch on the clip this was
     # designed for. Checked in stage 4 against GVHMR's own elbow orientation
     # (stage 4 depends on stage 2's output for this), before any smoothing
-    # runs -- a filter that's already blended a bad value into its neighbors
+    # runs, a filter that's already blended a bad value into its neighbors
     # can't be un-blended by a later stage. See
     # hand_retarget.reject_biomechanically_implausible_wrist.
     hand_wrist_max_deviation_deg: float = 110.0
@@ -401,7 +421,7 @@ class RunInput:
     # sustained motion that stays above `hand_wrist_release_deviation_deg`
     # (e.g. gripping a strap near the shoulder for several seconds) gets
     # entirely rejected the moment one bad frame anywhere in it seeds
-    # detection -- confirmed on a real clip, an 80+ frame stretch reading a
+    # detection, confirmed on a real clip, an 80+ frame stretch reading a
     # smooth, plausible 60-100 degrees throughout was thrown out this way.
     # 10 frames (~0.33s at 30fps) is a first-pass value calibrated against
     # one clip; revisit once more clips are available to check it against.
@@ -410,13 +430,13 @@ class RunInput:
     # A separate check from the deviation gate above: catches a HaMeR wrist
     # estimate that flips to a different (wrong) orientation for an isolated
     # frame or two while staying within a plausible magnitude relative to the
-    # elbow the whole time -- invisible to the deviation gate, which only
+    # elbow the whole time, invisible to the deviation gate, which only
     # looks at the static magnitude, never at how fast it's changing. A real
     # wrist cannot rotate a large fraction of a full turn within one frame.
     # Calibrated against a real clip: genuine fast motion topped out around
     # 40 degrees/frame (1200 degrees/sec at 30fps) even during active
     # reaching, while flip instances read 100-175 degrees/frame (3000+
-    # degrees/sec) -- a clean gap between the two. In degrees/second (not
+    # degrees/sec), a clean gap between the two. In degrees/second (not
     # degrees/frame) so the same value means the same physical speed
     # regardless of a clip's fps. See
     # hand_retarget.reject_wrist_velocity_spikes.
@@ -424,7 +444,7 @@ class RunInput:
 
     # How much of a long invalid wrist stretch (real occlusion, or one
     # rejected by the gates above) is left for straight-line interpolation
-    # before the rest gets held at the last known-good orientation instead --
+    # before the rest gets held at the last known-good orientation instead,
     # confirmed on a real clip, interpolating across a 40-90+ frame gap can
     # visibly sweep through a large, physically-impossible-looking rotation.
     # 15 frames (~0.5s at 30fps) is a first-pass value; revisit once more
@@ -434,11 +454,11 @@ class RunInput:
 
     # A third, independent wrist check: how far the hand's own pointing
     # direction (wrist to middle-finger) may swing away from its rest-pose
-    # direction before a frame is rejected -- catches a sustained
+    # direction before a frame is rejected, catches a sustained
     # anatomically-impossible pose that changes too slowly to trip the
     # velocity check and reads a moderate enough blended magnitude to dodge
     # the deviation check too. Deliberately measures swing only, never twist
-    # (rotation about the hand's own pointing direction) -- twist isn't a
+    # (rotation about the hand's own pointing direction), twist isn't a
     # reliable signal here, since composing two legitimate swing-only
     # rotations produces large apparent twist as a pure artifact of how
     # compound 3D rotations compose, confirmed both synthetically and on real
@@ -451,7 +471,7 @@ class RunInput:
 
     # A fourth wrist check, genuinely different from the three above: real 3D
     # geometry (does the hand's own reference point sit inside the forearm's
-    # fixed rest-pose segment) instead of any rotation angle -- catches a hand
+    # fixed rest-pose segment) instead of any rotation angle, catches a hand
     # folded back into the forearm's own space even when every rotation-based
     # check reads within range. `hand_forearm_interior_max_t` is how far
     # inside the segment (0 = elbow, 1 = wrist) still counts as "inside the
@@ -461,7 +481,7 @@ class RunInput:
     # length. Calibrated on a real clip: a confirmed hand-through-forearm
     # stretch dropped to t=0.67-0.99 at 7-11cm from the axis, while 1900+
     # other real frames (including a confirmed genuine extreme-looking grip)
-    # never dropped below ~1.1 -- comfortable margin either side of these
+    # never dropped below ~1.1, comfortable margin either side of these
     # defaults, but from one clip only. See hand_retarget.reject_hand_
     # through_forearm.
     hand_forearm_interior_max_t: float = 0.95
@@ -470,7 +490,7 @@ class RunInput:
 
 def add_dataclass_cli_arguments(parser: argparse.ArgumentParser, dataclass_type: type, *, required: bool = True) -> None:
     """Registers every `cli_field(...)`-tagged field of `dataclass_type` onto
-    `parser`, read directly off each field's own metadata -- the shared
+    `parser`, read directly off each field's own metadata, the shared
     engine `add_run_input_arguments` (for `RunInput`) builds on, and that
     `create_run`/`pipeline.run`/`update_run` also use directly for
     `RunLocation`/`NewRunID` (the `-o/--output-dir`/`--run-id` flags),
@@ -479,7 +499,7 @@ def add_dataclass_cli_arguments(parser: argparse.ArgumentParser, dataclass_type:
 
     `required=False` (used only by `update_run`, for `RunInput`'s own fields)
     makes every otherwise-required flag optional and switches every flag's
-    "not passed" value to `None` instead of a real default -- `update_run`
+    "not passed" value to `None` instead of a real default, `update_run`
     treats `None` as "leave this field's existing value alone", so a flag
     only overrides anything when the caller actually passes it. Boolean
     flags can therefore only be turned ON via `update_run`, never explicitly
@@ -514,7 +534,7 @@ def add_dataclass_cli_arguments(parser: argparse.ArgumentParser, dataclass_type:
 
 def resolve_cli_value(f: Any, args: argparse.Namespace) -> Any:
     """The parsed value for one `cli_field(...)`-tagged field, with its
-    `parse` transform (if any) applied -- shared by `build_dataclass_from_args`
+    `parse` transform (if any) applied, shared by `build_dataclass_from_args`
     and `apply_run_input_overrides` so "convert the raw string" can't drift
     between fresh-construction and override-merge.
     """
@@ -526,7 +546,7 @@ def resolve_cli_value(f: Any, args: argparse.Namespace) -> Any:
 
 
 def build_dataclass_from_args(dataclass_type: type, args: argparse.Namespace) -> Any:
-    """Constructs a fresh instance of `dataclass_type` from parsed CLI args --
+    """Constructs a fresh instance of `dataclass_type` from parsed CLI args,
     any field with no CLI flag is simply omitted here, so it falls back to
     its own dataclass default.
     """
@@ -568,8 +588,8 @@ def run_input_from_args(args: argparse.Namespace) -> RunInput:
 
 def validate_camera_input(run_input: RunInput) -> str | None:
     """Returns an error message if `run_input`'s camera intrinsics aren't
-    resolvable -- neither path given, or both given at once (ambiguous which
-    should win) -- else `None`. `focal_length_mm`/`sensor_width_mm` are
+    resolvable, neither path given, or both given at once (ambiguous which
+    should win), else `None`. `focal_length_mm`/`sensor_width_mm` are
     otherwise-required-looking fields that are no longer enforced by argparse
     itself (see their own `cli_field` comment in `RunInput`), so this is the
     one place that actually enforces a fresh run has SOME usable camera
@@ -591,7 +611,7 @@ def validate_video_input(run_input: RunInput) -> str | None:
     """Returns an error message if `run_input.video_path` is a directory
     (an image-sequence input, see that field's own comment) without a usable
     `--source-fps`, else `None`. A real video file's own container fps makes
-    `source_fps` unnecessary, so this only fires for the directory case --
+    `source_fps` unnecessary, so this only fires for the directory case,
     stage 0 can't derive a frame rate from a folder of otherwise-unordered-
     in-time still images. Same shape as validate_camera_input: only meaningful
     for a *fresh* run, shared by create_run.py and pipeline.run.py's own
@@ -607,7 +627,7 @@ def apply_run_input_overrides(existing: RunInput, args: argparse.Namespace) -> R
     """Builds an updated `RunInput` via `dataclasses.replace`, applying only
     the flags `args` actually carries a value for (parsed with
     `add_run_input_arguments(parser, required=False)`, where an omitted flag
-    comes back as `None`) -- every other field, whether its flag simply
+    comes back as `None`), every other field, whether its flag simply
     wasn't passed or it's a smoothing knob with no CLI flag at all, passes
     through from `existing` untouched. Shared by `update_run` (its whole
     purpose) and `pipeline.run`'s resume path (letting a resumed run still
@@ -633,7 +653,7 @@ def apply_run_input_overrides(existing: RunInput, args: argparse.Namespace) -> R
 
 @dataclass
 class RunLocation:
-    """Where a run lives on disk -- shared by `create_run`, `pipeline.run`,
+    """Where a run lives on disk, shared by `create_run`, `pipeline.run`,
     and `update_run` via `add_dataclass_cli_arguments`, as opposed to
     `RunInput`'s own video/prompt/camera parameters (which get persisted
     separately, under progress.json's own `input` key, not here).
@@ -647,7 +667,7 @@ class RunLocation:
 @dataclass
 class NewRunID(RunLocation):
     """Adds `--run-id`, registered only where a run might not exist yet
-    (`create_run`, `pipeline.run`) -- an existing run's id is already fixed,
+    (`create_run`, `pipeline.run`), an existing run's id is already fixed,
     so `update_run` doesn't offer a way to change it.
     """
     run_id: str | None = cli_field(flag="--run-id", default=None, help="Defaults to --output-dir's own folder name")
@@ -674,6 +694,7 @@ class StageRecord:
 @dataclass
 class RunOutputs:
     final_blend: str | None = None
+    final_face_csv: str | None = None
 
 
 @dataclass
@@ -689,7 +710,7 @@ class RunRecord:
     # updated_at is refreshed on every save() below, regardless of call site,
     # so it always reflects when this run last actually progressed. A run
     # directory from before this field existed loads with both at 0.0 (the
-    # dataclass default) rather than failing -- there's no real "created"
+    # dataclass default) rather than failing, there's no real "created"
     # timestamp to recover for those, and 0.0 reads unambiguously as "unknown"
     # rather than a plausible-looking but fabricated date.
     created_at: float = 0.0
@@ -746,21 +767,21 @@ class RunRecord:
 
     def update_schema(self) -> None:
         """Migrates this record's `stages` dict to the current `STAGE_DEPENDS_ON`
-        DAG in place -- adds a record (defaulted to PENDING) for any stage the
+        DAG in place, adds a record (defaulted to PENDING) for any stage the
         current code knows about that this run predates, and refreshes
         `depends_on` for every stage (the DAG can change after a stage's own
         record was first written). Never touches an existing record's own
         status/outputs/error, and never removes a stage this run has a record
         for even if the current DAG no longer lists it, so no recorded
         progress is ever discarded. A stale, no-longer-listed stage's record
-        just sits unread -- nothing keys off `self.stages` except by a
+        just sits unread, nothing keys off `self.stages` except by a
         `StageName` the current DAG still knows about.
 
         Deliberately NOT called from `load()` itself: this saves (see below),
         and `load()` must stay a pure read with no disk side effect. Callers that
         load a record to actually *act* on it (`update_run`, `pipeline.run`,
         `pipeline_stage_base.cli_entrypoint`) call this explicitly instead, once,
-        right after their own `load()` -- safe there because each is a one-shot
+        right after their own `load()`, safe there because each is a one-shot
         call at the start of a single process's lifetime, not a poll.
         """
         for stage, deps in STAGE_DEPENDS_ON.items():

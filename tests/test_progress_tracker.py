@@ -223,3 +223,38 @@ def test_stage_by_number_also_prefers_the_top_level_member():
 def test_stage_by_number_returns_none_when_out_of_range():
     assert stage_by_number(-1) is None
     assert stage_by_number(11) is None
+
+
+def test_render_previews_sweeps_real_preview_flags():
+    run_input = _parse_run_input(["--render-previews"])
+    assert run_input.render_mask_previews is True
+    assert run_input.render_contacts_preview is True
+
+
+def test_render_previews_does_not_disable_face_capture():
+    # skip_face_capture is a control flag, not a preview output, sweeping
+    # it to True under --render-previews would silently mean "disable face
+    # capture", the opposite of "render every preview" (see cli_field's own
+    # is_render_preview docstring).
+    run_input = _parse_run_input(["--render-previews"])
+    assert run_input.skip_face_capture is False
+
+
+def test_skip_face_capture_flag_works_standalone():
+    run_input = _parse_run_input(["--skip-face-capture"])
+    assert run_input.skip_face_capture is True
+    assert run_input.render_mask_previews is False  # untouched
+
+
+def test_apply_run_input_overrides_render_previews_also_spares_skip_face_capture():
+    # Same guarantee as run_input_from_args above, but through update_run's
+    # optional-args merge path instead of fresh construction.
+    existing = make_run_input()
+    parser = argparse.ArgumentParser()
+    add_run_input_arguments(parser, required=False)
+    args = parser.parse_args(["--render-previews"])
+
+    updated = apply_run_input_overrides(existing, args)
+
+    assert updated.render_mask_previews is True
+    assert updated.skip_face_capture is False

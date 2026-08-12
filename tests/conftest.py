@@ -2,14 +2,14 @@
 
 These are whole-stage regression tests, not unit tests of individual
 functions: each fixture actually runs a real stage's `run()` against a small,
-committed test video (`assets/tiny_tennis_clip.mp4` -- 20 frames, both the
+committed test video (`assets/tiny_tennis_clip.mp4`, 20 frames, both the
 tracked human and object stay clearly visible throughout) and hands the real
 output forward to the next stage, exactly like a real pipeline run. Stages
 are session-scoped so checkpoints only load once per test session, not once
 per test function.
 
 Stage 1/2 need the real SAM 3.1/GVHMR checkpoints (gitignored, see README's
-Setup section) and a CUDA GPU -- fixtures that need them call `pytest.skip()`
+Setup section) and a CUDA GPU, fixtures that need them call `pytest.skip()`
 rather than failing when either is missing, so this suite still runs
 (partially) on a machine that hasn't set those up yet. Stage 3's checkpoint
 auto-downloads on first use (see depth_anything3_adapter.py), so its fixture
@@ -18,10 +18,10 @@ only gates on a CUDA GPU, not on the checkpoint already being present.
 Stages 1-4 (mask_and_track, estimate_human_motion, estimate_depth,
 estimate_hands) each load a separately-compiled native/CUDA model stack (SAM
 3.1, GVHMR, DepthAnything3, HaMeR respectively). Loading more than one of
-these into a single long-lived process -- which is what session-scoped
+these into a single long-lived process, which is what session-scoped
 fixtures calling each stage's `run()` directly would do, since later stages'
 fixtures depend on earlier ones already having run in this same pytest
-session -- has been observed to segfault deep inside torch (see
+session, has been observed to segfault deep inside torch (see
 `pipeline/run.py`'s own module docstring for the full story; the same crash
 class shows up there when `pipeline.run` calls stages in-process). Their
 fixtures below run the real stage through `pipeline.run`'s own
@@ -34,10 +34,10 @@ model of their own (light numpy/torch math against already-computed stage
 
 Each of those still-in-process stage modules (0, 5, 6, 7, 8) is imported
 *inside* its own fixture, not at the top of this file, deliberately: a plain
-CPU-only machine (no NVIDIA driver at all -- not just "no GPU", a genuinely
+CPU-only machine (no NVIDIA driver at all, not just "no GPU", a genuinely
 different situation from a dev machine that always has a real driver present)
 turned out unable to even *import* some of these adapters' transitive
-dependencies without crashing natively -- no Python exception, no traceback,
+dependencies without crashing natively, no Python exception, no traceback,
 just an instant, silent process death. Importing every stage module
 unconditionally at collection time (as this file used to) forced that crash
 on every CI run, before any test's own skip-gate on `torch.cuda.is_available()`
@@ -46,12 +46,14 @@ driver-less machine only ever imports `stage_0_ingest_video` (needs no heavy
 ML libraries) for real.
 
 `torch` itself is deferred the same way, for the same reason at one level up:
-`tests/test_stage_10_export.py` runs under the separate `export` pixi
-environment, which has no torch installed at all (kept minimal on purpose --
-see `pixi.toml`), but pytest loads this conftest.py regardless of which test
-file it's collecting. A missing torch only actually matters to the fixtures
-below that call `torch.cuda.is_available()`, none of which stage 10's own
-tests ever request.
+`tests/test_stage_10_export.py` and `tests/test_blender.py` run under the
+separate `export` pixi environment, which has no torch installed at all
+(kept minimal on purpose, see `pixi.toml`), but pytest loads this
+conftest.py regardless of which test file it's collecting. A missing torch
+only actually matters to the fixtures below that call
+`torch.cuda.is_available()`, none of which those two files' own tests ever
+request. `HAS_BPY`/`_isolated_bpy_scene` are the mirror case: `bpy` only
+exists in `export`, so every other test file just sees `HAS_BPY = False`.
 """
 
 from __future__ import annotations
@@ -66,8 +68,14 @@ from pipeline.run import ORDERED_STAGES, _run_stage_subprocess
 
 try:
     import torch
-except ImportError:  # e.g. the export env -- see module docstring
+except ImportError:  # e.g. the export env, see module docstring
     torch = None
+
+try:
+    import bpy
+    HAS_BPY = True
+except ImportError:  # every env except `export`
+    HAS_BPY = False
 
 TESTS_DIR = Path(__file__).parent
 TEST_VIDEO_PATH = TESTS_DIR / "assets" / "tiny_tennis_clip.mp4"
@@ -78,7 +86,7 @@ def assert_stages_complete(progress_json: dict, through: StageName | None = None
     `ORDERED_STAGES`, i.e. everything currently implemented) must show
     `status == "complete"` in an already-loaded progress.json. Derives the
     stage list from the same `ORDERED_STAGES` `pipeline.run` itself iterates,
-    instead of a hand-typed list of stage-name strings -- that list had
+    instead of a hand-typed list of stage-name strings, that list had
     already silently fallen out of sync once stage 7 shipped, missing from
     both of this project's own full-pipeline end-to-end tests (neither had
     been updated to check it).
@@ -90,12 +98,12 @@ def assert_stages_complete(progress_json: dict, through: StageName | None = None
 
 def _run_heavy_stage(runRecord: RunRecord, stage_name: StageName) -> dict[str, str]:
     """Runs one of stages 1-4 the same way a real user's `pipeline.run` does
-    -- as its own subprocess -- rather than importing and calling `run()`
+   , as its own subprocess, rather than importing and calling `run()`
     directly in this pytest process; see this file's own module docstring
     for why. `runRecord` is mutated in place (not just returned) via
     `__dict__.update` from the subprocess's own saved `progress.json`, since
     every fixture/test downstream already holds a reference to this exact
-    session-scoped object, not just this function's own return value --
+    session-scoped object, not just this function's own return value,
     e.g. stage 1 setting `scene.anchor_frame_index` needs to reach them too.
     """
     _run_stage_subprocess(stage_name, Path(runRecord.progress_dir), force=False)
@@ -105,7 +113,7 @@ def _run_heavy_stage(runRecord: RunRecord, stage_name: StageName) -> dict[str, s
 
 # The exact frame count and resolution of the committed test clip (frames
 # 73-92 of the reference tennis clip used throughout this project's own
-# development) -- update these if the fixture video is ever replaced.
+# development), update these if the fixture video is ever replaced.
 TEST_VIDEO_FRAME_COUNT = 20
 TEST_VIDEO_WIDTH = 812
 TEST_VIDEO_HEIGHT = 720
@@ -126,12 +134,34 @@ GVHMR_CHECKPOINTS = (
 )
 HAMER_CHECKPOINT = CHECKPOINTS_DIR / "hamer.safetensors"
 
-# Same path stage_6_align_scene_scale.py computes on its own -- defined here
+# Same path stage_6_align_scene_scale.py computes on its own, defined here
 # too (not imported from there) so any test file can check for the SMPL-X
 # model file's presence without importing that module and its heavy transitive
 # chain (see this file's own docstring above for why that chain is unsafe to
 # import unconditionally).
 SMPLX_MODEL_PATH = TESTS_DIR.parent / "body_models" / "smplx" / "SMPLX_NEUTRAL.npz"
+
+DECA_CHECKPOINT = CHECKPOINTS_DIR / "deca.safetensors"
+MICA_CHECKPOINT = CHECKPOINTS_DIR / "mica.safetensors"
+FACE_LANDMARKER_CHECKPOINT = CHECKPOINTS_DIR / "face_landmarker.task"
+FLAME_MODEL_PATH = TESTS_DIR.parent / "body_models" / "flame" / "FLAME_NEUTRAL.npz"
+
+
+if HAS_BPY:
+    @pytest.fixture(autouse=True)
+    def _isolated_bpy_scene():
+        """A real, order-dependent bug was found running stage 10's own bpy
+        tests together: a prior test's large build left bpy in a state that
+        corrupted a *later* test's otherwise-correct output, even though
+        `run()` already clears the scene at its own start (something more
+        subtle than orphaned objects/actions). Clearing before *and*
+        after each test, rather than trusting `run()`'s own single clear at
+        the start, is what actually made the suite order-independent.
+        """
+        from pipeline.bpy.blender_scene import _clear_scene
+        _clear_scene(bpy)
+        yield
+        _clear_scene(bpy)
 
 
 def make_run_input(**overrides) -> RunInput:
@@ -227,7 +257,7 @@ def stage_5_result(
 ) -> dict[str, str]:
     # No GPU/checkpoints of its own, but SmplxSkeleton (for the kinematic tree)
     # and the optional preview both need the registration-gated SMPL-X model
-    # file -- checked via this file's own SMPLX_MODEL_PATH, not by importing
+    # file, checked via this file's own SMPLX_MODEL_PATH, not by importing
     # stage_6's module, to avoid its heavy transitive chain.
     if not SMPLX_MODEL_PATH.exists():
         pytest.skip("needs the SMPL-X model file (registration-gated, see README's Setup section)")
@@ -258,7 +288,7 @@ def stage_7_result(
     runRecord: RunRecord, stage_2_result: dict[str, str], stage_5_result: dict[str, str]
 ) -> dict[str, str]:
     # Needs stage 5's retargeted motion + stage 1's object mask, plus (now)
-    # stage 2's own pre-foot-lock translation directly -- see
+    # stage 2's own pre-foot-lock translation directly, see
     # stage_7_annotate_contacts.py's own module docstring for why, and
     # progress_tracker.STAGE_DEPENDS_ON's comment for why this deliberately
     # doesn't wait on align_scene_scale (stage 6). `stage_2_result` is listed
@@ -286,3 +316,29 @@ def stage_8_result(
     outputs = stage_8_optimize_hoi.run(runRecord)
     runRecord.mark_progress(StageName.STAGE_8_OPTIMIZE_HOI, StageStatus.COMPLETE, outputs=outputs)
     return outputs
+
+
+@pytest.fixture(scope="session")
+def stage_9_result(
+    runRecord: RunRecord, stage_1_result: dict[str, str], stage_2_result: dict[str, str]
+) -> dict[str, str]:
+    # Depends on stage_2_result now (not just stage_1_result): the body-based
+    # orientation prior feeds GVHMR's own tracked head rotation into the
+    # FLAME fit as a regularizer (see face_landmark_fit.calibrate_rotation_
+    # offset and this stage's own _body_head_rotation), so stage 2's real
+    # output needs to
+    # exist on disk, not just frames + the human mask. Loads three heavy
+    # model stacks of its own (DECA, MICA, MediaPipe's FaceLandmarker), so
+    # this runs via `_run_heavy_stage` like stages 1-4, not in-process.
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA GPU")
+    missing = [
+        p.name for p in (DECA_CHECKPOINT, MICA_CHECKPOINT, FACE_LANDMARKER_CHECKPOINT, VITPOSE_CHECKPOINT)
+        if not p.exists()
+    ]
+    if missing:
+        pytest.skip(f"needs the DECA/MICA/MediaPipe/ViTPose checkpoints (missing: {missing}; see README's Setup section)")
+    if not FLAME_MODEL_PATH.exists():
+        pytest.skip("needs the FLAME model file (registration-gated, see README's Setup section)")
+
+    return _run_heavy_stage(runRecord, StageName.STAGE_9_CAPTURE_FACE)

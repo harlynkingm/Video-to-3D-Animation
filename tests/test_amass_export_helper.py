@@ -73,3 +73,17 @@ def test_write_amass_npz_defaults_jaw_and_eyes_to_zero(tmp_path):
         jaw_eyes_start = 3 + 63
         jaw_eyes = data["poses"][:, jaw_eyes_start:jaw_eyes_start + JAW_EYES_DIM]
         assert np.all(jaw_eyes == 0.0)
+
+
+def test_write_amass_npz_embeds_real_jaw_pose_when_given(tmp_path):
+    out_path = tmp_path / "export.npz"
+    jaw_pose = np.full((N_FRAMES, 3), 0.4)
+
+    write_amass_npz(**_body_arrays(), fps=30.0, out_path=out_path, jaw_pose=jaw_pose)
+
+    with np.load(out_path) as data:
+        jaw_eyes_start = 3 + 63
+        poses = data["poses"]
+        assert np.allclose(poses[:, jaw_eyes_start:jaw_eyes_start + 3], 0.4)
+        # Eye pose is never accepted as an input -- always zero, even when jaw is real.
+        assert np.allclose(poses[:, jaw_eyes_start + 3:jaw_eyes_start + JAW_EYES_DIM], 0.0)
