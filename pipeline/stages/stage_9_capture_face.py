@@ -59,6 +59,8 @@ from ..progress_tracker import RunRecord, StageName
 from ..stages.stage_1_mask_and_track import OUTPUT_HUMAN_MASKS
 from ..stages.stage_2_estimate_human_motion import OUTPUT_HUMAN_MOTION
 
+from scripts.diagnostic.build_ground_truth_report import build as build_ground_truth_report
+
 # stage_0_ingest_video.py's own output key, consumed here (not exported as a
 # named constant there, see stage_4_estimate_hands.py's identical pattern).
 FRAMES_DIR_OUTPUT_KEY = "frames_dir"
@@ -150,6 +152,15 @@ def _body_head_rotation(runRecord: RunRecord) -> tuple[np.ndarray, np.ndarray]:
     return head_rotmat, ~root_motion_unreliable
 
 
+def _optionally_render_ground_truth_comparison(runRecord: RunRecord) -> None:
+    """Render an HTML comparison to the ground-truth LiveLink CSV, if one exists in the folder."""
+    run_dir = Path(runRecord.progress_dir)
+    # Only render ground truth report if a raw csv is detected in the run folder
+    matches = sorted(run_dir.glob("*_raw.csv"))
+    if len(matches) > 0:
+        build_ground_truth_report(run_dir)
+
+
 def run(runRecord: RunRecord) -> dict[str, str]:
     if runRecord.input.skip_face_capture:
         return {}
@@ -234,6 +245,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             params["mp_landmarks"], params["mp_valid"], runRecord.input.face_smoothing_window, face_dir,
         ))
         outputs.update(write_arkit_preview(arkit_weights, head_eye_euler, face_dir))
+        # Render HTML comparison to ground-truth LiveLink CSV, if one exists in the folder
+        _optionally_render_ground_truth_comparison(runRecord)
     return outputs
 
 
@@ -276,8 +289,8 @@ def _compute_arkit_channels(
     - Jaw (`JawOpen`/`Left`/`Right`), horizontal gaze (`EyeLookIn/Out*`),
       blink/wide (`EyeBlink*`/`EyeWide*`), and `NoseSneer*`/`CheekSquint*`/
       `EyeSquint*`: this project's own tracked state.
-    - Everything else (vertical gaze, all `Brow*`, most `Mouth*`,
-      `JawForward`): MediaPipe's own native blendshape output, smoothed with
+    - Everything else (all `Brow*`, most `Mouth*`, `JawForward`):
+      MediaPipe's own native blendshape output, smoothed with
       the same one-euro filter this project's other temporal signals use
       (`_smoothed_mediapipe_blendshapes`). `JawForward` is a genuine new
       capability here regardless, this project's own tracked state

@@ -41,6 +41,12 @@ cmd = "pixi run -e main python -m ui"
 [tasks.deadcode]
 cmd = "pixi run -e main python -m vulture pipeline/ tests/ scripts/ .vulture_whitelist.py --min-confidence 70"
 
+# Regenerates the ARKit-CSV ground-truth comparison report (scripts/diagnostic/
+# build_ground_truth_report.py) for a <run_dir> holding a paired LiveLinkFace
+# capture. Usage: `pixi run compare-ground-truth <run_dir> [out_path]`.
+[tasks.compare-ground-truth]
+cmd = "pixi run -e main python scripts/diagnostic/build_ground_truth_report.py"
+
 [dependencies]
 
 # export: the final export pipeline stage (writes output.blend). Isolated in
