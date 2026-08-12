@@ -1,20 +1,23 @@
 """Stage 9 (capture_face) tests. The disabled-path test is pure and always
-runs; `test_run_produces_face_params_and_motion_files` needs a CUDA GPU plus
-the DECA/MICA/MediaPipe/ViTPose/FLAME assets (see conftest.py's
-`stage_9_result` fixture) and is skipped without them.
+runs; other tests are gated on whatever real model files/assets they touch
+(FLAME, SMPL-X, `body_models/arkit/face_bases.npz`), and
+`test_run_produces_face_params_and_motion_files` also needs a CUDA GPU plus
+the DECA/MICA/MediaPipe/ViTPose checkpoints (see conftest.py's
+`stage_9_result` fixture).
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
-from conftest import make_run_input
+from conftest import FLAME_MODEL_PATH, SMPLX_MODEL_PATH, make_run_input
 from pipeline.adapters.gvhmr.gvhmr_adapter import (
     KEY_BODY_POSE, KEY_GLOBAL_ORIENT, KEY_PRED_SMPL_PARAMS_INCAM, KEY_ROOT_MOTION_UNRELIABLE,
 )
-from pipeline.algorithms.face.face_blendshapes import JAW_OPEN_REFERENCE_RAD
+from pipeline.algorithms.face.face_blendshapes import FACE_BASES_PATH, JAW_OPEN_REFERENCE_RAD
 from pipeline.algorithms.face.face_landmark_fit import KEY_EXPRESSION, KEY_JAW_POSE, KEY_VALID
 from pipeline.create_run import create_run
 from pipeline.helpers.livelink_csv import ARKIT_BLENDSHAPE_NAMES, CSV_HEADER, write_livelink_csv
@@ -29,6 +32,7 @@ def test_run_returns_empty_dict_when_disabled(tmp_path):
     assert stage_9_capture_face.run(runRecord) == {}
 
 
+@pytest.mark.skipif(not SMPLX_MODEL_PATH.exists(), reason="needs the SMPL-X model file (see README's Setup section)")
 def test_body_head_rotation_extracts_head_joint_and_inverts_confidence(tmp_path):
     """Doesn't need a GPU or any checkpoint, a synthetic stage-2 output is
     enough to check the body-based-orientation-prior wiring itself: the right joint gets pulled
@@ -103,6 +107,10 @@ def test_run_produces_output_face_csv(stage_9_result, runRecord):
     assert runRecord.outputs.final_face_csv == str(csv_path)
 
 
+@pytest.mark.skipif(
+    not (FLAME_MODEL_PATH.exists() and FACE_BASES_PATH.exists()),
+    reason="needs the FLAME model file and body_models/arkit/face_bases.npz (see README's Setup section)",
+)
 def test_compute_arkit_channels_pure_jaw_open_produces_expected_jaw_open_column(tmp_path):
     # Targets _compute_arkit_channels + write_livelink_csv directly, the
     # same two calls run() itself makes inline (see that function's own
