@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontDatabase, QTextCursor
 from PySide6.QtWidgets import QLabel, QLineEdit, QPlainTextEdit, QProgressBar, QWidget
 
@@ -26,10 +27,11 @@ QPushButton:disabled { background-color: #999999; color: #dddddd; }
 
 
 class DroppableLineEdit(QLineEdit):
-    """A read-only path field: typing stays blocked (setReadOnly), but it
-    still accepts a single file/folder dragged in from Explorer and fills
-    itself with that path, setText() works fine on a read-only QLineEdit,
-    same as a paired Browse button already relies on.
+    """A read-only path field that accepts one Explorer drop and can be
+    cleared with Delete or Backspace while focused.
+
+    Typing stays blocked (setReadOnly), but ``setText()`` works fine on a
+    read-only QLineEdit, as used by the paired Browse button.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -46,6 +48,13 @@ class DroppableLineEdit(QLineEdit):
         if urls:
             self.setText(urls[0].toLocalFile())
             event.acceptProposedAction()
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            self.clear()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class ConsoleLog(QPlainTextEdit):
