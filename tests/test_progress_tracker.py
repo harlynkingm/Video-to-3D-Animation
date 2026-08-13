@@ -120,6 +120,27 @@ def test_load_defaults_missing_timestamps_to_zero(tmp_path):
     assert reloaded.updated_at == 0.0
 
 
+def test_load_accepts_utf8_progress_json_with_or_without_a_bom(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    original_json = runRecord.path.read_text(encoding="utf-8")
+
+    # The pipeline writes ordinary UTF-8.  External Windows tools may rewrite
+    # the same JSON as UTF-8-with-BOM; both must remain resumable.
+    for encoding in ("utf-8", "utf-8-sig"):
+        runRecord.path.write_text(original_json, encoding=encoding)
+
+        reloaded = RunRecord.load(runRecord.progress_dir)
+
+        assert reloaded.run_id == "test"
+        assert reloaded.input == runRecord.input
+
+
+def test_save_writes_utf8_without_a_bom(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+
+    assert not runRecord.path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
 def test_update_schema_adds_a_stage_the_run_predates(tmp_path):
     # Simulates an old progress.json written before a stage existed in the
     # DAG at all, create_run() itself always writes every stage the current
