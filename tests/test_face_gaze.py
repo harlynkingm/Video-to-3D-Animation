@@ -132,16 +132,15 @@ def test_right_eye_iris_toward_outer_corner_is_in_not_out():
     assert out["EyeLookOutRight"][-1] == 0.0
 
 
-def test_both_eyes_shifted_toward_their_own_inner_corner_both_register_out():
-    # Right toward -x, left toward +x, opposite raw x-directions, but both
-    # should register as "Out" under the real-data-verified convention. The
-    # sign-mirror-between-eyes check the design doc warns about.
+def test_conjugate_horizontal_gaze_uses_mirrored_arkit_in_out_channels():
+    # A common screen/world direction is positive left_h and negative
+    # right_h. It should drive left In and right Out, never a divergent pair.
     n = 30
-    lm = _make_landmarks(right_iris_offset=(-0.5, 0.0), left_iris_offset=(0.5, 0.0), n=n)
+    lm = _make_landmarks(right_iris_offset=(-0.5, 0.0), left_iris_offset=(-0.5, 0.0), n=n)
     valid = np.ones(n, dtype=bool)
     out = direct_arkit_gaze_channels(lm, valid, fps=30.0)
-    assert out["EyeLookOutRight"][-1] > 0.0 and out["EyeLookInRight"][-1] == 0.0
-    assert out["EyeLookOutLeft"][-1] > 0.0 and out["EyeLookInLeft"][-1] == 0.0
+    assert out["EyeLookInLeft"][-1] > 0.0 and out["EyeLookOutRight"][-1] > 0.0
+    assert out["EyeLookOutLeft"][-1] == 0.0 and out["EyeLookInRight"][-1] == 0.0
 
 
 def test_gaze_stays_stable_through_a_near_closed_eye():
@@ -188,15 +187,13 @@ def test_eye_euler_degrees_shape_and_roll_zero():
     assert np.all(out[:, 5] == 0.0)  # RightEyeRoll
 
 
-def test_right_eye_yaw_is_negated_relative_to_left():
-    # Same-magnitude outward shift for both eyes, RightEyeYaw and
-    # LeftEyeYaw should come out with opposite sign (real-data-verified,
-    # see eye_euler_degrees' own docstring for why this asymmetry is
-    # expected: Yaw is world-frame-consistent, the underlying ratio isn't).
+def test_eye_yaw_is_shared_across_conjugate_eyes():
+    # Both CSV yaw columns are world-frame Euler rotations. Their raw local
+    # iris signs are mirrored, but the final yaw must be identical.
     n = 30
-    lm = _make_landmarks(right_iris_offset=(0.5, 0.0), left_iris_offset=(-0.5, 0.0), n=n)
+    lm = _make_landmarks(right_iris_offset=(-0.5, 0.0), left_iris_offset=(-0.5, 0.0), n=n)
     valid = np.ones(n, dtype=bool)
     out = eye_euler_degrees(lm, valid, fps=30.0)
     left_yaw, right_yaw = out[-1, 0], out[-1, 3]
     assert left_yaw > 0.0
-    assert right_yaw < 0.0
+    assert right_yaw == pytest.approx(left_yaw, abs=1e-5)

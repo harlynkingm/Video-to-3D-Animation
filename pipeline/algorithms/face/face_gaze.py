@@ -153,6 +153,20 @@ def _processed_gaze_ratios(landmarks: np.ndarray, valid: np.ndarray, fps: float)
     return processed
 
 
+def _binocular_horizontal_ratio(ratios: dict[str, np.ndarray]) -> np.ndarray:
+    """Returns a shared horizontal gaze direction in the world/screen frame.
+
+    The two eyes' local horizontal axes are mirrored: for a conjugate gaze,
+    ``left_h`` and ``right_h`` have equal magnitude and opposite signs. A
+    simple average after undoing that mirror is therefore both the best
+    binocular estimate and a guard against an iris position corrupted while
+    one eye is squinting or partly closed. This deliberately models the
+    far-field, conjugate rotation represented by the paired ARKit captures;
+    it does not attempt to infer near-focus vergence from a monocular video.
+    """
+    return (ratios["left_h"] - ratios["right_h"]) / 2.0
+
+
 def direct_arkit_gaze_channels(landmarks: np.ndarray, valid: np.ndarray, fps: float) -> dict[str, np.ndarray]:
     """Returns the 4 horizontal ARKit `EyeLookIn/Out*` channels (Group D),
     each (F,) in [0, 1], sign-split per eye, never simultaneously nonzero
@@ -174,11 +188,12 @@ def direct_arkit_gaze_channels(landmarks: np.ndarray, valid: np.ndarray, fps: fl
     positively with `EyeLookIn*` and negatively with `EyeLookOut*`, for both
     eyes, the opposite of the naive "toward-nose = In" assumption."""
     ratios = _processed_gaze_ratios(landmarks, valid, fps)
+    horizontal = _binocular_horizontal_ratio(ratios)
     return {
-        "EyeLookInRight": np.clip(ratios["right_h"], 0.0, 1.0),
-        "EyeLookOutRight": np.clip(-ratios["right_h"], 0.0, 1.0),
-        "EyeLookInLeft": np.clip(ratios["left_h"], 0.0, 1.0),
-        "EyeLookOutLeft": np.clip(-ratios["left_h"], 0.0, 1.0),
+        "EyeLookInRight": np.clip(-horizontal, 0.0, 1.0),
+        "EyeLookOutRight": np.clip(horizontal, 0.0, 1.0),
+        "EyeLookInLeft": np.clip(horizontal, 0.0, 1.0),
+        "EyeLookOutLeft": np.clip(-horizontal, 0.0, 1.0),
     }
 
 
@@ -189,23 +204,17 @@ def eye_euler_degrees(landmarks: np.ndarray, valid: np.ndarray, fps: float) -> n
     signal `direct_arkit_gaze_channels` uses, see that function's own
     docstring for the argument contract.
 
-    `RightEyeYaw` is negated relative to `right_h`, `LeftEyeYaw` isn't,
-    verified against a real ground-truth capture (`left_h` vs.
-    `LeftEyeYaw` corr +0.97; `right_h` vs. `RightEyeYaw` corr -0.95, i.e.
-    already needs the flip applied here). This asymmetry is real, not a
-    residual bug: `h` is per-eye-anatomy-relative (positive = toward that
-    eye's own outer corner, which is a mirrored, opposite screen-space
-    direction between the two eyes, confirmed directly, the left eye's
-    outer corner sits at higher image-x than its inner corner, the right
-    eye's the reverse), while ARKit's own Yaw is world/screen-frame-relative
-    (the same absolute direction reads as positive for both eyes), so
-    only one of the two eyes' raw per-eye sign happens to already agree with
-    the world-frame convention; the other structurally can't without this
-    per-eye correction."""
+    Horizontal yaw is a shared binocular direction. The local eye axes are
+    mirrored, so `_binocular_horizontal_ratio` first brings them into the
+    same world/screen frame. Both ARKit Euler yaw columns then receive that
+    one conjugate direction; this matches paired ARKit data and avoids an
+    implausible divergent-eye pose when one iris is unreliable during a blink
+    or squint."""
     ratios = _processed_gaze_ratios(landmarks, valid, fps)
+    horizontal = _binocular_horizontal_ratio(ratios)
     n = landmarks.shape[0]
     zeros = np.zeros(n, dtype=np.float32)
     return np.stack([
-        ratios["left_h"] * ANGLE_SCALE_DEG, ratios["left_v"] * ANGLE_SCALE_DEG, zeros,
-        -ratios["right_h"] * ANGLE_SCALE_DEG, ratios["right_v"] * ANGLE_SCALE_DEG, zeros,
+        horizontal * ANGLE_SCALE_DEG, ratios["left_v"] * ANGLE_SCALE_DEG, zeros,
+        horizontal * ANGLE_SCALE_DEG, ratios["right_v"] * ANGLE_SCALE_DEG, zeros,
     ], axis=1).astype(np.float32)
