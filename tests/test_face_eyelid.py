@@ -92,8 +92,8 @@ def test_bridge_short_core_gaps_leaves_long_gap_untouched():
 
 
 def test_sustained_closure_survives_a_brief_sub_lock_noise_dip():
-    # Regression guard for the real bug found against real mcds_test_7
-    # ground truth: the eye is genuinely closed the whole stretch, but the
+    # Regression guard for the real bug found against real ground truth:
+    # the eye is genuinely closed the whole stretch, but the
     # smoothed signal dips a few hundredths below BLINK_LOCK_CLOSURE for a
     # handful of frames in the middle, confirmed there was no real
     # reopening at that point. The old plain per-frame `core` check dropped
