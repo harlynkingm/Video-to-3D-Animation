@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -387,7 +388,19 @@ class QueueWindow(QWidget):
         own_run_active = self.main_window.pipeline_runner.is_running()
         can_interact = not queue_running and not own_run_active
         has_selection = self._selected_queue_item() is not None
-        self.list_widget.setEnabled(can_interact)
+        # Keep the list enabled while work is active: disabling the widget
+        # also disables its viewport and vertical scrollbar, preventing the
+        # user from reviewing the queue's progress.  NoSelection locks out
+        # queue interaction while leaving wheel and scrollbar scrolling
+        # available.
+        self.list_widget.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection
+            if can_interact
+            else QAbstractItemView.SelectionMode.NoSelection
+        )
+        if not can_interact:
+            self.list_widget.clearSelection()
+            self.list_widget.setCurrentRow(-1)
         self.edit_button.setEnabled(can_interact and has_selection)
         self.remove_button.setEnabled(can_interact and has_selection)
         self.run_button.setEnabled(can_interact)

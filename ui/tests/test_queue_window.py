@@ -16,7 +16,7 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QAbstractItemView, QApplication
 
 from ui.pipeline_runner import RunFormState
 from ui.queue_window import QueueWindow
@@ -54,4 +54,31 @@ def test_adding_enough_items_to_need_a_scrollbar_does_not_crash(qapp):
     # hide(), not close(): closeEvent() reads self.main_window.isVisible(),
     # which _FakeMainWindow doesn't implement, irrelevant to what this test
     # is actually verifying.
+    window.hide()
+
+
+def test_running_queue_keeps_list_scrollable_but_locks_queue_interaction(qapp):
+    window = QueueWindow(_FakeMainWindow())
+    window.resize(400, 300)
+    window.show()
+
+    for i in range(12):
+        window.add_item(RunFormState(destination_folder=f"C:/runs/item_{i}"))
+    qapp.processEvents()
+
+    window.queue_runner._running = True
+    window.update_interactive_state()
+
+    assert window.list_widget.isEnabled()
+    assert window.list_widget.selectionMode() == QAbstractItemView.SelectionMode.NoSelection
+    assert not window.edit_button.isEnabled()
+    assert not window.remove_button.isEnabled()
+    assert not window.run_button.isEnabled()
+    assert window.stop_button.isEnabled()
+
+    scrollbar = window.list_widget.verticalScrollBar()
+    assert scrollbar.maximum() > 0
+    scrollbar.setValue(scrollbar.maximum())
+    assert scrollbar.value() == scrollbar.maximum()
+
     window.hide()
