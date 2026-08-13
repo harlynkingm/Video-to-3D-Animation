@@ -724,12 +724,15 @@ class RunRecord:
         self.updated_at = time.time()
         data = asdict(self)
         tmp_path = self.path.with_suffix(".json.tmp")
-        tmp_path.write_text(json.dumps(data, indent=2))
+        tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
         tmp_path.replace(self.path)  # atomic rename on the same filesystem
 
     @classmethod
     def load(cls, progress_dir: str | Path) -> RunRecord:
-        data = json.loads((Path(progress_dir) / PROGRESS_JSON_NAME).read_text())
+        # ``utf-8-sig`` consumes an optional UTF-8 BOM while decoding ordinary
+        # UTF-8 unchanged. Some Windows tools save JSON with a BOM, whereas
+        # pipeline-created and older records have none.
+        data = json.loads((Path(progress_dir) / PROGRESS_JSON_NAME).read_text(encoding="utf-8-sig"))
         data[FIELD_INPUT] = RunInput(
             **{
                 **data[FIELD_INPUT],
