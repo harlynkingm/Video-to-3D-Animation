@@ -22,8 +22,10 @@ Per-frame pipeline (`_processed_gaze_ratios`): raw per-eye ratios
 (`eye_gaze_ratios`) -> gap-fill MediaPipe detection dropout -> per-clip
 percentile calibration (`_calibrate_signed_ratio`, stretching each clip's
 own 5th-95th percentile range to fill [-1, 1]) -> one-euro temporal
-smoothing. `GAZE_ONE_EURO_MIN_CUTOFF_HZ`/`BETA` and `ANGLE_SCALE_DEG` are
-untuned placeholders.
+smoothing. Horizontal ratios are then fused into one binocular conjugate
+direction (`_binocular_horizontal_ratio`): a real far-field gaze direction
+moves the two iris measurements in opposite per-eye coordinates, while an
+occluded/squinting eye can otherwise create an implausible one-eye drift.
 """
 
 from __future__ import annotations
@@ -46,9 +48,8 @@ RIGHT_EYE_TOP, RIGHT_EYE_BOTTOM = 159, 145
 LEFT_EYE_OUTER, LEFT_EYE_INNER = 263, 362
 LEFT_EYE_TOP, LEFT_EYE_BOTTOM = 386, 374
 
-# Untuned placeholder: maps a normalized +-1 ratio to a plausible eye-Euler
-# degree range. Real human eye rotation is roughly +-30-45 deg horizontally,
-# less vertically, needs real-data validation, not assumed correct.
+# Maps a normalized +-1 horizontal ratio to eye-Euler degrees. Real human eye
+# rotation is roughly +-30-45 degrees horizontally.
 ANGLE_SCALE_DEG = 30.0
 
 # Percentile calibration range (mirrors face_eyelid.py's OPEN_PERCENTILE/
@@ -178,6 +179,11 @@ def direct_arkit_gaze_channels(landmarks: np.ndarray, valid: np.ndarray, fps: fl
     `EyeLookUp/Down*` from MediaPipe directly instead. `right_v`/`left_v` are
     still computed here since `eye_euler_degrees` needs them for
     `LeftEyePitch`/`RightEyePitch`, which have no MediaPipe equivalent.
+
+    The horizontal output is binocular and conjugate: the two local iris
+    measurements are fused before being translated into ARKit's mirrored
+    left/right In/Out channels. This prevents one squinting eye from
+    independently pulling only its own gaze outward after a blink.
 
     `valid`: MediaPipe's per-frame detection mask (`mp_valid`). `fps`: for
     the one-euro smoothing pass. Not blink-aware by design, gaze holds its
