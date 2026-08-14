@@ -31,6 +31,7 @@ has followed it unmodified).
 from __future__ import annotations
 
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -54,6 +55,8 @@ def _find_ground_truth_csv(run_dir: Path, suffix: str) -> Path:
 # this same real capture), imported directly so the two can never drift apart.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from pipeline.helpers.livelink_csv import ARKIT_BLENDSHAPE_NAMES, HEAD_EYE_COLUMN_NAMES  # noqa: E402
+from pipeline.algorithms.face.face_landmark_fit import FACE_ONE_EURO_EXPR_BETA, FACE_ONE_EURO_EXPR_MIN_CUTOFF_HZ  # noqa: E402
+from pipeline.algorithms.motion_smoothing import fill_invalid, one_euro_filter_sequence  # noqa: E402
 
 ALL_COMPARABLE_COLUMNS = ARKIT_BLENDSHAPE_NAMES + HEAD_EYE_COLUMN_NAMES
 
@@ -147,6 +150,61 @@ def aligned_channel_data(run_dir: Path) -> tuple[np.ndarray, np.ndarray]:
 
     valid = frame_mapping < len(ours)
     return ours[frame_mapping[valid]], gt[valid]
+
+
+def aligned_mediapipe_blendshape_data(run_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    """`(mediapipe_aligned, gt_blendshapes_aligned)`, both ``(F, 52)``.
+
+    The baseline is MediaPipe's native ARKit-named output saved by stage 9,
+    gap-filled and one-euro smoothed with the *same* production path used by
+    ``stage_9_capture_face._smoothed_mediapipe_blendshapes``.  It is aligned
+    to the neutral-subtracted LiveLink data through the same frame-log join
+    as ``aligned_channel_data``, so an HTML report can compare the pipeline
+    and MediaPipe without a second timing convention.
+    """
+    output_csv = run_dir / "output_face.csv"
+    if not output_csv.exists():
+        raise FileNotFoundError(f"{output_csv} not found, run the pipeline through stage 9 first")
+
+    params_path = run_dir / "stage9_face" / "face_params.npz"
+    if not params_path.exists():
+        raise FileNotFoundError(f"{params_path} not found, stage 9 parameters are required for the MediaPipe comparison")
+
+    raw_csv = _find_ground_truth_csv(run_dir, "_raw.csv")
+    neutral_csv = _find_ground_truth_csv(run_dir, "_neutral.csv")
+    _, gt_rows = _read_csv_rows(raw_csv)
+    _, neutral_rows = _read_csv_rows(neutral_csv)
+    _, ours_rows = _read_csv_rows(output_csv)
+
+    # The first 52 columns are ARKit blendshapes; rotations are deliberately
+    # excluded because MediaPipe's native blendshape model has no equivalent.
+    gt = _channel_matrix(gt_rows, ARKIT_BLENDSHAPE_NAMES)
+    neutral = _channel_matrix(neutral_rows, ARKIT_BLENDSHAPE_NAMES)[0]
+    gt = gt - neutral[None, :]
+
+    frame_mapping = _blendshape_row_to_video_frame(run_dir / "frame_log.csv")
+    if len(frame_mapping) != len(gt):
+        raise RuntimeError(f"frame_log.csv has {len(frame_mapping)} B-records, raw.csv has {len(gt)} rows, mismatch")
+
+    with np.load(params_path) as params:
+        try:
+            raw_mediapipe = params["mp_blendshapes"]
+            mp_valid = params["mp_valid"]
+        except KeyError as exc:
+            raise KeyError(f"{params_path} is missing {exc.args[0]!r}, cannot compare the saved MediaPipe baseline") from exc
+    fps = json.loads((run_dir / "progress.json").read_text(encoding="utf-8-sig"))["scene"]["fps"]
+    mediapipe = one_euro_filter_sequence(
+        fill_invalid(raw_mediapipe, mp_valid), fps, FACE_ONE_EURO_EXPR_MIN_CUTOFF_HZ, FACE_ONE_EURO_EXPR_BETA,
+    )
+
+    # Keep exactly the same LiveLink samples as the pipeline comparison.
+    valid = frame_mapping < len(ours_rows)
+    selected_frames = frame_mapping[valid]
+    if np.any(selected_frames >= len(mediapipe)):
+        raise RuntimeError(
+            f"{params_path} has {len(mediapipe)} frames but alignment needs video frame {selected_frames.max()}"
+        )
+    return mediapipe[selected_frames], gt[valid]
 
 
 def measure(run_dir: Path) -> None:
