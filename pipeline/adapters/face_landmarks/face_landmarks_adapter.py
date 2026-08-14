@@ -44,7 +44,7 @@ FACE_LANDMARKER_CHECKPOINT = CHECKPOINT_DIR / "face_landmarker.task"
 
 NUM_LANDMARKS = 478
 NUM_BLENDSHAPES = 52
-PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 2/3 (MediaPipe)"
+PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 2/5 (MediaPipe)"
 
 # infer() output keys (per-frame arrays).
 KEY_LANDMARKS = "mp_landmarks"  # (F, 478, 3): full-frame pixel x/y, relative z

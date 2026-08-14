@@ -36,7 +36,7 @@ N_EXP = 50
 # Plain string, not a StageName reference: the face-capture stage this adapter
 # feeds hasn't been wired into progress_tracker.py yet (that happens together
 # with the export-stage renumber, as its own dedicated step).
-PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 1/3 (DECA)"
+PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 1/5 (DECA)"
 
 # infer() output keys (per-frame arrays).
 KEY_SHAPE = "deca_shape"

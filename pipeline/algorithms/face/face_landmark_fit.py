@@ -33,6 +33,7 @@ import torch.nn.functional as F
 
 from ...adapters.gvhmr.gvhmr_rotation_math import axis_angle_to_matrix
 from ..contact_detection import contiguous_true_runs
+from ...helpers.progress_reporter import frame_progress
 from ..motion_smoothing import (
     cap_long_gaps_with_hold,
     fill_invalid,
@@ -40,6 +41,7 @@ from ..motion_smoothing import (
     one_euro_filter_rotation_sequence,
     one_euro_filter_sequence,
 )
+from pipeline.progress_tracker import StageName
 
 FLAME_MODEL_DIR = Path(__file__).resolve().parents[3] / "body_models"
 FLAME_MODEL_TYPE = "flame"
@@ -47,6 +49,9 @@ FLAME_GENDER = "neutral"
 FLAME_NUM_BETAS = 300  # FLAME 2020's full shape-identity space (matches MICA's own output dim)
 FLAME_NUM_EXPRESSION = 50  # matches DECA's own n_exp
 NUM_FLAME_LANDMARKS = 51  # `use_face_contour=False`: FLAME's static embedding only
+
+_FIT_ORIENTATION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 4/5 (FLAME fit, head pose)"
+_FIT_EXPRESSION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 5/5 (FLAME fit, expression)"
 
 # Reference points within the 51-point FLAME/dlib-inner set (0-indexed within
 # the 51, i.e. dlib index - 17) used to initialize head depth via the
@@ -774,7 +779,9 @@ def fit_clip(
         prior_mask = torch.tensor(prior_confidence, device=device, dtype=torch.float32)
 
     optimizer1 = torch.optim.Adam([global_orient, transl], lr=stage1_lr)
-    for it in range(stage1_iters):
+    for it in frame_progress(
+        range(stage1_iters), total=stage1_iters, label=_FIT_ORIENTATION_LABEL, unit="iteration",
+    ):
         if it == STAGE1_LR_DECAY_ITER:
             for group in optimizer1.param_groups:
                 group["lr"] = stage1_lr * STAGE1_LR_DECAY_FACTOR
@@ -896,7 +903,9 @@ def fit_clip(
     both_valid_pairs = torch.tensor(valid[1:] & valid[:-1], device=device, dtype=torch.float32) if n > 1 else None
 
     optimizer2 = torch.optim.Adam([jaw_raw, expr_raw], lr=stage2_lr)
-    for it in range(stage2_iters):
+    for it in frame_progress(
+        range(stage2_iters), total=stage2_iters, label=_FIT_EXPRESSION_LABEL, unit="iteration",
+    ):
         if it == STAGE2_LR_DECAY_ITER:
             for group in optimizer2.param_groups:
                 group["lr"] = stage2_lr * STAGE2_LR_DECAY_FACTOR

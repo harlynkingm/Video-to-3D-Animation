@@ -31,7 +31,7 @@ MICA_CHECKPOINT = CHECKPOINT_DIR / "mica.safetensors"
 _ARCFACE_PREFIX = "arcface."
 _REGRESSOR_PREFIX = "regressor."
 
-PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 3/3 (MICA)"
+PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 3/5 (MICA)"
 
 # infer() output keys (per-frame arrays).
 KEY_SHAPE = "mica_shape"
