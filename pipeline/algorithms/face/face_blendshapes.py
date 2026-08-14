@@ -6,10 +6,12 @@ drive `output.blend`'s face, a coefficient-space approximation, not an
 exact correspondence (see `_flame_to_smplx_expression_matrix`'s own
 docstring for why, and its scope).
 
-`direct_arkit_jaw_channels` (Group D) and `solve_arkit_weights` (a small
-Group-S solve covering `NoseSneerLeft/Right`, `CheekSquintLeft/Right`,
-`EyeSquintLeft/Right`) feed `output_face.csv` instead. Every other ARKit
-channel comes from MediaPipe's own native blendshape output
+`direct_arkit_jaw_channels` (Group D) supplies the FLAME-derived lateral
+jaw pair (`JawLeft`/`JawRight`), while its `JawOpen` conversion remains
+available as a diagnostic of the saved jaw pose. `solve_arkit_weights` is a
+small Group-S solve covering `NoseSneerLeft/Right`, `CheekSquintLeft/Right`,
+`EyeSquintLeft/Right`. Every other ARKit channel, including exported
+`JawOpen`, comes from MediaPipe's own native blendshape output
 (`stage_9_capture_face.py`'s channel merge); see `scripts/build_face_bases.py`
 for why Group S is solved in landmark space, not mesh space, and why it's
 scoped to just these six channels.
@@ -84,7 +86,7 @@ JAW_AXIS0_BOUND_RAD = 0.8  # opening/closing
 JAW_AXIS1_BOUND_RAD = 0.08  # yaw (side-to-side)
 
 # Jaw-open axis angle (radians) treated as ARKit's fully-open reference, for
-# normalizing `direct_arkit_jaw_channels`'s `JawOpen` into [0, 1].
+# normalizing the diagnostic FLAME-derived `JawOpen` into [0, 1].
 # Deliberately separate from `JAW_AXIS0_BOUND_RAD`: that constant is the
 # fitter's own optimizer safety margin, not a claim about how far a real
 # open mouth rotates, and using it as the reference undershoots real
@@ -139,7 +141,10 @@ def direct_arkit_jaw_channels(jaw_pose: np.ndarray) -> dict[str, np.ndarray]:
     so axis1 > 0 is `JawLeft`.
 
     `JawForward` isn't included: SMPL-X's jaw is a pure rotation joint with
-    no translation DOF to represent it, always zero (Group W).
+    no translation DOF to represent it, always zero (Group W). Stage 9
+    exports the `JawLeft`/`JawRight` pair from this result; its `JawOpen`
+    signal is retained for diagnostics while the CSV uses smoothed native
+    MediaPipe JawOpen after the six-capture comparison favored that source.
     """
     open_axis, yaw_axis = jaw_pose[:, 0], jaw_pose[:, 1]
     return {

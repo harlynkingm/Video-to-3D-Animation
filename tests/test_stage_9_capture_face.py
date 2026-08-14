@@ -111,7 +111,7 @@ def test_run_produces_output_face_csv(stage_9_result, runRecord):
     not (FLAME_MODEL_PATH.exists() and FACE_BASES_PATH.exists()),
     reason="needs the FLAME model file and body_models/arkit/face_bases.npz (see README's Setup section)",
 )
-def test_compute_arkit_channels_pure_jaw_open_produces_expected_jaw_open_column(tmp_path):
+def test_compute_arkit_channels_uses_mediapipe_for_jaw_open_and_wide(tmp_path):
     # Targets _compute_arkit_channels + write_livelink_csv directly, the
     # same two calls run() itself makes inline (see that function's own
     # body), rather than a bespoke wrapper function that duplicated them
@@ -141,6 +141,9 @@ def test_compute_arkit_channels_pure_jaw_open_produces_expected_jaw_open_column(
         "mp_landmarks": mp_landmarks, "mp_valid": np.ones(n, dtype=bool),
         "mp_blendshapes": np.zeros((n, len(ARKIT_BLENDSHAPE_NAMES)), dtype=np.float32),
     }
+    params["mp_blendshapes"][:, ARKIT_BLENDSHAPE_NAMES.index("EyeWideLeft")] = 0.42
+    params["mp_blendshapes"][:, ARKIT_BLENDSHAPE_NAMES.index("EyeWideRight")] = 0.37
+    params["mp_blendshapes"][:, ARKIT_BLENDSHAPE_NAMES.index("JawOpen")] = 0.61
 
     arkit_weights, head_eye_euler = stage_9_capture_face._compute_arkit_channels(
         motion, params, torch.device("cpu"), fps=30.0,
@@ -151,4 +154,7 @@ def test_compute_arkit_channels_pure_jaw_open_produces_expected_jaw_open_column(
 
     jaw_open_col = ARKIT_BLENDSHAPE_NAMES.index("JawOpen") + 2  # +2 for Timecode, BlendshapeCount
     values = lines[1].split(",")
-    assert float(values[jaw_open_col]) == 0.5
+    assert float(values[jaw_open_col]) == pytest.approx(0.61)
+    assert np.allclose(arkit_weights[:, ARKIT_BLENDSHAPE_NAMES.index("JawOpen")], 0.61)
+    assert np.allclose(arkit_weights[:, ARKIT_BLENDSHAPE_NAMES.index("EyeWideLeft")], 0.42)
+    assert np.allclose(arkit_weights[:, ARKIT_BLENDSHAPE_NAMES.index("EyeWideRight")], 0.37)

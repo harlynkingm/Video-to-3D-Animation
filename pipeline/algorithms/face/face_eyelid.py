@@ -1,7 +1,11 @@
 """Geometric eyelid aperture measurement (Group E: `EyeBlink{L,R}`,
-`EyeWide{L,R}`) from MediaPipe's own raw landmarks, not FLAME's tracked mesh,
-FLAME's PCA expression fit undershoots real blink depth, so eyelid state
-is measured directly from MediaPipe's dense eye-contour landmarks instead.
+`EyeWide{L,R}`) from MediaPipe's own raw landmarks, not FLAME's tracked mesh.
+FLAME's PCA expression fit undershoots real blink depth, so blink state is
+measured directly from MediaPipe's dense eye-contour landmarks instead.
+
+Stage 9 uses this module's calibrated geometric output for `EyeBlink` only.
+It retains the `EyeWide` output for diagnostics and tests, but emits Stage 9's
+smoothed native MediaPipe blendshape score for `EyeWide`.
 
 Per-clip percentile calibration: eyelid aperture (vertical lid distance
 normalized by eye width) is subject- and camera-dependent, so "closed" and
@@ -152,7 +156,9 @@ def eyelid_arkit_channels(landmarks: np.ndarray, valid: np.ndarray, fps: float) 
     """`landmarks`: (F, 478, 2 or 3) MediaPipe full-frame landmarks. `valid`:
     (F,) bool, MediaPipe detection validity, only valid frames inform the
     per-clip percentile calibration. `fps`: for one-euro smoothing. Returns
-    the 4 Group-E channels, each (F,) in [0, 1]."""
+    the 4 Group-E channels, each (F,) in [0, 1]. Stage 9 consumes the Blink
+    pair; the Wide pair remains available to validate the source choice
+    against the native MediaPipe baseline."""
     right_ratio = _eye_openness_ratio(landmarks, RIGHT_EYE_TOP, RIGHT_EYE_BOTTOM, RIGHT_EYE_INNER, RIGHT_EYE_OUTER)
     left_ratio = _eye_openness_ratio(landmarks, LEFT_EYE_TOP, LEFT_EYE_BOTTOM, LEFT_EYE_INNER, LEFT_EYE_OUTER)
     right_ratio = fill_invalid(right_ratio[:, None], valid)[:, 0]

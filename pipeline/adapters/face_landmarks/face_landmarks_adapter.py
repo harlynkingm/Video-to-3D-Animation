@@ -8,8 +8,9 @@ blendshape scores from the same detection call (`output_face_blendshapes=
 True`), which now source most of `output_face.csv` directly (see
 `face_blendshapes.py`'s own docstring for the full story: measured across
 three real paired-capture clips to beat this project's own hand-derived
-FLAME->ARKit translation on every channel except jaw, horizontal gaze,
-blink/wide, and `NoseSneer`/`CheekSquint`).
+FLAME->ARKit translation on every channel except lateral jaw, horizontal
+gaze, blink, and `NoseSneer`/`CheekSquint`; the later six-capture comparison
+also selects MediaPipe for `JawOpen` and `EyeWide`).
 
 Reuses this project's existing pieces exactly like `DecaAdapter` does: COCO-17
 ViTPose for the face keypoints that locate the crop, and the SAM 3.1 human

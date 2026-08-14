@@ -260,6 +260,19 @@ HARD_ZERO_CHANNELS = frozenset({
                   # clips tested (-0.42 to -0.61), worse than flat zero, so kept hard zero (Group W) on purpose
 })
 
+# `eyelid_arkit_channels` still computes both blink and wide from dense
+# landmarks, but the six-capture LiveLink comparison found native, smoothed
+# MediaPipe is consistently the better EyeWide source. Keep this narrow
+# allow-list so the merge below makes the remaining pipeline-owned eyelid
+# channels explicit rather than relying on an incidental dictionary shape.
+PIPELINE_EYELID_CHANNELS = frozenset({"EyeBlinkLeft", "EyeBlinkRight"})
+
+# The FLAME jaw pose remains saved in face_motion.npz and still supplies the
+# lateral jaw channels. Six paired LiveLink captures consistently favor the
+# native, smoothed MediaPipe score for open/close, so JawOpen joins the other
+# MediaPipe-sourced ARKit channels in the exported CSV.
+FLAME_JAW_CHANNELS = frozenset({"JawLeft", "JawRight"})
+
 
 def _smoothed_mediapipe_blendshapes(mp_blendshapes: np.ndarray, mp_valid: np.ndarray, fps: float) -> np.ndarray:
     """Gap-fills MediaPipe detection dropout and one-euro smooths its own
@@ -286,16 +299,19 @@ def _compute_arkit_channels(
 
     Each channel's source is chosen per measured accuracy against MediaPipe's
     native blendshape output (see `face_blendshapes.py`'s docstring):
-    - Jaw (`JawOpen`/`Left`/`Right`), horizontal gaze (`EyeLookIn/Out*`),
-      blink/wide (`EyeBlink*`/`EyeWide*`), and `NoseSneer*`/`CheekSquint*`/
-      `EyeSquint*`: this project's own tracked state.
-    - Everything else (all `Brow*`, most `Mouth*`, `JawForward`):
-      MediaPipe's own native blendshape output, smoothed with
+    - Lateral jaw (`JawLeft`/`Right`), horizontal gaze (`EyeLookIn/Out*`),
+      blink (`EyeBlink*`), and `NoseSneer*`/`CheekSquint*`/`EyeSquint*`:
+      this project's own tracked state.
+    - Everything else (including `JawOpen`, `JawForward`, `EyeWide*`, all
+      `Brow*`, and most `Mouth*`): MediaPipe's own native blendshape output, smoothed with
       the same one-euro filter this project's other temporal signals use
-      (`_smoothed_mediapipe_blendshapes`). `JawForward` is a genuine new
-      capability here regardless, this project's own tracked state
-      structurally can't produce it (SMPL-X's jaw joint has no translation
-      DOF).
+      (`_smoothed_mediapipe_blendshapes`). The six paired LiveLink captures
+      compared in `ground_truth_report.html` consistently favor this source
+      for both EyeWide channels and JawOpen. The FLAME jaw pose is still
+      saved unchanged in `face_motion.npz` for diagnostics and future fusion.
+      `JawForward` is a genuine new capability here regardless, this project's
+      own tracked state structurally can't produce it (SMPL-X's jaw joint has
+      no translation DOF).
     - `TongueOut`/`CheekPuff`: hard zero either way (see
       `HARD_ZERO_CHANNELS`).
     """
@@ -303,7 +319,9 @@ def _compute_arkit_channels(
     mp_landmarks, mp_valid = params["mp_landmarks"], params["mp_valid"]
 
     jaw_channels = direct_arkit_jaw_channels(jaw_pose)
+    lateral_jaw_channels = {name: jaw_channels[name] for name in FLAME_JAW_CHANNELS}
     eyelid_channels = eyelid_arkit_channels(mp_landmarks, mp_valid, fps)
+    blink_channels = {name: eyelid_channels[name] for name in PIPELINE_EYELID_CHANNELS}
     gaze_channels = direct_arkit_gaze_channels(mp_landmarks, mp_valid, fps)
 
     landmark_delta = local_landmark_delta(jaw_pose, expression, device=device)
@@ -312,7 +330,7 @@ def _compute_arkit_channels(
     mp_blendshapes = _smoothed_mediapipe_blendshapes(params["mp_blendshapes"], mp_valid, fps)
 
     n = len(jaw_pose)
-    ours = {**jaw_channels, **gaze_channels, **eyelid_channels, **solved_channels}
+    ours = {**lateral_jaw_channels, **gaze_channels, **blink_channels, **solved_channels}
     arkit_weights = np.zeros((n, len(ARKIT_BLENDSHAPE_NAMES)), dtype=np.float32)
     for i, name in enumerate(ARKIT_BLENDSHAPE_NAMES):
         if name in ours:
