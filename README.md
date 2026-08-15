@@ -1,5 +1,7 @@
 # Video to 3D Motion Capture Animation
-Uses SAM3, GVHMR, DepthAnything, and 4DHOI to convert any video with a human and object to a Blender file, generating human and object motion capture animation.
+Converts a still video of a person and optional object into a Blender motion capture animation and facial performance capture CSV.
+
+This project combines SAM 3.1 tracking, ViTPose/HMR2/GVHMR body capture, Depth-Anything-3 metric depth, HaMeR/MANO hand capture, Open4DHOI-derived interaction processing, and DECA/MICA/FLAME/MediaPipe FaceLandmarker face capture.
 
 ## Prerequisites
 
@@ -45,7 +47,7 @@ bash scripts/download_checkpoints.sh
 
 This downloads SAM 3.1, ViTPose, HMR2, GVHMR, and MediaPipe's FaceLandmarker from HuggingFace/Google, converts the HaMeR checkpoint to a safetensors file, fetches DECA and MICA from Google Drive, converts DECA and MICA to safetensors, fetches FLAME's static landmark embedding, fetches ICT-FaceKit's neutral mesh and expression shapes, and converts the FLAME model. Once both FLAME and ICT-FaceKit are in place, it also builds `body_models/arkit/face_bases.npz` (required by the face-capture stage) and `body_models/arkit/face_preview_shapes.npz`. Everything is downloaded into `checkpoints/` and `body_models/`. It skips files you already have and reminds you about the registration-gated files it can't fetch, if you don't have them downloaded.
 
-Once setup is complete, the pipeline runs fully offline.
+The pipeline runs fully offline after its first complete setup and first Stage 3 run. Depth-Anything-3 downloads its ~1.3GB checkpoint the first time Stage 3 is run.
 
 <details>
 <summary>Manual installation instructions</summary>
@@ -101,14 +103,18 @@ This writes `body_models/arkit/face_preview_shapes.npz`.
 
 There is an additional ~1.3GB Depth-Anything-3 checkpoint which is automatically downloaded when [stage 3]((#stage-3-estimate-depth)) runs for the first time.
 
-All of the above is handled automatically by running `bash scripts/download_checkpoints.sh`
+The tasks above are handled automatically by running `bash scripts/download_checkpoints.sh` except for the registration-gated body models and the Depth-Anything-3 checkpoint, which is downloaded when Stage 3 runs for the first time. 
 </details>
 
 ## Quick Start
 
 ### UI Application
 
-Run `pixi run ui` to launch the desktop app (Windows-only). Select a source video, an output folder, a human/object prompt, and the camera's focal length/sensor width, then click **Run**.
+Run `pixi run ui` to launch the desktop app (Windows-only). Select a source video or image sequence, an output folder, a human prompt, an optional object prompt, and the camera's focal length/sensor width, then click **Run**.
+
+The advanced controls can select a stage range, choose an object proxy shape, force a rerun, and render previews for each stage. You can also add multiple runs to a queue for sequential processing.
+
+If you select an output folder with an existing `progress.json` file, you can continue the run, or force a rerun, without filling out any other fields.
 
 > [!TIP]
 > Select a still video, captured on a tripod, for the best results.
@@ -156,7 +162,7 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--render-retarget-preview` | No | off | Stage 5 also writes a `.bvh` full-body-plus-hands skeleton animation importable into Blender for confirming the hands sit correctly on the body. See [stage 5](#stage-5-retarget-hands) below. |
 | `--render-scene-preview` | No | off | Stage 6 also writes a `.ply` combining the human, object, and depth scene in one aligned space for confirming the scale fit in Blender. See [stage 6](#stage-6-align-scene-scale) below. |
 | `--render-contacts-preview` | No | off | Stage 7 also writes one annotated JPEG per contact event, circling the contact point on the source frame, for visual spot-checking. See [stage 7](#stage-7-annotate-contacts) below. |
-| `--render-face-preview` | No | off | Stage 9 also writes standalone `FLAME_face_preview.blend`/`ARKit_face_preview.blend` template+animation data, assembled into full `.blend` files by stage 10, for visually judging the face capture stage's output. See [stage 9](#stage-9-capture-face) below. |
+| `--render-face-preview` | No | off | Stage 9 writes preview template/PC2 data, and stage 10 assembles `FLAME_face_preview.blend`, `landmark_preview.blend`, and `ARKit_face_preview.blend` for visual spot-checking. See [stage 9](#stage-9-capture-face) below. |
 | `--force-all` (`-f`) | No | off | Forces all stages to re-run, even if they have already run. The equivalent of passing `--force` to each stage individually. |
 </details>
 
@@ -174,14 +180,14 @@ The pipeline is a sequence of stages, each a separate script. This section docum
 | 0. Ingest video | `stage_0_ingest_video` | source video file, or a directory of JPEG/PNG frames | `input_frames/*.jpg` <br> camera intrinsics in `progress.json` |
 | 1. Mask and track | `stage_1_mask_and_track` | `input_frames/*.jpg` | `stage1_masks/human.pt` <br> `stage1_masks/object.pt` <br> anchor frame index in `progress.json` <br> `stage1_masks/preview_human/*.jpg` (optional) <br> `stage1_masks/preview_object/*.jpg` (optional) |
 | 2. Estimate human motion | `stage_2_estimate_human_motion` | `input_frames/*.jpg` <br> `stage1_masks/human.pt` | `stage2_motion/human_motion.pt` <br> `stage2_motion/blender_preview.npz` (optional) |
-| 3. Estimate depth | `stage_3_estimate_depth` | `input_frames/*.jpg` <br> anchor frame index in `progress.json` | `stage3_depthanchor_depth.npy` <br> `stage3_depthanchor_pointcloud.ply` (optional) |
+| 3. Estimate depth | `stage_3_estimate_depth` | `input_frames/*.jpg` <br> anchor frame index in `progress.json` | `stage3_depth/anchor_depth.npy` <br> `stage3_depth/anchor_pointcloud.ply` (optional) |
 | 4. Estimate hands | `stage_4_estimate_hands` | `input_frames/*.jpg` <br> `stage1_masks/human.pt` | `stage4_hands/hand_pose.npz` <br> `stage4_hands/hands_preview.bvh` (optional) |
-| 5. Retarget hands | `stage_5_retarget_hands` | `stage2_motion/human_motion.pt` <br> `stage4_hands/hand_pose.npz` | `stage5_retarget/retargeted_motion.pt` <br> `stage5_retarget/retarget_preview.bvh` (optional) |
-| 6. Align scene scale | `stage_6_align_scene_scale` | `stage3_depthanchor_depth.npy` <br> `stage2_motion/human_motion.pt` <br> `stage1_masks/human.pt` <br> `stage1_masks/object.pt` (optional) | `stage6_scale/scene_scale.json` <br> `stage6_scale/object_shape.json` (if an object was tracked) <br> `stage6_scale/scene_preview.ply` (optional) |
+| 5. Retarget hands | `stage_5_retarget_hands` | `stage2_motion/human_motion.pt` <br> `stage4_hands/hand_pose.npz` | `stage5_retarget/retargeted_motion.pt` <br> `stage5_retarget/retargeted_motion.npz` <br> `stage5_retarget/retarget_preview.bvh` (optional) |
+| 6. Align scene scale | `stage_6_align_scene_scale` | `stage3_depth/anchor_depth.npy` <br> `stage2_motion/human_motion.pt` <br> `stage1_masks/human.pt` <br> `stage1_masks/object.pt` (optional) | `stage6_scale/scene_scale.json` <br> `stage6_scale/object_shape.json` (if an object was tracked) <br> `stage6_scale/scene_preview.ply` (optional) |
 | 7. Annotate contacts | `stage_7_annotate_contacts` | `stage5_retarget/retargeted_motion.pt` <br> `stage1_masks/object.pt` | `stage7_contacts/contact_events.json` <br> `stage7_contacts/contacts_preview/*.jpg` (optional) |
-| 8. Optimize human-object interaction | `stage_8_optimize_hoi` | `stage7_contacts/contact_events.json` <br> `stage6_scale/object_shape.json` <br> `stage6_scale/scene_scale.json` <br> `stage5_retarget/retargeted_motion.pt` | `stage8_interaction/object_pose.pt` <br> `stage8_interaction/object_pose.npz` |
-| 9. Face capture | `stage_9_capture_face` | `input_frames/*.jpg` <br> `stage1_masks/human.pt` | `stage9_face/face_params.npz` (raw DECA/MICA/MediaPipe output) <br> `stage9_face/face_motion.npz` (fitted FLAME parameters) <br> `output_face.csv` (ARKit-52 LiveLink CSV) <br> `stage9_face/ARKit_face_preview.blend` (optional) <br> `stage9_face/FLAME_face_preview.blend` (optional) |
-| 10. Export animation | `stage_10_export` | `stage5_retarget/retargeted_motion.npz` <br> `stage6_scale/object_shape.json` (if an object was tracked) <br> `stage8_interaction/object_pose.npz` (if an object was tracked) | `output.blend` |
+| 8. Optimize human-object interaction | `stage_8_optimize_hoi` | `stage7_contacts/contact_events.json` <br> `stage6_scale/object_shape.json` <br> `stage6_scale/scene_scale.json` <br> `stage5_retarget/retargeted_motion.pt` | `stage8_interaction/object_pose.pt` <br> `stage8_interaction/object_pose.npz` <br> `stage8_interaction/attachment_events.json` |
+| 9. Face capture | `stage_9_capture_face` | `input_frames/*.jpg` <br> `stage1_masks/human.pt` | `stage9_face/face_params.npz` (raw DECA/MICA/MediaPipe output) <br> `stage9_face/face_motion.npz` (fitted FLAME parameters) <br> `output_face.csv` (Live Link Face CSV: 52 ARKit weights plus 9 head/eye Euler columns) <br> preview template/PC2 data (optional) |
+| 10. Export animation | `stage_10_export` | `stage5_retarget/retargeted_motion.npz` <br> `stage9_face/face_motion.npz` (unless face capture was skipped) <br> `stage6_scale/object_shape.json` (if an object was tracked) <br> `stage8_interaction/object_pose.npz` (if an object was tracked) | `output.blend` <br> face preview `.blend` files (optional) |
 
 </details>
 
@@ -209,7 +215,7 @@ pixi run -e main python -m pipeline.create_run \
 pixi run -e main python -m pipeline.stages.stage_0_ingest_video -o runs/my_clip
 ```
 
-Extracts every frame to disk as JPEG (to `runs/my_clip/frames/`), and resolves the camera intrinsics matrix computed from `--focal-length-mm`/`--sensor-width-mm` and the video's resolution (or used directly from `--intrinsics-k` if provided).
+Extracts every frame to disk as JPEG (to `runs/my_clip/input_frames/`), and resolves the camera intrinsics matrix computed from `--focal-length-mm`/`--sensor-width-mm` and the video's resolution (or used directly from `--intrinsics-k` if provided).
 
 If `--input-video` is a directory of images instead of a video file, each is re-encoded as JPEG in filename order (if needed) and `--source-fps` provides the frame rate.
 
@@ -306,7 +312,7 @@ Use `--render-hands-preview` when creating the run to also have this stage write
 pixi run -e main python -m pipeline.stages.stage_5_retarget_hands -o runs/my_clip
 ```
 
-Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/stage5_retarget/retargeted_motion.pt`. A hand never detected anywhere in the clip keeps GVHMR's own wrist and flat fingers throughout. Any hand detected at least once gets every frame filled with that detected pose.
+Attaches the stage 4 hands onto the stage 2 body, producing one merged full-body-plus-hands SMPL-X sequence in `runs/my_clip/stage5_retarget/retargeted_motion.pt` and a NumPy interchange copy at `retargeted_motion.npz`. A hand never detected anywhere in the clip keeps GVHMR's own wrist and flat fingers throughout. Any hand detected at least once gets every frame filled with that detected pose.
 
 This stage requires `SMPLX_NEUTRAL.npz` (see [Setup](#setup)).
 
@@ -354,7 +360,7 @@ Use `--render-contacts-preview` when creating the run to also have this stage wr
 pixi run -e main python -m pipeline.stages.stage_8_optimize_hoi -o runs/my_clip
 ```
 
-If an object was tracked, attach it to a body region if a hold was detected for a duration of time. Writes the object positional animation to `runs/my_clip/stage8_interaction/object_pose.npz`
+If an object was tracked, attach it to a body region if a hold was detected for a duration of time. Writes the object positional animation to `runs/my_clip/stage8_interaction/object_pose.npz` and the qualifying hold intervals to `runs/my_clip/stage8_interaction/attachment_events.json`.
 
 ### Stage 9. Face capture
 
@@ -362,7 +368,7 @@ If an object was tracked, attach it to a body region if a hold was detected for 
 pixi run -e main python -m pipeline.stages.stage_9_capture_face -o runs/my_clip
 ```
 
-Runs DECA, MICA, and MediaPipe's FaceLandmarker on every frame, then fits FLAME against MediaPipe's detected 2D landmarks (using DECA/MICA as the initial guess). Writes the raw per-model output to `runs/my_clip/stage9_face/face_params.npz`, the fitted FLAME parameters (identity, expression, jaw, head rotation/translation) to `runs/my_clip/stage9_face/face_motion.npz`, and an ARKit-52 blendshape animation to `runs/my_clip/output_face.csv`
+Runs DECA, MICA, and MediaPipe's FaceLandmarker on every frame, then fits FLAME against MediaPipe's detected 2D landmarks (using DECA/MICA as the initial guess). Writes the raw per-model output to `runs/my_clip/stage9_face/face_params.npz`, the fitted FLAME parameters (identity, expression, jaw, head rotation/translation) to `runs/my_clip/stage9_face/face_motion.npz`, and `runs/my_clip/output_face.csv` in Live Link Face format: 52 ARKit blendshape weights plus 9 head/eye Euler columns per frame.
 
 Capturing a face is optional but runs by default. Use `--skip-face-capture` when creating the run to disable face capture.
 
@@ -371,7 +377,20 @@ This stage requires `body_models/arkit/face_bases.npz` (see [Setup](#setup))
 <details>
 <summary><strong>Optional: Face-Only Preview</strong></summary>
 
-Pass `--render-face-preview` when creating the run for this stage to also write `FLAME_face_preview.blend`/`ARKit_face_preview.blend`, assembled by [stage 10](#stage-10-export) based on stage 9 data.
+Pass `--render-face-preview` when creating the run. Stage 9 writes the preview template and animation data; [stage 10](#stage-10-export) assembles three files from it: `stage9_face/FLAME_face_preview.blend` (the fitted FLAME mesh), `stage9_face/landmark_preview.blend` (raw and smoothed MediaPipe landmarks), and `stage9_face/ARKit_face_preview.blend` (the same ARKit channels written to `output_face.csv`).
+
+</details>
+
+<details>
+<summary><strong>Optional: Compare against iOS Live Link Face capture</strong></summary>
+
+If a run folder also contains paired Live Link Face ground-truth files (`*_raw.csv`, `*_neutral.csv`, and `frame_log.csv`), generate an HTML comparison report with:
+
+```bash
+pixi run compare-ground-truth runs/my_clip
+```
+
+The report defaults to `runs/my_clip/stage9_face/ground_truth_report.html`. When `--render-face-preview` is enabled, stage 9 also generates it automatically when it finds a `*_raw.csv` file in the run folder.
 
 </details>
 
@@ -381,7 +400,7 @@ Pass `--render-face-preview` when creating the run for this stage to also write 
 pixi run -e export python -m pipeline.stages.stage_10_export -o runs/my_clip
 ```
 
-Combine the body+hands motion with the animated object into a single `runs/my_clip/output.blend` file.
+Combines the body+hands motion, optional tracked-object animation, and the face-capture result into a single `runs/my_clip/output.blend` file. The face in this Blender preview is an approximation. Use `output_face.csv` to drive a downstream character face rig.
 
 **Note:** This runs in a separate, `export` pixi environment (the main environment still executes it as a subprocess).
 
@@ -444,10 +463,11 @@ Stage 10's tests (`tests/test_stage_10_export.py`) need the `bpy` module and onl
 ```bash
 pixi run -e main python -m pytest tests/
 pixi run -e export python scripts/run_export_tests.py
+pixi run -e main python -m pytest ui/tests
 ```
 
 Stage tests require the real SAM 3.1/GVHMR checkpoints and a CUDA GPU (see [Setup](#setup)). If either are missing, tests are skipped, not failed.
 
 ## Licensing
 
-This repo's own code is Apache 2.0, but the checkpoints above carry their own separate license terms (attribution requirements, and a research/personal-use-only restriction on the GVHMR checkpoint specifically). See [NOTICE](NOTICE) before using this project commercially.
+This repo's own code is Apache 2.0, but the checkpoints and body models carry their own separate license terms. In particular, GVHMR and the face-capture stack (DECA, MICA, and FLAME 2020) are restricted to research, education, artistic, or personal/non-commercial use unless you obtain separate rights. See [NOTICE](NOTICE) before using this project commercially.
