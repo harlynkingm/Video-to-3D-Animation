@@ -27,6 +27,20 @@ class StageDependenciesNotMetError(RuntimeError):
     pass
 
 
+def _missing_dependencies_message(runRecord: RunRecord, stage_name: StageName) -> str:
+    """Explains which direct prerequisite stages prevent ``stage_name`` running."""
+    actions = {
+        StageStatus.PENDING: "run it",
+        StageStatus.FAILED: "rerun it",
+        StageStatus.RUNNING: "wait for it to finish",
+    }
+    missing = "\n".join(
+        f"  - {dependency.label} ({dependency.value}) is {status.value}: {actions[status]}"
+        for dependency, status in runRecord.incomplete_dependencies(stage_name)
+    )
+    return f"{stage_name.value} cannot run because these required stages are incomplete:\n{missing}"
+
+
 def run_stage(
     runRecord: RunRecord,
     run: Callable[[RunRecord], dict[str, str]],
@@ -41,7 +55,7 @@ def run_stage(
     stage's dependencies aren't complete yet.
     """
     if not runRecord.dependencies_met(stage_name):
-        raise StageDependenciesNotMetError(f"{stage_name}: dependencies not met")
+        raise StageDependenciesNotMetError(_missing_dependencies_message(runRecord, stage_name))
 
     if runRecord.is_complete(stage_name) and not force:
         print(f"[{stage_name.label}] already complete, skipping (use --force to re-run)")
@@ -76,5 +90,5 @@ def cli_entrypoint(run: Callable[[RunRecord], dict[str, str]], stage_name: Stage
     try:
         run_stage(runRecord, run, stage_name, force=args.force)
     except StageDependenciesNotMetError as e:
-        print(f"{e}, aborting", file=sys.stderr)
+        print(f"{e}\nAborting.", file=sys.stderr)
         sys.exit(1)
