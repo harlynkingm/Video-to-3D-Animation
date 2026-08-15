@@ -754,6 +754,18 @@ class RunRecord:
     def dependencies_met(self, stage_name: StageName) -> bool:
         return all(self.is_complete(dep) for dep in self.stages[stage_name].depends_on)
 
+    def incomplete_dependencies(self, stage_name: StageName) -> list[tuple[StageName, StageStatus]]:
+        """Returns this stage's direct prerequisites that still need attention.
+
+        The order is the declared DAG order, which is also the order a user
+        should normally run the prerequisite stages in.
+        """
+        return [
+            (StageName(dependency), self.stages[dependency].status)
+            for dependency in self.stages[stage_name].depends_on
+            if not self.is_complete(dependency)
+        ]
+
     def mark_progress(
         self,
         stage_name: StageName,
