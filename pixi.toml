@@ -26,6 +26,14 @@ version = "0.1.0"
 [tasks.test]
 cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python scripts/run_export_tests.py; pixi run -e main python -m pytest ui/tests"
 
+# Runs the main-environment unit suite with branch coverage and emits both a
+# terminal summary (including missing lines) and a browsable HTML report.
+# The bpy-specific export tests remain isolated in the `export` environment;
+# they are intentionally not folded into this report because coverage data
+# files are interpreter-local and bpy can crash during Python teardown.
+[tasks.coverage]
+cmd = "pixi run -e main python -m coverage run --branch --source=pipeline,ui --omit=ui/tests/* -m pytest tests/ ui/tests; pixi run -e main python -m coverage report --omit=ui/tests/* --show-missing; pixi run -e main python -m coverage html --omit=ui/tests/*"
+
 # Launches the minimal desktop UI (ui/) that composes and runs a `pipeline.run`
 # invocation instead of using the CLI by hand. Runs under the same `main` env
 # as the pipeline itself, see ui/pipeline_runner.py.
@@ -104,6 +112,7 @@ safetensors = "*"
 huggingface-hub = ">=0.16.0"
 transformers = ">=4.40.0"
 pytest = ">=7.0"
+coverage = ">=7.0"
 vulture = ">=2.11"
 # Was already pulled in transitively by transformers; declared explicitly since
 # stage 1/2/4's own per-frame progress bars (pipeline/helpers/progress_reporter.py)
