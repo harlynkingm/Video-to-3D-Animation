@@ -13,14 +13,15 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -49,6 +50,7 @@ PROGRESS_POLL_INTERVAL_MS = 750
 UI_QUEUE_WINDOW_TITLE = "Video to 3D Animation - Render Queue"
 UI_EDIT_BUTTON = "Edit Item"
 UI_REMOVE_BUTTON = "Remove Item"
+UI_OPEN_IN_FILE_EXPLORER = "Open in File Explorer"
 UI_STOP_BUTTON = "Stop Queue"
 UI_RUN_BUTTON = "Run Queue"
 UI_CONSOLE_LOG = "Console"
@@ -183,6 +185,8 @@ class QueueWindow(QWidget):
         self._refreshing = False
         self.list_widget = _QueueListWidget(on_resize=self._refresh_list)
         self.list_widget.currentRowChanged.connect(self.update_interactive_state)
+        self.list_widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_widget.customContextMenuRequested.connect(self._on_item_context_menu_requested)
 
         self.console_log = ConsoleLog()
 
@@ -335,12 +339,49 @@ class QueueWindow(QWidget):
     def _on_edit_clicked(self) -> None:
         item = self._selected_queue_item()
         if item is not None:
-            self.main_window.load_form_state(item)
+            self._edit_item(item)
 
     def _on_remove_clicked(self) -> None:
         item = self._selected_queue_item()
-        if item is not None and item.status != QueueItemStatus.RUNNING:
+        if item is not None:
+            self._remove_item(item)
+
+    def _edit_item(self, item: QueueItem) -> None:
+        self.main_window.load_form_state(item)
+
+    def _remove_item(self, item: QueueItem) -> None:
+        if item.status != QueueItemStatus.RUNNING:
             self.remove_item(item)
+
+    @staticmethod
+    def _open_item_in_file_explorer(item: QueueItem) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(item.state.destination_folder))
+
+    def _on_item_context_menu_requested(self, position) -> None:
+        list_item = self.list_widget.itemAt(position)
+        if list_item is None:
+            return
+
+        item = list_item.data(Qt.ItemDataRole.UserRole)
+        can_interact = not self.queue_runner.is_running() and not self.main_window.pipeline_runner.is_running()
+        if can_interact:
+            # Right-clicking a row makes it the active row, matching normal
+            # list interaction and ensuring the menu visibly belongs to it.
+            self.list_widget.setCurrentItem(list_item)
+
+        menu = QMenu(self)
+        edit_action = menu.addAction(UI_EDIT_BUTTON)
+        edit_action.setEnabled(can_interact)
+        edit_action.triggered.connect(lambda: self._edit_item(item))
+
+        remove_action = menu.addAction(UI_REMOVE_BUTTON)
+        remove_action.setEnabled(can_interact)
+        remove_action.triggered.connect(lambda: self._remove_item(item))
+
+        menu.addSeparator()
+        open_action = menu.addAction(UI_OPEN_IN_FILE_EXPLORER)
+        open_action.triggered.connect(lambda: self._open_item_in_file_explorer(item))
+        menu.exec(self.list_widget.viewport().mapToGlobal(position))
 
     def _on_run_clicked(self) -> None:
         if self.main_window.pipeline_runner.is_running():

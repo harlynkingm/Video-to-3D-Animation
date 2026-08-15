@@ -425,6 +425,7 @@ class MainWindow(QMainWindow):
 
         self._editing_queue_item = item
         self.queue_button.setText(UI_UPDATE_IN_QUEUE_BUTTON)
+        self.queue_button.setFixedWidth(DEFAULT_BUTTON_WIDTH + 20)
 
         self.show()
         self.raise_()
@@ -472,6 +473,7 @@ class MainWindow(QMainWindow):
             self.queue_window.update_item(self._editing_queue_item, state)
             self._editing_queue_item = None
             self.queue_button.setText(UI_ADD_TO_QUEUE_BUTTON)
+            self.queue_button.setFixedWidth(DEFAULT_BUTTON_WIDTH)
         else:
             self.queue_window.add_item(state)
 

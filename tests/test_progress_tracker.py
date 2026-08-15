@@ -169,6 +169,17 @@ def test_update_schema_refreshes_depends_on_for_an_existing_stage(tmp_path):
     assert runRecord.stages[StageName.STAGE_9_CAPTURE_FACE.value].depends_on == current
 
 
+def test_incomplete_dependencies_reports_direct_prerequisites_and_statuses(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.mark_progress(StageName.STAGE_0_INGEST_VIDEO, StageStatus.COMPLETE, outputs={})
+    runRecord.mark_progress(StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.FAILED)
+
+    assert runRecord.incomplete_dependencies(StageName.STAGE_9_CAPTURE_FACE) == [
+        (StageName.STAGE_1_MASK_AND_TRACK, StageStatus.PENDING),
+        (StageName.STAGE_2_ESTIMATE_HUMAN_MOTION, StageStatus.FAILED),
+    ]
+
+
 def test_update_schema_never_touches_an_existing_stage_own_progress(tmp_path):
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
     runRecord.mark_progress(
