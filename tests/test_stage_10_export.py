@@ -24,6 +24,7 @@ from pipeline.progress_tracker import RunRecord, SceneInfo, StageName, StageReco
 from pipeline.bpy.blender_armature import _lowest_foot_z
 from pipeline.bpy.blender_constants import _FIRST_MOTION_BLENDER_FRAME
 from pipeline.bpy.blender_object_attachment import OBJECT_MESH_PREFIX, _object_pose_to_blender_world
+from pipeline.bpy.blender_preview import VIDEO_PLANE_HEIGHT_M, VIDEO_PLANE_POSITION_M
 from pipeline.bpy.blender_scene import _iter_action_fcurves
 from pipeline.stages.stage_10_export import OUTPUT_BLEND, _REST_POSE_YAW_RADIANS, _prepend_rest_pose_frame, _write_body_amass, run
 from tests.conftest import FLAME_MODEL_PATH, HAS_BPY, SMPLX_MODEL_PATH, make_run_input
@@ -112,7 +113,7 @@ def test_write_body_amass_pools_betas_from_the_first_frame(tmp_path):
 
 def _make_runRecord(
     tmp_path, motion_npz_path, object_shape=None, pelvis_rest=None, object_pose_npz_path=None,
-    attachment_events=None, face_motion_npz_path=None,
+    attachment_events=None, face_motion_npz_path=None, frames_dir=None,
 ) -> RunRecord:
     """A real run always has a `STAGE_6_ALIGN_SCENE_SCALE` and
     `STAGE_9_CAPTURE_FACE` entry (both hard DAG dependencies of `export`),
@@ -147,6 +148,8 @@ def _make_runRecord(
         StageName.STAGE_6_ALIGN_SCENE_SCALE.value: StageRecord(outputs=stage_6_outputs),
         StageName.STAGE_9_CAPTURE_FACE.value: StageRecord(outputs=stage_9_outputs),
     }
+    if frames_dir is not None:
+        stages[StageName.STAGE_0_INGEST_VIDEO.value] = StageRecord(outputs={"frames_dir": str(frames_dir)})
     if object_pose_npz_path is not None:
         attachment_events_path = tmp_path / "attachment_events.json"
         attachment_events_path.write_text(json.dumps(attachment_events or []))

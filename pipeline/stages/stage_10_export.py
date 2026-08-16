@@ -47,7 +47,7 @@ from ..bpy.blender_face_expression import _keyframe_face_expression
 from ..bpy.blender_object_attachment import (
     _add_attachment_constraint, _add_object_mesh, _held_frame_mask, _keyframe_held_object_pose, _reset_object_base_transform,
 )
-from ..bpy.blender_preview import _build_face_preview_blend, _build_landmark_preview_blend
+from ..bpy.blender_preview import _add_video_reference_plane, _build_face_preview_blend, _build_landmark_preview_blend
 from ..bpy.blender_scene import _clear_scene
 from ..helpers.amass_export_helper import write_amass_npz
 from ..helpers.bvh_export import root_camera_to_upright
@@ -382,6 +382,14 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             _reset_object_base_transform(obj, event["start_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _reset_object_base_transform(obj, event["end_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset)
+
+    # Include the source footage in the final deliverable too.  This reuses
+    # the preview blends' own plane builder, including its fixed world-space
+    # placement, image-sequence setup, and source-frame -> Blender-frame
+    # alignment.  Unlike the face preview data, retargeted motion is always
+    # available, so this remains useful on --skip-face-capture runs.
+    if frames_dir is not None:
+        _add_video_reference_plane(bpy, frames_dir, len(motion[_KEY_GLOBAL_ORIENT]))
 
     # Building the animation above (attachment constraints, foot-grounding)
     # moves the scene's own current frame around as a side effect of reading
