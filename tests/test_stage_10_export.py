@@ -184,6 +184,52 @@ def test_run_produces_a_real_blend_file(tmp_path):
 
 
 @pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_run_opens_and_renders_from_the_first_motion_frame(tmp_path):
+    """Frame 1 retains the T-pose, but output.blend starts at frame 2."""
+    import bpy
+
+    motion_npz_path = tmp_path / "retargeted_motion.npz"
+    np.savez(motion_npz_path, **_fake_motion())
+    runRecord = _make_runRecord(tmp_path, motion_npz_path)
+
+    run(runRecord)
+
+    bpy.ops.wm.open_mainfile(filepath=str(tmp_path / "output.blend"))
+    scene = bpy.context.scene
+    assert scene.frame_start == _FIRST_MOTION_BLENDER_FRAME
+    assert scene.frame_current == _FIRST_MOTION_BLENDER_FRAME
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
+def test_run_embeds_the_source_video_plane_in_the_final_blend(tmp_path):
+    """The final deliverable uses the exact same video-reference object as
+    the face previews, and it is saved with the final body scene rather than
+    merely lingering in the live Blender session after export."""
+    import bpy
+    from PIL import Image
+
+    motion_npz_path = tmp_path / "retargeted_motion.npz"
+    np.savez(motion_npz_path, **_fake_motion())
+    frames_dir = tmp_path / "input_frames"
+    frames_dir.mkdir()
+    for i in range(N_FRAMES):
+        Image.new("RGB", (40, 60), color=(i, 0, 0)).save(frames_dir / f"{i:06d}.jpg")
+
+    runRecord = _make_runRecord(tmp_path, motion_npz_path, frames_dir=frames_dir)
+    run(runRecord)
+
+    bpy.ops.wm.open_mainfile(filepath=str(tmp_path / "output.blend"))
+    video_plane = bpy.data.objects["video_reference"]
+    x, y, z = VIDEO_PLANE_POSITION_M
+    half_width = (VIDEO_PLANE_HEIGHT_M / 2.0) * (40 / 60)
+    assert tuple(video_plane.data.vertices[0].co) == pytest.approx((x, y - half_width, z - VIDEO_PLANE_HEIGHT_M / 2.0))
+    image_node = next(node for node in video_plane.data.materials[0].node_tree.nodes if node.type == "TEX_IMAGE")
+    assert image_node.image.source == "SEQUENCE"
+    assert image_node.image_user.frame_start == _FIRST_MOTION_BLENDER_FRAME
+    assert image_node.image_user.frame_duration == N_FRAMES
+
+
+@pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
 @pytest.mark.skipif(
     not (FLAME_MODEL_PATH.exists() and SMPLX_MODEL_PATH.exists()),
     reason="needs the FLAME/SMPL-X model files (see README's Setup section)",

@@ -392,11 +392,13 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         _add_video_reference_plane(bpy, frames_dir, len(motion[_KEY_GLOBAL_ORIENT]))
 
     # Building the animation above (attachment constraints, foot-grounding)
-    # moves the scene's own current frame around as a side effect of reading
-    # bone/object transforms at specific frames, reset to frame 0 before
-    # saving so the file doesn't open with the playhead sitting wherever that
-    # process happened to leave it.
-    bpy.context.scene.frame_set(0)
+    # moves the scene's current frame around as a side effect of reading
+    # bone/object transforms at specific frames. Keep frame 1 as the
+    # intentionally preserved T-pose, but open and render/playback the
+    # deliverable from the first actual motion frame.
+    scene = bpy.context.scene
+    scene.frame_start = _FIRST_MOTION_BLENDER_FRAME
+    scene.frame_set(_FIRST_MOTION_BLENDER_FRAME)
     with report_single_shot(StageName.STAGE_10E_SAVE_FILE.label):
         bpy.ops.wm.save_as_mainfile(filepath=str(output_path))
 
