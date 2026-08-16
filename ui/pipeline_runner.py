@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
-from pipeline.progress_tracker import RunRecord, StageName, StageStatus
+from pipeline.progress_tracker import ObjectShapeHint, RunRecord, StageName, StageStatus
 from pipeline.run import MAX_ORDERED_STAGE_NUMBER, ORDERED_STAGES
 
 # ui/ -> repo root, matching pipeline/run.py's own _REPO_ROOT (pipeline/ -> repo root).
@@ -57,8 +57,12 @@ def build_run_argv(state: RunFormState) -> list[str]:
         "--output-dir", state.destination_folder,
         "--start-on-stage", str(state.start_stage),
         "--stop-after-stage", str(state.stop_stage),
-        "--object-shape-hint", state.object_shape,
     ]
+    # `auto` is the UI's no-override choice.  Omitting the flag lets a new
+    # run use the pipeline default and, more importantly, preserves an
+    # existing run's recorded object_shape_hint when resuming.
+    if state.object_shape != ObjectShapeHint.AUTO.value:
+        argv += ["--object-shape-hint", state.object_shape]
     if state.video_path:
         argv += ["--input-video", state.video_path]
     if state.human_prompt:

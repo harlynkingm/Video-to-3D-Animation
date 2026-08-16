@@ -33,7 +33,7 @@ def test_build_run_argv_basic_video_run():
     assert "--sensor-width-mm" in argv and argv[argv.index("--sensor-width-mm") + 1] == "36.0"
     assert "--start-on-stage" in argv and argv[argv.index("--start-on-stage") + 1] == "0"
     assert "--stop-after-stage" in argv and argv[argv.index("--stop-after-stage") + 1] == "10"
-    assert "--object-shape-hint" in argv and argv[argv.index("--object-shape-hint") + 1] == "auto"
+    assert "--object-shape-hint" not in argv
     assert "--object-prompt" not in argv
     assert "--source-fps" not in argv
     assert "--force-all" not in argv
@@ -92,11 +92,17 @@ def test_build_run_argv_omits_optional_fields_when_resuming():
     assert "--focal-length-mm" not in argv
     assert "--sensor-width-mm" not in argv
     assert "--source-fps" not in argv
-    # Stage range and object shape are pipeline.run's own flags/defaults,
-    # unrelated to resuming, so they're always sent.
+    # Stage range is pipeline.run's own flag, while the default object shape
+    # must be omitted so a resume preserves progress.json's recorded value.
     assert "--start-on-stage" in argv
     assert "--stop-after-stage" in argv
-    assert "--object-shape-hint" in argv
+    assert "--object-shape-hint" not in argv
+
+
+def test_build_run_argv_explicit_object_shape_overrides_existing_run():
+    argv = build_run_argv(RunFormState(destination_folder="C:/runs/my_clip", object_shape="box"))
+
+    assert argv[argv.index("--object-shape-hint") + 1] == "box"
 
 
 def _run_record(**stage_statuses: StageStatus) -> RunRecord:
