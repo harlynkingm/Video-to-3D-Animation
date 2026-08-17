@@ -222,7 +222,7 @@ def write_landmark_preview(mp_landmarks: np.ndarray, mp_valid: np.ndarray, smoot
     relative z, exactly as `FaceLandmarksAdapter.infer` produced them,
     upstream of DECA/MICA/FLAME entirely. `smoothing_window`: the same
     window (frames) `stage_9_capture_face.py` uses on the sparse 51-point
-    set for the real fit (`RunInput.face_smoothing_window`), reused here so
+    set for the real fit (`FineTuningOptions.face_smoothing_window`), reused here so
     this preview shows the production smoothing setting, not a separate one.
 
     Writes two template+PC2 pairs (raw, smoothed) into `out_dir`, offset

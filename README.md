@@ -243,7 +243,7 @@ GVHMR turns the human mask into a 3D SMPL-X body pose animation. Works at any so
 
 Stage 2 also performs a foot/wrist drift-lock pass on wrists, ankles, and feet to prevent sliding. Then, the body motion is temporally smoothed to remove residual per-frame jitter.
 
-If you want to tune the smoothing method yourself, edit `body_smoothing_window` (affecting rotation) or `body_translation_cutoff` (affecting root position) in the run's `progress.json` before running this stage. See [Motion smoothing](#motion-smoothing) below.
+The default pipeline smoothing profile is used this stage is run. See [Motion smoothing](#motion-smoothing) for optional smoothing overrides.
 
 <details>
 <summary><strong>Optional: 3D Motion Preview Output</strong></summary>
@@ -296,7 +296,7 @@ HaMeR estimates per-frame MANO hand pose for both hands. It finds the person fro
 
 If a hand is off-screen, too occluded, or if the ViTPose based confidence score is too low, or if the estimated wrist pose is anatomically impossible, the wrist is held in place instead of assuming incorrect motion.
 
-This stage also temporally smooths both hand movements after making corrections based on the above. The smoothing happens in 3 passes: first a zero-phase smoothing to reduce jitter, then an adaptive filter, then a keyframe-based reduction. Smoothness tuning can be adjusted in the `hand_*` fields of the run's `progress.json`. See [Motion smoothing](#motion-smoothing) below.
+This stage also temporally smooths both hand movements after making corrections based on the above. The smoothing happens in 3 passes: first a zero-phase smoothing to reduce jitter, then an adaptive filter, then a keyframe-based reduction. Reruns use the current pipeline profile; see [Motion smoothing](#motion-smoothing) to intentionally pin a custom value.
 
 This stage requires the MANO body model and the SMPL-X model file (see [Setup](#setup)).
 
@@ -435,18 +435,31 @@ Stage 2 (body) and stage 4 (hands) temporally smooth their output before saving.
 <details>
 <summary>Smoothness tuning</summary>
 
-If you want to tune the amount of smoothing, edit these fields in the run's `progress.json` before running stage 2 or 4:
+To intentionally override a smoothing default for a run, add it as a key/value pair in the top-level `fine_tuning_overrides` object in `progress.json`. For example:
+
+```json
+{
+  "fine_tuning_overrides": {
+    "hand_finger_min_cutoff_hz": 0.18
+  }
+}
+```
+
+Here are the possible smoothing overrides:
 
 | Field | Default | Effect |
 |---|---|---|
 | `body_smoothing_window` | `9` | Savitzky-Golay window (odd, in frames) for body rotation. Larger is smoother but can smear fast motion. |
 | `body_translation_cutoff` | `0.15` | Butterworth low-pass cutoff (fraction of Nyquist) for the body root position. Lower is smoother but adds lag. |
-| `hand_smoothing_window` | `15` | Savitzky-Golay pre-pass window (odd, in frames), applied to both fingers and wrist. Larger strips more raw jitter without adding lag; too large smears fast motion. |
-| `hand_beta` | `0.3` | How quickly the adaptive filter loosens as motion speeds up (both fingers and wrist). Higher tracks fast motion more closely, at the cost of passing more jitter through while moving. |
-| `hand_finger_min_cutoff_hz` | `0.15` | Adaptive-filter smoothing strength at rest for the **fingers**. Lower is steadier when still but slower to respond. |
-| `hand_wrist_min_cutoff_hz` | `0.10` | Same, for the **wrist** — lower than the fingers, since the wrist starts from noisier data and needs more smoothing. |
-| `hand_finger_decimate_deg` | `1.5` | Keyframe-reduction tolerance for the **fingers**, in degrees: the most the refitted curve may deviate from the filtered motion. Larger means fewer keyframes and a smoother, flatter curve. |
-| `hand_wrist_decimate_deg` | `3.0` | Same, for the **wrist** (looser than the fingers). |
+| `hand_smoothing_window` | `15` | Savitzky-Golay pre-pass window for the wrist. It keeps broad wrist motion stable without affecting finger detail. |
+| `hand_beta` | `0.3` | Wrist adaptive-filter responsiveness. |
+| `hand_finger_smoothing_window` | `5` | Short fixed-window pre-pass for fingers (`0` disables it). This suppresses frame-to-frame jitter while retaining short articulations; larger odd values become progressively smoother and flatter. |
+| `hand_finger_beta` | `1.85` | Finger adaptive-filter responsiveness. Higher follows quick, small bends more closely, at the cost of allowing more movement-time jitter. |
+| `hand_finger_derivative_cutoff_hz` | `2.75` | How quickly the finger filter recognizes a change in speed. Higher retains short keypresses; lower is steadier but slower to react. |
+| `hand_finger_min_cutoff_hz` | `0.225` | Adaptive-filter smoothing strength at rest for the fingers. Lower is steadier when still but slower to respond. |
+| `hand_wrist_min_cutoff_hz` | `0.10` | Same, for the wrist — lower than the fingers, since the wrist starts from noisier data and needs more smoothing. |
+| `hand_finger_decimate_deg` | `0.375` | Keyframe-reduction tolerance for the fingers, in degrees: the most the refitted curve may deviate from the filtered motion. Keep this low for detail; larger means fewer keyframes and a flatter curve. |
+| `hand_wrist_decimate_deg` | `3.0` | Same, for the wrist (looser than the fingers). |
 | `hand_max_wrist_deviation_deg` | `110.0` | Max plausible wrist rotation degrees relative to the forearm, checked against stage 2's body motion before smoothing. A raw estimate past this is treated as 'undetected'. Lower this value to be stricter, raise if a fast real wrist motion is ever incorrectly flagged. |
 </details>
 

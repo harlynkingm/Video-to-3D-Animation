@@ -108,7 +108,7 @@ EXPRESSION_BOUND = 6.0
 # caricature. This weight trades expression magnitude off against blink
 # depth specifically, too high and a real blink's closure gets shallower.
 # Frame-to-frame jitter is handled separately, by
-# `RunInput.face_smoothing_window` and the one-euro post-filter below, not
+# `FineTuningOptions.face_smoothing_window` and the one-euro post-filter below, not
 # by this weight.
 DEFAULT_EXPRESSION_WEIGHT = 20.0
 

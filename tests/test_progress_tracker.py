@@ -7,6 +7,8 @@ from __future__ import annotations
 import argparse
 import json
 
+import pytest
+
 from conftest import TEST_VIDEO_PATH, make_run_input
 from pipeline.create_run import create_run
 from pipeline.progress_tracker import (
@@ -14,6 +16,7 @@ from pipeline.progress_tracker import (
     STAGE_DEPENDS_ON,
     RunInput,
     RunRecord,
+    FineTuningOptions,
     StageName,
     StageRecord,
     StageStatus,
@@ -139,6 +142,64 @@ def test_save_writes_utf8_without_a_bom(tmp_path):
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
 
     assert not runRecord.path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_progress_json_keeps_run_defaults_but_omits_smoothness_defaults(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    data = json.loads(runRecord.path.read_text())
+
+    assert "hand_finger_min_cutoff_hz" not in data["input"]
+    assert "hand_finger_decimate_deg" not in data["input"]
+    assert data["input"]["render_hands_preview"] is False
+    assert "sam_track_max_bridge_frames" not in data["input"]
+    assert "hand_wrist_max_deviation_deg" not in data["input"]
+    assert data["fine_tuning_overrides"] == {}
+    assert RunRecord.load(runRecord.progress_dir).fine_tuning.hand_finger_min_cutoff_hz == 0.225
+
+
+def test_loading_legacy_record_drops_its_implicit_runtime_defaults(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    data = json.loads(runRecord.path.read_text())
+    data.pop("fine_tuning_overrides")  # reproduce the version-1 serialization
+    data["input"]["hand_finger_min_cutoff_hz"] = 0.15
+    data["input"]["hand_finger_decimate_deg"] = 1.5
+    runRecord.path.write_text(json.dumps(data))
+
+    reloaded = RunRecord.load(runRecord.progress_dir)
+
+    assert reloaded.fine_tuning.hand_finger_min_cutoff_hz == 0.225
+    assert reloaded.fine_tuning.hand_finger_decimate_deg == 0.375
+    assert reloaded.fine_tuning_overrides == {}
+
+
+def test_explicit_runtime_override_is_preserved_even_when_it_matches_a_default(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.fine_tuning_overrides = {"hand_finger_min_cutoff_hz": 0.18}
+    runRecord.save()
+    data = json.loads(runRecord.path.read_text())
+
+    assert "hand_finger_min_cutoff_hz" not in data["input"]
+    assert data["fine_tuning_overrides"] == {"hand_finger_min_cutoff_hz": 0.18}
+    assert RunRecord.load(runRecord.progress_dir).fine_tuning.hand_finger_min_cutoff_hz == 0.18
+
+
+def test_non_smoothing_fine_tuning_override_uses_the_same_key_value_object(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.fine_tuning_overrides = {"sam_track_max_bridge_frames": 12}
+    runRecord.save()
+
+    reloaded = RunRecord.load(runRecord.progress_dir)
+
+    assert isinstance(reloaded.fine_tuning, FineTuningOptions)
+    assert reloaded.fine_tuning.sam_track_max_bridge_frames == 12
+
+
+def test_smoothness_override_rejects_a_non_numeric_value(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    runRecord.fine_tuning_overrides = {"hand_finger_min_cutoff_hz": "0.18"}  # type: ignore[dict-item]
+
+    with pytest.raises(ValueError, match="int or float"):
+        runRecord.save()
 
 
 def test_update_schema_adds_a_stage_the_run_predates(tmp_path):

@@ -207,14 +207,14 @@ def _compute_wrist_validity(result: dict, global_rot: torch.Tensor, runRecord: R
     forearm` for why these run here, before any smoothing, rather than
     downstream in stage 5, and why the result is a separate array rather than
     overwriting `*_valid`)."""
-    max_deg = runRecord.input.hand_wrist_max_deviation_deg
-    release_deg = runRecord.input.hand_wrist_release_deviation_deg
-    window = runRecord.input.hand_wrist_deviation_window
-    max_expansion_frames = runRecord.input.hand_wrist_max_expansion_frames
-    max_velocity_deg_per_sec = runRecord.input.hand_wrist_max_velocity_deg_per_sec
-    max_swing_deg = runRecord.input.hand_wrist_max_swing_deg
-    forearm_radius_m = runRecord.input.hand_forearm_radius_m
-    forearm_interior_max_t = runRecord.input.hand_forearm_interior_max_t
+    max_deg = runRecord.fine_tuning.hand_wrist_max_deviation_deg
+    release_deg = runRecord.fine_tuning.hand_wrist_release_deviation_deg
+    window = runRecord.fine_tuning.hand_wrist_deviation_window
+    max_expansion_frames = runRecord.fine_tuning.hand_wrist_max_expansion_frames
+    max_velocity_deg_per_sec = runRecord.fine_tuning.hand_wrist_max_velocity_deg_per_sec
+    max_swing_deg = runRecord.fine_tuning.hand_wrist_max_swing_deg
+    forearm_radius_m = runRecord.fine_tuning.hand_forearm_radius_m
+    forearm_interior_max_t = runRecord.fine_tuning.hand_forearm_interior_max_t
     for elbow, wrist, middle1, global_orient_key, valid_key, wrist_valid_key in (
         (LEFT_ELBOW, LEFT_WRIST, LEFT_MIDDLE1, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID, KEY_LEFT_WRIST_VALID),
         (RIGHT_ELBOW, RIGHT_WRIST, RIGHT_MIDDLE1, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID, KEY_RIGHT_WRIST_VALID),
@@ -275,13 +275,16 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         result,
         global_rot,
         runRecord.scene.fps,
-        runRecord.input.hand_smoothing_window,
-        runRecord.input.hand_beta,
-        runRecord.input.hand_finger_min_cutoff_hz,
-        runRecord.input.hand_wrist_min_cutoff_hz,
-        runRecord.input.hand_finger_decimate_deg,
-        runRecord.input.hand_wrist_decimate_deg,
-        runRecord.input.hand_wrist_max_bridge_frames,
+        runRecord.fine_tuning.hand_finger_smoothing_window,
+        runRecord.fine_tuning.hand_finger_beta,
+        runRecord.fine_tuning.hand_finger_derivative_cutoff_hz,
+        runRecord.fine_tuning.hand_smoothing_window,
+        runRecord.fine_tuning.hand_beta,
+        runRecord.fine_tuning.hand_finger_min_cutoff_hz,
+        runRecord.fine_tuning.hand_wrist_min_cutoff_hz,
+        runRecord.fine_tuning.hand_finger_decimate_deg,
+        runRecord.fine_tuning.hand_wrist_decimate_deg,
+        runRecord.fine_tuning.hand_wrist_max_bridge_frames,
     )
 
     hands_dir = Path(runRecord.progress_dir) / HANDS_DIRNAME

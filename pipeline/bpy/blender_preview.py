@@ -144,7 +144,7 @@ def _build_landmark_preview_blend(
 ) -> None:
     """A standalone .blend with two wireframes side by side, MediaPipe's
     raw 478-point face detection and the same points smoothed at the
-    production `face_smoothing_window` setting, entirely upstream of
+    production `FineTuningOptions.face_smoothing_window` setting, entirely upstream of
     DECA/MICA/FLAME, so a clip's own landmark noise is visible before any of
     that machinery runs. See `face_preview.write_landmark_preview`'s own
     docstring for why this exists and what the wireframe connectivity is (not

@@ -16,7 +16,7 @@ from dataclasses import MISSING, asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Callable
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 FIELD_INPUT = "input"
 FIELD_SCENE = "scene"
@@ -24,8 +24,16 @@ FIELD_STAGES = "stages"
 FIELD_STATUS = "status"
 FIELD_OUTPUTS = "outputs"
 FIELD_OBJECT_SHAPE_HINT = "object_shape_hint"
+FIELD_FINE_TUNING = "fine_tuning"
+FIELD_FINE_TUNING_OVERRIDES = "fine_tuning_overrides"
 
 PROGRESS_JSON_NAME = "progress.json"
+
+# On Windows, a just-written file can briefly be held by the system
+# Keep the write atomic, but give that transient lock a moment to
+# clear before reporting a real save failure.
+PROGRESS_REPLACE_MAX_ATTEMPTS = 6
+PROGRESS_REPLACE_INITIAL_RETRY_SECONDS = 0.05
 
 
 class StageName(enum.StrEnum):
@@ -309,181 +317,59 @@ class RunInput:
              "ARKit_face_preview.blend (the ARKit-52 channels that feed output_face.csv) for visual spot-checking",
     )
 
-    # Smooths stage 9's raw MediaPipe landmarks (savgol, `motion_smoothing.
-    # smooth_position_sequence`) before `fit_clip` ever sees them, not a
-    # penalty on the fitted parameters' own deltas (`face_landmark_fit.
-    # DEFAULT_TEMPORAL_WEIGHT`, left inert, see that constant's own
-    # comment for why an L2 delta penalty can't do this job: it suppresses a
-    # real blink's large frame-to-frame jump harder than the small noise
-    # deltas that make up jitter). 7 frames (~0.23s at 30fps) matches a
-    # similar project's own working default (BlendCap's smooth_face_npz.py)
+@dataclass
+class FineTuningOptions:
+    """Algorithm controls resolved from code defaults plus numeric overrides.
+
+    These options are intentionally separate from ``RunInput``: source and
+    preview choices stay visible in every run record, while these controls only
+    appear in progress.json when a user deliberately pins one.
+    """
+
+    # Smooth landmarks before face fitting, which preserves large real blinks
+    # better than penalizing the fitted parameters' own frame deltas.
     face_smoothing_window: int = 7
 
-    # Stage 1's tracker can lose and re-detect the same physical object (or the
-    # human) several times in one clip, each re-detection landing as its own
-    # internal track with its own (lower, first-detection) confidence, bridges
-    # a real gap of up to this many frames between two such tracks by holding
-    # the last tracked mask forward, so a brief re-occlusion doesn't leave a
-    # true empty gap once the object is back in view. First-pass value (~0.5s
-    # at 30fps), calibrated against one real clip's own observed gaps (2-59
-    # frames between re-detections); longer gaps stay genuinely empty rather
-    # than holding a stale mask across an uncertain-duration real occlusion.
-    # See `sam31_adapter._stitch_tracked_slots`.
+    # Bridge brief SAM re-detection gaps by holding the last trusted mask; do
+    # not bridge longer occlusions, where stale geometry is less trustworthy.
     sam_track_max_bridge_frames: int = 15
-
-    # A single anchor frame's own object-shape fit can be badly wrong when
-    # every frame of a clip is either motion-blurred (in flight) or occluded
-    # (gripped), confirmed on a real clip: three different
-    # anchor-frame-selection heuristics (largest mask area, visual stillness,
-    # highest 2D mask circularity) each produced a wrong overall size (over-
-    # elongated or flattened-to-a-disc). `align_scene_scale` corrects the
-    # anchor fit's own proportions (not its orientation/center, which stay
-    # from the anchor) using the median of this many independently-measured
-    # candidate frames' own 2D mask extents (see
-    # `stage_6_align_scene_scale._aggregate_object_shape_proportions`),
-    # ranked by how unoccluded they look, median specifically because real
-    # measurements showed errors in both directions (blur inflates,
-    # occlusion shrinks), so a robust central estimate rejects outliers
-    # either way, unlike mean or max. First-pass value, one clip.
+    # Robust median number of unoccluded object candidates used to correct an
+    # anchor-frame shape fit that may be blurred or gripped.
     object_shape_candidate_frames: int = 15
-
-    # Temporal-smoothing knobs. Not exposed as create_run CLI flags on purpose,
-    # the defaults are tuned to need no adjustment; a power user can override them
-    # by hand-editing these fields in a run's progress.json before running stage
-    # 2/4. Body needs only light polish (GVHMR already runs a temporal model over
-    # the whole clip); the hands are far jitterier because HaMeR infers each frame
-    # independently. See pipeline/algorithms/motion_smoothing.py.
+    # GVHMR is already temporal; the body therefore needs only light rotation
+    # and root-position cleanup.
     body_smoothing_window: int = 9
     body_translation_cutoff: float = 0.15
-
-    # Both hand parts (finger articulation and wrist orientation) go through the
-    # same three-pass chain, differing only in the per-part knobs below:
-    #   1. savgol pre-pass (`hand_smoothing_window`), zero-phase, no lag; knocks
-    #      down HaMeR's broadband per-frame jitter, the temporal pre-conditioning
-    #      GVHMR gives the body for free but HaMeR never does.
-    #   2. one-euro adaptive filter (`*_min_cutoff_hz`, shared `hand_beta`), holds
-    #      a nearly-still joint tight (killing the rest-state wobble/precession the
-    #      savgol pass leaves) and loosens automatically once it moves. It replaced
-    #      an earlier hard hold/snap deadzone that snapped visibly on release.
-    #   3. decimation (`*_decimate_deg`), keyframe reduction in quaternion space:
-    #      refit the curve through a sparse set of keyframes so the result is
-    #      mathematically smooth between them, removing residual jitter outright
-    #      rather than just averaging it down. Without pass 2 first, decimation
-    #      would place keyframes on the noise and lock it in.
-    # The wrist gets a lower min_cutoff (heavier hold) and a looser decimate
-    # tolerance than the fingers: it starts from noisier global-orientation data
-    # and is a load-bearing joint, so it needs more smoothing. Tuned on a real
-    # clip, fingers land below the body's own jitter, the wrist a few times above
-    # it (its noisier input floors higher without risking arm-detachment lag).
-    hand_smoothing_window: int = 15  # savgol pre-pass window, both wrist and fingers
-    hand_beta: float = 0.3  # one-euro speed responsiveness, both wrist and fingers
-    hand_finger_min_cutoff_hz: float = 0.15
+    # HaMeR is per-frame. Fingers retain a short, responsive pre-pass, while
+    # the noisier load-bearing wrist keeps a more conservative profile.
+    hand_smoothing_window: int = 15
+    hand_beta: float = 0.3
+    hand_finger_smoothing_window: int = 5
+    hand_finger_beta: float = 1.85
+    hand_finger_derivative_cutoff_hz: float = 2.75
+    hand_finger_min_cutoff_hz: float = 0.225
     hand_wrist_min_cutoff_hz: float = 0.10
-    hand_finger_decimate_deg: float = 1.5
+    hand_finger_decimate_deg: float = 0.375
     hand_wrist_decimate_deg: float = 3.0
 
-    # A real human wrist cannot rotate further than roughly `hand_wrist_max_deviation_deg`
-    # relative to the forearm in any direction, calibrated against two clean,
-    # previously-verified real clips (max ever observed combined: ~95 degrees
-    # across 1200+ frames of legitimate motion, on two different people/
-    # activities). HaMeR sometimes regresses a wrist orientation well past this
-    # on an ambiguous frame (e.g. a foreshortened forearm mid-reach, or a
-    # genuine rotation-from-monocular-view ambiguity), sometimes a slow,
-    # smooth drift, sometimes a CHAOTIC stretch bouncing between clearly-
-    # implausible values and moderate ones that look individually plausible in
-    # isolation (a clean clip's own legitimate motion also reaches ~95-103
-    # degrees at its peak). The moderate "shoulder" frames of a chaotic bad
-    # stretch would otherwise still anchor the smoothing chain, so an
-    # instantaneous-only threshold isn't enough on its own: this uses hysteresis
-    # (the same lock/release pattern as a noise gate), `_max_deviation_deg` is
-    # the strict threshold that seeds detection, then the invalid region expands
-    # outward while a `_deviation_window`-frame rolling max stays above the
-    # lower `_release_deviation_deg`, so it can only ever expand from a
-    # confirmed-bad seed frame; a clip that never crosses the strict threshold
-    # is unaffected regardless of the release value. `_deviation_window` needs
-    # care too: a window that's too wide relative to a clip's own natural
-    # busyness merges the rolling max across genuinely separate local peaks,
-    # confirmed on a short, energetic reference clip, where window=7 let one
-    # isolated real spike's rolling max touch nearly the whole clip (every
-    # frame had SOME elevated neighbor within reach) and reject all of it;
-    # window=5 isolates just the frames actually near that spike while still
-    # capturing the full multi-frame chaotic stretch on the clip this was
-    # designed for. Checked in stage 4 against GVHMR's own elbow orientation
-    # (stage 4 depends on stage 2's output for this), before any smoothing
-    # runs, a filter that's already blended a bad value into its neighbors
-    # can't be un-blended by a later stage. See
-    # hand_retarget.reject_biomechanically_implausible_wrist.
+    # Wrist plausibility uses a strict angular seed plus a lower hysteretic
+    # release threshold, so isolated ambiguity is rejected without spreading a
+    # real sustained pose across the whole clip.
     hand_wrist_max_deviation_deg: float = 110.0
     hand_wrist_release_deviation_deg: float = 55.0
     hand_wrist_deviation_window: int = 5
-    # How many frames the rejected region may expand outward from a seed
-    # frame, in either direction. Without a cap, a long stretch of real
-    # sustained motion that stays above `hand_wrist_release_deviation_deg`
-    # (e.g. gripping a strap near the shoulder for several seconds) gets
-    # entirely rejected the moment one bad frame anywhere in it seeds
-    # detection, confirmed on a real clip, an 80+ frame stretch reading a
-    # smooth, plausible 60-100 degrees throughout was thrown out this way.
-    # 10 frames (~0.33s at 30fps) is a first-pass value calibrated against
-    # one clip; revisit once more clips are available to check it against.
+    # Limits how far a confirmed-invalid wrist run can grow in either direction.
     hand_wrist_max_expansion_frames: int = 10
-
-    # A separate check from the deviation gate above: catches a HaMeR wrist
-    # estimate that flips to a different (wrong) orientation for an isolated
-    # frame or two while staying within a plausible magnitude relative to the
-    # elbow the whole time, invisible to the deviation gate, which only
-    # looks at the static magnitude, never at how fast it's changing. A real
-    # wrist cannot rotate a large fraction of a full turn within one frame.
-    # Calibrated against a real clip: genuine fast motion topped out around
-    # 40 degrees/frame (1200 degrees/sec at 30fps) even during active
-    # reaching, while flip instances read 100-175 degrees/frame (3000+
-    # degrees/sec), a clean gap between the two. In degrees/second (not
-    # degrees/frame) so the same value means the same physical speed
-    # regardless of a clip's fps. See
-    # hand_retarget.reject_wrist_velocity_spikes.
+    # Rejects isolated HaMeR orientation flips that remain angle-plausible.
     hand_wrist_max_velocity_deg_per_sec: float = 2400.0
 
-    # How much of a long invalid wrist stretch (real occlusion, or one
-    # rejected by the gates above) is left for straight-line interpolation
-    # before the rest gets held at the last known-good orientation instead,
-    # confirmed on a real clip, interpolating across a 40-90+ frame gap can
-    # visibly sweep through a large, physically-impossible-looking rotation.
-    # 15 frames (~0.5s at 30fps) is a first-pass value; revisit once more
-    # clips are available to check it against. See
-    # motion_smoothing.cap_long_gaps_with_hold.
+    # Long invalid wrist stretches hold after this brief recovery blend instead
+    # of sweeping through an uncertain large rotation.
     hand_wrist_max_bridge_frames: int = 15
 
-    # A third, independent wrist check: how far the hand's own pointing
-    # direction (wrist to middle-finger) may swing away from its rest-pose
-    # direction before a frame is rejected, catches a sustained
-    # anatomically-impossible pose that changes too slowly to trip the
-    # velocity check and reads a moderate enough blended magnitude to dodge
-    # the deviation check too. Deliberately measures swing only, never twist
-    # (rotation about the hand's own pointing direction), twist isn't a
-    # reliable signal here, since composing two legitimate swing-only
-    # rotations produces large apparent twist as a pure artifact of how
-    # compound 3D rotations compose, confirmed both synthetically and on real
-    # motion (a strap-grip clip read swing under 30 degrees the whole time
-    # while its blended magnitude spiked past 150 from twist alone). ~90-100
-    # degrees is roughly where a real wrist starts folding the hand back over
-    # the forearm; 95 is a first-pass value from one real clip, not a
-    # multi-clip calibration. See hand_retarget.reject_hand_swung_past_forearm.
+    # Measures hand swing from the forearm, deliberately not unreliable twist.
     hand_wrist_max_swing_deg: float = 95.0
-
-    # A fourth wrist check, genuinely different from the three above: real 3D
-    # geometry (does the hand's own reference point sit inside the forearm's
-    # fixed rest-pose segment) instead of any rotation angle, catches a hand
-    # folded back into the forearm's own space even when every rotation-based
-    # check reads within range. `hand_forearm_interior_max_t` is how far
-    # inside the segment (0 = elbow, 1 = wrist) still counts as "inside the
-    # forearm" rather than merely "near the wrist," which happens in plenty
-    # of normal poses; `hand_forearm_radius_m` additionally requires genuine
-    # proximity to the forearm's own axis, not just alignment along its
-    # length. Calibrated on a real clip: a confirmed hand-through-forearm
-    # stretch dropped to t=0.67-0.99 at 7-11cm from the axis, while 1900+
-    # other real frames (including a confirmed genuine extreme-looking grip)
-    # never dropped below ~1.1, comfortable margin either side of these
-    # defaults, but from one clip only. See hand_retarget.reject_hand_
-    # through_forearm.
+    # A geometry check for a hand folded into the forearm's own space.
     hand_forearm_interior_max_t: float = 0.95
     hand_forearm_radius_m: float = 0.10
 
@@ -705,6 +591,11 @@ class RunRecord:
     scene: SceneInfo = field(default_factory=SceneInfo)
     stages: dict[str, StageRecord] = field(default_factory=dict)
     outputs: RunOutputs = field(default_factory=RunOutputs)
+    # Resolved temporal-filter settings. They are intentionally omitted from
+    # progress.json; only explicit pins below are persisted there.
+    fine_tuning: FineTuningOptions = field(default_factory=FineTuningOptions, repr=False)
+    # Explicitly pinned fine-tuning values. They override the code defaults.
+    fine_tuning_overrides: dict[str, int | float] = field(default_factory=dict)
     schema_version: int = SCHEMA_VERSION
     # Unix timestamps (seconds). created_at is stamped once, by create_run();
     # updated_at is refreshed on every save() below, regardless of call site,
@@ -722,10 +613,28 @@ class RunRecord:
 
     def save(self) -> None:
         self.updated_at = time.time()
+        unknown_overrides = set(self.fine_tuning_overrides) - {f.name for f in fields(FineTuningOptions)}
+        if unknown_overrides:
+            raise ValueError(f"Unknown fine-tuning override(s): {sorted(unknown_overrides)}")
+        for name, value in self.fine_tuning_overrides.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ValueError(f"Fine-tuning override {name!r} must be an int or float")
+            setattr(self.fine_tuning, name, value)
         data = asdict(self)
+        # `fine_tuning` is the resolved runtime object (code defaults plus
+        # explicit pins). Do not serialize it: only the pins belong in a run.
+        data.pop(FIELD_FINE_TUNING)
         tmp_path = self.path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp_path.replace(self.path)  # atomic rename on the same filesystem
+        for attempt in range(PROGRESS_REPLACE_MAX_ATTEMPTS):
+            try:
+                # Atomic rename on the same filesystem.
+                tmp_path.replace(self.path)
+                break
+            except PermissionError:
+                if attempt == PROGRESS_REPLACE_MAX_ATTEMPTS - 1:
+                    raise
+                time.sleep(PROGRESS_REPLACE_INITIAL_RETRY_SECONDS * (2 ** attempt))
 
     @classmethod
     def load(cls, progress_dir: str | Path) -> RunRecord:
@@ -733,12 +642,34 @@ class RunRecord:
         # UTF-8 unchanged. Some Windows tools save JSON with a BOM, whereas
         # pipeline-created and older records have none.
         data = json.loads((Path(progress_dir) / PROGRESS_JSON_NAME).read_text(encoding="utf-8-sig"))
+        input_data = dict(data[FIELD_INPUT])
+        # Older records stored smoothing fields under `input`; do not let those
+        # stale defaults pin a clip to an old profile.
+        for f in fields(FineTuningOptions):
+            input_data.pop(f.name, None)
+        raw_fine_tuning_overrides = data.get(FIELD_FINE_TUNING_OVERRIDES)
+        if raw_fine_tuning_overrides is None:
+            fine_tuning_overrides = {}
+        elif isinstance(raw_fine_tuning_overrides, dict):
+            fine_tuning_overrides = dict(raw_fine_tuning_overrides)
+        else:
+            raise ValueError("fine_tuning_overrides must be an object")
+        unknown_overrides = set(fine_tuning_overrides) - {f.name for f in fields(FineTuningOptions)}
+        if unknown_overrides:
+            raise ValueError(f"Unknown fine-tuning override(s): {sorted(unknown_overrides)}")
+        if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in fine_tuning_overrides.values()):
+            raise ValueError("fine_tuning_overrides values must be ints or floats")
+        data[FIELD_FINE_TUNING_OVERRIDES] = fine_tuning_overrides
         data[FIELD_INPUT] = RunInput(
             **{
-                **data[FIELD_INPUT],
-                FIELD_OBJECT_SHAPE_HINT: ObjectShapeHint(data[FIELD_INPUT][FIELD_OBJECT_SHAPE_HINT]),
+                **input_data,
+                **(
+                    {FIELD_OBJECT_SHAPE_HINT: ObjectShapeHint(input_data[FIELD_OBJECT_SHAPE_HINT])}
+                    if FIELD_OBJECT_SHAPE_HINT in input_data else {}
+                ),
             }
         )
+        data[FIELD_FINE_TUNING] = FineTuningOptions(**fine_tuning_overrides)
         data[FIELD_SCENE] = SceneInfo(**data[FIELD_SCENE])
         data[FIELD_STAGES] = {
             name: StageRecord(**{**rec, FIELD_STATUS: StageStatus(rec[FIELD_STATUS])})

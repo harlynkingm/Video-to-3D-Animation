@@ -91,8 +91,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # Smooth both coordinate frames (incam feeds stage 5/6, the real export,
     # and this stage's own Blender preview; global is otherwise vestigial but
     # still smoothed the same way for consistency) before anything reads them.
-    window = runRecord.input.body_smoothing_window
-    cutoff = runRecord.input.body_translation_cutoff
+    window = runRecord.fine_tuning.body_smoothing_window
+    cutoff = runRecord.fine_tuning.body_translation_cutoff
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
     _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_GLOBAL], window, cutoff)
 

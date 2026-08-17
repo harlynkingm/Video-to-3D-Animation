@@ -182,9 +182,9 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # correct place for it: `fit_clip`'s own temporal_weight penalizes the
     # *fitted parameters'* deltas, which structurally can't tell a real fast
     # transient (a blink) from single-frame detection noise, see
-    # `RunInput.face_smoothing_window`'s own comment.
+    # `FineTuningOptions.face_smoothing_window`'s own comment.
     smoothed_landmarks_51 = smooth_position_sequence(
-        params["flame51"], runRecord.input.face_smoothing_window, valid=params["mp_valid"],
+        params["flame51"], runRecord.fine_tuning.face_smoothing_window, valid=params["mp_valid"],
     )
 
     head_rotmat, head_confidence = _body_head_rotation(runRecord)
@@ -242,7 +242,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     if runRecord.input.render_face_preview:
         outputs.update(write_flame_preview(motion, face_dir, device=device))
         outputs.update(write_landmark_preview(
-            params["mp_landmarks"], params["mp_valid"], runRecord.input.face_smoothing_window, face_dir,
+            params["mp_landmarks"], params["mp_valid"], runRecord.fine_tuning.face_smoothing_window, face_dir,
         ))
         outputs.update(write_arkit_preview(arkit_weights, head_eye_euler, face_dir))
         # Render HTML comparison to ground-truth LiveLink CSV, if one exists in the folder

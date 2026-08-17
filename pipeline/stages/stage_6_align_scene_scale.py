@@ -397,7 +397,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         K_native = np.array(runRecord.scene.intrinsics_K)
         object_shape = _aggregate_object_shape_proportions(
             object_shape, scale[0], K_native, native_hw, frame_paths, stage_1_outputs,
-            runRecord.input.object_shape_candidate_frames,
+            runRecord.fine_tuning.object_shape_candidate_frames,
         )
         object_shape = correct_center_depth(object_shape)
 
