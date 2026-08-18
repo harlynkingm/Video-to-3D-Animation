@@ -99,6 +99,9 @@ class ConsoleLog(QPlainTextEdit):
             self.setTextCursor(cursor)
             scrollbar.setValue(scrollbar.maximum())
 
+    def clear(self) -> None:
+        self.setPlainText("")
+
 
 def build_status_label() -> QLabel:
     label = QLabel()

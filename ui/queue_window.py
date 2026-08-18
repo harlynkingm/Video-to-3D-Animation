@@ -58,7 +58,7 @@ UI_CONSOLE_LOG = "Console"
 _STATUS_PREFIX = {
     QueueItemStatus.COMPLETE: ("✓", QColor("#238636")),
     QueueItemStatus.FAILED: ("✗", QColor("#D9534F")),
-    QueueItemStatus.RUNNING: ("▶", QColor("#999999")),
+    QueueItemStatus.RUNNING: ("▶︎", QColor("#999999")),
     QueueItemStatus.PENDING: ("", None),
 }
 _COMPLETE_COLOR = QColor("#999999")

@@ -67,6 +67,8 @@ UI_FINGER_MOTION = "Finger motion:"
 UI_ADVANCED_OPTIONS = "Advanced options"
 UI_STAGE_RANGE = "Stage range:"
 UI_CONSOLE_LOG = "Console"
+UI_CONSOLE_CLEAR = "–"
+UI_CONSOLE_CLEAR_TOOLTIP = "Clear console"
 UI_RUN_BUTTON = "Run"
 UI_STOP_BUTTON = "Stop"
 UI_ADD_TO_QUEUE_BUTTON = "Add to Queue"
@@ -109,7 +111,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.progress_bar)
         progress_console_spacer = build_vertical_spacer()
         layout.addWidget(progress_console_spacer)
-        layout.addWidget(QLabel(UI_CONSOLE_LOG))
+
+        console_title_row = QWidget()
+        console_title_row_layout = QHBoxLayout(console_title_row)
+        console_title_row_layout.setContentsMargins(0, 0, 0, 0)
+        console_title_row_layout.addWidget(QLabel(UI_CONSOLE_LOG))
+        console_title_row_layout.addStretch(1)
+        self.console_clear_button = QLabel(UI_CONSOLE_CLEAR)
+        self.console_clear_button.mouseReleaseEvent = lambda _: self.console_log.clear()
+        self.console_clear_button.setStyleSheet("QLabel { color: #999999; }")
+        self.console_clear_button.setToolTip(UI_CONSOLE_CLEAR_TOOLTIP)
+        console_title_row_layout.addWidget(self.console_clear_button)
+        layout.addWidget(console_title_row)
+
         layout.addWidget(self.console_log, 1)
         self.setCentralWidget(central)
         self.status_indicator = RunStatusIndicator(self.status_label, None, self.progress_bar, progress_console_spacer)
