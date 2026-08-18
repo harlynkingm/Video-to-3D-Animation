@@ -179,6 +179,11 @@ def make_run_input(**overrides) -> RunInput:
     return RunInput(**defaults)
 
 
+def skip_without_cuda() -> None:
+    if not torch.cuda.is_available():
+        pytest.skip("needs a CUDA GPU")
+
+
 @pytest.fixture(scope="session")
 def runRecord(tmp_path_factory) -> RunRecord:
     run_dir = tmp_path_factory.mktemp("pipeline_test_run")
@@ -204,8 +209,7 @@ def stage_0_result(runRecord: RunRecord) -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def stage_1_result(runRecord: RunRecord, stage_0_result: dict[str, str]) -> dict[str, str]:
-    if not torch.cuda.is_available():
-        pytest.skip("needs a CUDA GPU")
+    skip_without_cuda()
     if not SAM31_CHECKPOINT.exists():
         pytest.skip("needs the SAM 3.1 checkpoint (see README's Setup section)")
 
@@ -214,8 +218,7 @@ def stage_1_result(runRecord: RunRecord, stage_0_result: dict[str, str]) -> dict
 
 @pytest.fixture(scope="session")
 def stage_2_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
-    if not torch.cuda.is_available():
-        pytest.skip("needs a CUDA GPU")
+    skip_without_cuda()
     missing = [p.name for p in GVHMR_CHECKPOINTS if not p.exists()]
     if missing:
         pytest.skip(f"needs the GVHMR checkpoints (missing: {missing}; see README's Setup section)")
@@ -225,9 +228,7 @@ def stage_2_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict
 
 @pytest.fixture(scope="session")
 def stage_3_result(runRecord: RunRecord, stage_1_result: dict[str, str]) -> dict[str, str]:
-    if not torch.cuda.is_available():
-        pytest.skip("needs a CUDA GPU")
-
+    skip_without_cuda()
     return _run_heavy_stage(runRecord, StageName.STAGE_3_ESTIMATE_DEPTH)
 
 
@@ -240,8 +241,7 @@ def stage_4_result(
     # biomechanical plausibility before its own smoothing runs, so it needs the
     # body motion, and (via SmplxSkeleton) the SMPL-X model file for the
     # kinematic tree.
-    if not torch.cuda.is_available():
-        pytest.skip("needs a CUDA GPU")
+    skip_without_cuda()
     missing = [p.name for p in (HAMER_CHECKPOINT, VITPOSE_CHECKPOINT) if not p.exists()]
     if missing:
         pytest.skip(f"needs the HaMeR + ViTPose checkpoints (missing: {missing}; see README's Setup section)")
@@ -330,8 +330,7 @@ def stage_9_result(
     # exist on disk, not just frames + the human mask. Loads three heavy
     # model stacks of its own (DECA, MICA, MediaPipe's FaceLandmarker), so
     # this runs via `_run_heavy_stage` like stages 1-4, not in-process.
-    if not torch.cuda.is_available():
-        pytest.skip("needs a CUDA GPU")
+    skip_without_cuda()
     missing = [
         p.name for p in (DECA_CHECKPOINT, MICA_CHECKPOINT, FACE_LANDMARKER_CHECKPOINT, VITPOSE_CHECKPOINT)
         if not p.exists()

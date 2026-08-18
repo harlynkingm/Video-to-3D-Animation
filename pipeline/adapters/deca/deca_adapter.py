@@ -13,6 +13,7 @@ import numpy as np
 import torch
 from safetensors.torch import load_file
 
+from pipeline.helpers.torch_helpers import empty_cuda_cache, sys_torch_device
 from pipeline.progress_tracker import StageName
 
 from ...helpers.progress_reporter import frame_progress
@@ -38,7 +39,7 @@ KEY_VALID = "deca_valid"
 
 class DecaAdapter:
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or sys_torch_device()
         self.dtype = dtype
         self._encoder: DecaEncoder | None = None
 
@@ -104,4 +105,4 @@ class DecaAdapter:
     def unload(self) -> None:
         del self._encoder
         self._encoder = None
-        torch.cuda.empty_cache()
+        empty_cuda_cache(self.device)

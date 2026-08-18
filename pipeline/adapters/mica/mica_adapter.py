@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from safetensors.torch import load_file
 
+from pipeline.helpers.torch_helpers import empty_cuda_cache, sys_torch_device
 from pipeline.progress_tracker import StageName
 
 from ...helpers.progress_reporter import frame_progress
@@ -41,7 +42,7 @@ KEY_VALID = "mica_valid"
 
 class MicaAdapter:
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or sys_torch_device()
         self.dtype = dtype
         self._backbone: IResNet100 | None = None
         self._regressor: MicaRegressor | None = None
@@ -122,4 +123,4 @@ class MicaAdapter:
     def unload(self) -> None:
         del self._backbone, self._regressor
         self._backbone = self._regressor = None
-        torch.cuda.empty_cache()
+        empty_cuda_cache(self.device)

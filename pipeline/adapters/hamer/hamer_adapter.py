@@ -29,6 +29,7 @@ import torch
 from safetensors import safe_open
 from scipy.ndimage import maximum_filter1d, minimum_filter1d
 
+from pipeline.helpers.torch_helpers import empty_cuda_cache, sys_torch_device
 from pipeline.progress_tracker import StageName
 
 from ...helpers.progress_reporter import frame_progress
@@ -184,7 +185,7 @@ def _fliplr_axis_angle(aa: np.ndarray) -> np.ndarray:
 
 class HamerAdapter:
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or sys_torch_device()
         self.dtype = dtype
         self._backbone: VitHugeBackbone | None = None
         self._head: MANOTransformerDecoderHead | None = None
@@ -303,4 +304,4 @@ class HamerAdapter:
     def unload(self) -> None:
         del self._backbone, self._head, self._vitpose
         self._backbone = self._head = self._vitpose = None
-        torch.cuda.empty_cache()
+        empty_cuda_cache(self.device)

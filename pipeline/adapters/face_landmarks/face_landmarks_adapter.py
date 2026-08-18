@@ -31,6 +31,7 @@ import torch
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
 
+from pipeline.helpers.torch_helpers import sys_torch_device
 from pipeline.progress_tracker import StageName
 
 from ...helpers.progress_reporter import frame_progress
@@ -76,7 +77,7 @@ def _empty_output(n: int) -> dict[str, np.ndarray]:
 class FaceLandmarksAdapter:
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
         # Retained for API consistency with the other Stage 9 adapters.
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or sys_torch_device()
         self.dtype = dtype
         self._landmarker: mp_vision.FaceLandmarker | None = None
 

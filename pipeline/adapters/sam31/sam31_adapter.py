@@ -32,6 +32,7 @@ import cv2
 import torch
 from safetensors import safe_open
 
+from pipeline.helpers.torch_helpers import empty_cuda_cache, sys_torch_device
 from pipeline.progress_tracker import StageName
 
 from ...algorithms.contact_detection import contiguous_true_runs
@@ -224,7 +225,7 @@ class Sam31Adapter:
     """
 
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or sys_torch_device()
         self.dtype = dtype
         self._loaded = False
 
@@ -253,8 +254,7 @@ class Sam31Adapter:
         if not self._loaded:
             return
         del self.vision_backbone, self.text_tower, self.detector, self.tracker, self.tokenizer
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
+        empty_cuda_cache(self.device)
         self._loaded = False
 
     def _track_one_prompt(

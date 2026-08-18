@@ -31,6 +31,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from pipeline.helpers.torch_helpers import sys_torch_device
+
 from ..adapters.deca.deca_adapter import DecaAdapter, KEY_EXP, KEY_POSE, KEY_SHAPE as DECA_KEY_SHAPE, KEY_VALID as DECA_KEY_VALID
 from ..adapters.face_prepass_adapter import FacePrepassAdapter
 from ..adapters.face_landmarks.face_landmarks_adapter import FaceLandmarksWorker, KEY_BLENDSHAPES as MP_KEY_BLENDSHAPES, KEY_LANDMARKS, KEY_VALID as MP_KEY_VALID
@@ -178,7 +180,7 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         weights_only=False,
     )
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = sys_torch_device()
     params = _run_landmark_adapters(frame_paths, human_masks, device)
 
     # Smoothing the raw landmarks here (before the fit ever sees them) is the

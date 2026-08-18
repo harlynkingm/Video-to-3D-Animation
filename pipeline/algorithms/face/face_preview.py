@@ -163,10 +163,11 @@ def write_flame_preview(motion: dict, out_dir: Path, device: torch.device | None
     own outputs dict.
     """
     import torch
+    from pipeline.helpers.torch_helpers import sys_torch_device
 
     from .face_landmark_fit import KEY_BETAS, KEY_EXPRESSION, KEY_JAW_POSE, _build_flame_model
 
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or sys_torch_device()
     n = motion[KEY_EXPRESSION].shape[0]
     model = _build_flame_model(device, batch_size=n)
 

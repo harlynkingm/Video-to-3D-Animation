@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from pipeline.helpers.torch_helpers import empty_cuda_cache, sys_torch_device
+
 # Both must be set before `depth_anything_3` (imported below) pulls in its own
 # transitive dependencies, or they have no effect. `setdefault` so a caller
 # that's deliberately set either of these keeps their own value.
@@ -29,7 +31,6 @@ os.environ.setdefault("DA3_LOG_LEVEL", "ERROR")
 os.environ.setdefault("XFORMERS_FORCE_DISABLE_TRITON", "1")
 
 import numpy as np
-import torch
 from depth_anything_3.api import DepthAnything3
 from huggingface_hub.errors import LocalEntryNotFoundError
 
@@ -68,7 +69,8 @@ class DepthAnything3Adapter:
             )
         except LocalEntryNotFoundError:
             self._model = DepthAnything3.from_pretrained(MODEL_NAME, cache_dir=CHECKPOINT_CACHE_DIR)
-        self._model = self._model.to(device="cuda").eval()
+        device_type = sys_torch_device().type
+        self._model = self._model.to(device=device_type).eval()
 
     def infer(self, frame_path: str, focal_length_px: float) -> dict[str, np.ndarray]:
         # DA3METRIC-LARGE's forward pass never populates "depth_conf", confirmed
@@ -88,4 +90,4 @@ class DepthAnything3Adapter:
     def unload(self) -> None:
         del self._model
         self._model = None
-        torch.cuda.empty_cache()
+        empty_cuda_cache()
