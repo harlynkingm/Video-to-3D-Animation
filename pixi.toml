@@ -24,7 +24,7 @@ version = "0.1.0"
 # every test genuinely passed. The wrapper isolates that crash to a child
 # process and reports the real result from its junit report instead.
 [tasks.test]
-cmd = "pixi run -e main python -m pytest tests/; pixi run -e export python scripts/run_export_tests.py; pixi run -e main python -m pytest ui/tests"
+cmd = "pixi run -e main python -m pytest tests/; pixi run -e main python -m pytest ui/tests; pixi run -e export python scripts/run_export_tests.py"
 
 # Runs the main-environment unit suite with branch coverage and emits both a
 # terminal summary (including missing lines) and a browsable HTML report.
