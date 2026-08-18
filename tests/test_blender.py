@@ -520,7 +520,10 @@ def test_orient_bones_toward_children_does_not_move_the_skinned_mesh():
     neck_pb.keyframe_insert(data_path="rotation_quaternion", frame=5)
 
     mesh_before = {}
-    for frame in (1, 5):
+    # Include interpolated frames too. The alignment pass rewrites the pose
+    # action in bulk, so preserving only the source keyframes would miss a
+    # regression in the generated Bezier handles between them.
+    for frame in range(1, 6):
         scene.frame_set(frame)
         mesh_before[frame] = _evaluated_mesh_world_positions(bpy, mesh_obj)
 
@@ -539,7 +542,7 @@ def test_orient_bones_toward_children_does_not_move_the_skinned_mesh():
     assert tuple(arm_data.bones["fingertip"].tail_local) == pytest.approx((0.7 + fingertip_length, 0.0, 1.0), abs=1e-5)
 
     # The property that actually matters: the mesh itself hasn't moved.
-    for frame in (1, 5):
+    for frame in range(1, 6):
         scene.frame_set(frame)
         after = _evaluated_mesh_world_positions(bpy, mesh_obj)
         for name, before_pos, after_pos in zip(bone_names, mesh_before[frame], after):

@@ -150,15 +150,15 @@ def _orient_bones_toward_children(bpy: types.ModuleType, armature: bpy.types.Obj
     # (that's the whole point of retailing); pose alone preserving its old
     # value is the wrong target, see this function's own docstring for why
     # both are needed to get the actual invariant (the mesh's own deform
-    # matrix) right. Unanimated bones only need one pose sample (their pose
-    # is constant by definition, no fcurve means matrix_basis never changes).
+    # matrix) right. Capture static bones at every frame too: their local
+    # basis is constant, but an animated descendant's algebraic local-pose
+    # conversion needs that parent's evaluated armature-space matrix.
     sample_frames = keyframed_frames or [int(scene.frame_current)]
     world_before: dict[str, dict[int, Matrix]] = {name: {} for name in order}
     for frame in sample_frames:
         scene.frame_set(frame)
         for name in order:
-            if name in animated or frame == sample_frames[0]:
-                world_before[name][frame] = armature.pose.bones[name].matrix.copy()
+            world_before[name][frame] = armature.pose.bones[name].matrix.copy()
     rest_before = {name: armature.data.bones[name].matrix_local.copy() for name in order}
 
     bpy.context.view_layer.objects.active = armature
@@ -215,25 +215,132 @@ def _orient_bones_toward_children(bpy: types.ModuleType, armature: bpy.types.Obj
     # matrix underneath it, since `old_rest^-1 @ new_rest` isn't identity.
     rest_delta = {name: rest_before[name].inverted() @ armature.data.bones[name].matrix_local for name in order}
 
-    # The dominant cost of this whole function: one `scene.frame_set` (a full
-    # dependency-graph re-evaluation) per (animated bone, keyframed frame)
-    # pair, for a long clip with a full-body rig this can run into the tens
-    # of thousands of evaluations and take minutes with nothing else printed
-    # on the way, so this loop gets its own progress bar (reusing the same
-    # helper the per-frame pipeline stages use, just counting bones instead).
-    for name in frame_progress(order, total=len(order), label=StageName.STAGE_10B_ALIGN_BONES.label, unit="bone"):
+    # Collect the corrected local channels here, then replace each channel's
+    # keyframe array in one bulk `foreach_set` below. This allows only
+    # one evaluation per source frame, instead of multiple passes.
+    channel_samples: dict[str, tuple[str, np.ndarray, np.ndarray]] = {}
+    for name in animated:
         pose_bone = armature.pose.bones[name]
         rotation_path = _rotation_keyframe_data_path(pose_bone)
-        delta = rest_delta[name]
-        if name in animated:
-            for frame in keyframed_frames:
-                scene.frame_set(frame)
-                pose_bone.matrix = world_before[name][frame] @ delta
-                pose_bone.keyframe_insert(data_path=rotation_path, frame=frame)
-                pose_bone.keyframe_insert(data_path="location", frame=frame)
+        channel_samples[name] = (
+            rotation_path,
+            np.empty((len(keyframed_frames), len(getattr(pose_bone, rotation_path))), dtype=np.float64),
+            np.empty((len(keyframed_frames), 3), dtype=np.float64),
+        )
+
+    def set_corrected_basis(name: str, desired_poses: dict[str, Matrix]) -> None:
+        """Set a bone's local pose from its desired armature-space pose.
+
+        Blender's regular pose transform is
+        `P = P_parent @ R_parent^-1 @ R @ matrix_basis`; rearranging it
+        lets this pass calculate every local transform without a dependency-
+        graph update between a parent and its children. SMPL-X has ordinary
+        unconnected bones, the scope this exporter supports.
+        """
+        pose_bone = armature.pose.bones[name]
+        rest = armature.data.bones[name].matrix_local
+        parent = pose_bone.parent
+        if parent is None:
+            pose_bone.matrix_basis = rest.inverted() @ desired_poses[name]
         else:
-            scene.frame_set(sample_frames[0])
-            pose_bone.matrix = world_before[name][sample_frames[0]] @ delta
+            parent_rest = armature.data.bones[parent.name].matrix_local
+            pose_bone.matrix_basis = (
+                rest.inverted()
+                @ parent_rest
+                @ desired_poses[parent.name].inverted()
+                @ desired_poses[name]
+            )
+
+    for frame_index, frame in enumerate(frame_progress(
+        keyframed_frames, total=len(keyframed_frames), label=StageName.STAGE_10B_ALIGN_BONES.label,
+    )):
+        scene.frame_set(frame)
+        desired_poses = {name: world_before[name][frame] @ rest_delta[name] for name in order}
+        for name in order:
+            if name not in animated:
+                continue
+            pose_bone = armature.pose.bones[name]
+            set_corrected_basis(name, desired_poses)
+            rotation_path, rotations, locations = channel_samples[name]
+            rotations[frame_index] = getattr(pose_bone, rotation_path)
+            locations[frame_index] = pose_bone.location
+
+    # Static bones still need their one compensation, but no animation data.
+    # Process them parent-first as well: a static child can sit under a
+    # corrected animated parent.
+    scene.frame_set(sample_frames[0])
+    static_desired_poses = {
+        name: world_before[name][sample_frames[0]] @ rest_delta[name]
+        for name in order
+    }
+    for name in order:
+        if name not in animated:
+            set_corrected_basis(name, static_desired_poses)
+
+    if action is not None:
+        frame_coordinates = np.asarray(keyframed_frames, dtype=np.float64)
+
+        # Blender 4.4+ stores F-curves in a layered Action channelbag rather
+        # than on Action.fcurves itself. The imported action already has an
+        # animated pose channel, so its owning channelbag is guaranteed to
+        # exist; use that same bag when the former keyframe_insert behavior
+        # needs to create a missing location/rotation component curve.
+        channelbag = None
+        if not hasattr(action, "fcurves"):
+            for layer in action.layers:
+                for strip in layer.strips:
+                    for candidate in strip.channelbags:
+                        if any(candidate.fcurves):
+                            channelbag = candidate
+                            break
+                    if channelbag is not None:
+                        break
+                if channelbag is not None:
+                    break
+
+        def replace_channel(data_path: str, values: np.ndarray, bone_name: str) -> None:
+            """Replace an animated vector channel with the collected samples.
+
+            The importer's animation is densely keyed, and the former
+            `keyframe_insert` pass deliberately wrote every animated channel
+            at every frame in this same global keyframe set. Rebuilding the
+            F-curves therefore keeps that contract while avoiding per-key API
+            calls. F-curve `update()` regenerates automatic Bezier handles
+            after the bulk coordinates are installed.
+            """
+            for component in range(values.shape[1]):
+                fcurve = next(
+                    (
+                        candidate for candidate in _iter_action_fcurves(action)
+                        if candidate.data_path == data_path and candidate.array_index == component
+                    ),
+                    None,
+                )
+                if fcurve is None:
+                    if hasattr(action, "fcurves"):
+                        fcurve = action.fcurves.new(data_path, index=component, action_group=bone_name)
+                    else:
+                        assert channelbag is not None
+                        fcurve = channelbag.fcurves.new(data_path, index=component, group_name=bone_name)
+                keyframes = fcurve.keyframe_points
+                interpolation = keyframes[0].interpolation if keyframes else "BEZIER"
+                keyframes.clear()
+                keyframes.add(len(frame_coordinates))
+                coordinates = np.empty(len(frame_coordinates) * 2, dtype=np.float64)
+                coordinates[0::2] = frame_coordinates
+                coordinates[1::2] = values[:, component]
+                keyframes.foreach_set("co", coordinates)
+                for keyframe in keyframes:
+                    keyframe.interpolation = interpolation
+                fcurve.update()
+
+        for name in order:
+            if name not in animated:
+                continue
+            rotation_path, rotations, locations = channel_samples[name]
+            bone_path = f'pose.bones["{name}"]'
+            replace_channel(f"{bone_path}.{rotation_path}", rotations, name)
+            replace_channel(f"{bone_path}.location", locations, name)
 
 
 def _delete_unreliable_root_keyframes(
