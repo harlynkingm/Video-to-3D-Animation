@@ -14,7 +14,6 @@ import pytest
 from conftest import FOCAL_LENGTH_MM, SENSOR_WIDTH_MM, TEST_VIDEO_FRAME_COUNT, TEST_VIDEO_FPS, TEST_VIDEO_HEIGHT, TEST_VIDEO_WIDTH, make_run_input
 from pipeline.create_run import create_run
 from pipeline.stages import stage_0_ingest_video
-from pipeline.stages.stage_0_ingest_video import _resolve_rotation
 
 
 def test_extracts_every_frame_as_a_valid_jpeg(stage_0_result):
@@ -56,6 +55,46 @@ def test_intrinsics_k_bypasses_the_computed_matrix_when_given(tmp_path):
     stage_0_ingest_video.run(runRecord)
 
     assert runRecord.scene.intrinsics_K == raw_k
+
+
+def test_metadata_rotated_video_is_portrait_and_preserves_sensor_width_for_intrinsics(tmp_path):
+    """Runs Stage 0 against a real 64x32 MP4 with a 90-degree display matrix.
+
+    With OpenCV auto-orientation disabled, the fixture exposes its 64x32
+    encoded frame. Stage 0 must decode the same content exactly once into its
+    32x64 portrait display orientation, while retaining the 64px sensor width
+    for the focal-length conversion.
+    """
+    portrait_clip = Path(__file__).parent / "assets" / "portrait_clip.mp4"
+    raw_capture = cv2.VideoCapture(str(portrait_clip))
+    raw_capture.set(cv2.CAP_PROP_ORIENTATION_AUTO, 0)
+    raw_width = int(raw_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+    raw_height = int(raw_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    success, raw_frame = raw_capture.read()
+    raw_capture.release()
+    assert success
+    assert (raw_width, raw_height) == (64, 32)
+
+    run_input = make_run_input(video_path=str(portrait_clip))
+    runRecord = create_run(tmp_path / "run", run_input)
+
+    outputs = stage_0_ingest_video.run(runRecord)
+
+    assert (runRecord.scene.width, runRecord.scene.height) == (32, 64)
+    expected_focal_px = FOCAL_LENGTH_MM * (64 / SENSOR_WIDTH_MM)
+    assert runRecord.scene.intrinsics_K[0][0] == pytest.approx(expected_focal_px)
+    assert runRecord.scene.intrinsics_K[1][1] == pytest.approx(expected_focal_px)
+    assert runRecord.scene.intrinsics_K[0][2] == pytest.approx(32 / 2)
+    assert runRecord.scene.intrinsics_K[1][2] == pytest.approx(64 / 2)
+
+    written = cv2.imread(str(Path(outputs["frames_dir"]) / "000000.jpg"))
+    expected = cv2.rotate(raw_frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    assert written.shape == expected.shape
+    # The frame is written as JPEG at quality 95. Check each asymmetric color
+    # region well away from its boundary so JPEG chroma bleed cannot mask an
+    # incorrect 90-degree transform.
+    for x, y in ((8, 8), (24, 8), (16, 48)):
+        assert np.abs(written[y, x].astype(np.int16) - expected[y, x].astype(np.int16)).max() <= 8
 
 
 def _write_solid_frame(path: Path, value: int, size: tuple[int, int] = (12, 16)) -> None:
@@ -191,8 +230,7 @@ def test_image_folder_raises_when_empty(tmp_path):
 
 
 def test_image_folder_intrinsics_use_output_width_as_the_sensor_width(tmp_path):
-    """No separate pre-rotation sensor dimension exists for a plain image
-    folder (unlike a phone video, see _resolve_rotation), raw_width and
+    """No separate pre-rotation sensor dimension exists for a plain image folder, raw_width and
     width are the same value, so the focal length in px should come out as
     a simple focal_length_mm * (width / sensor_width_mm), no rotation-aware
     adjustment involved."""
@@ -210,30 +248,3 @@ def test_image_folder_intrinsics_use_output_width_as_the_sensor_width(tmp_path):
     assert K[0][0] == pytest.approx(expected_focal_px)
     assert K[0][2] == pytest.approx(16 / 2)
     assert K[1][2] == pytest.approx(12 / 2)
-
-
-def test_resolve_rotation_is_a_noop_for_unrotated_video():
-    rotate_code, width, height = _resolve_rotation(0.0, raw_width=1920, raw_height=1080)
-    assert rotate_code is None
-    assert (width, height) == (1920, 1080)
-
-
-def test_resolve_rotation_90_degrees():
-    """Confirmed against a real vertical phone clip by visual inspection:
-    CAP_PROP_ORIENTATION_META == 90 requires ROTATE_90_CLOCKWISE to produce a
-    correctly upright frame, not the other direction."""
-    rotate_code, width, height = _resolve_rotation(90.0, raw_width=3840, raw_height=2160)
-    assert rotate_code == cv2.ROTATE_90_CLOCKWISE
-    assert (width, height) == (2160, 3840)
-
-
-def test_resolve_rotation_270_degrees():
-    rotate_code, width, height = _resolve_rotation(270.0, raw_width=3840, raw_height=2160)
-    assert rotate_code == cv2.ROTATE_90_COUNTERCLOCKWISE
-    assert (width, height) == (2160, 3840)
-
-
-def test_resolve_rotation_180_degrees_keeps_dimensions():
-    rotate_code, width, height = _resolve_rotation(180.0, raw_width=1920, raw_height=1080)
-    assert rotate_code == cv2.ROTATE_180
-    assert (width, height) == (1920, 1080)

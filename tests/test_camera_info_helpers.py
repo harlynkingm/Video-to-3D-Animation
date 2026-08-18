@@ -10,9 +10,9 @@ from pipeline.helpers.camera_info_helpers import compute_intrinsics_matrix
 def test_focal_length_uses_sensor_width_px_not_image_width_px():
     """The regression case this split exists for: a rotated frame's own
     image_width_px is NOT the same axis sensor_width_mm was measured against
-    (see stage_0_ingest_video.py's rotation handling), e.g. a 3840x2160
-    sensor rotated 90 degrees produces a 2160x3840 output frame, but the
-    focal length ratio must still use the sensor's real 3840px width."""
+    e.g. display-orientation metadata turns a 3840x2160 sensor frame into a
+    2160x3840 decoded frame, but the focal length ratio must still use the
+    sensor's real 3840px width."""
     K = compute_intrinsics_matrix(
         focal_length_mm=35.0, sensor_width_mm=36.0,
         sensor_width_px=3840, image_width_px=2160, image_height_px=3840,
