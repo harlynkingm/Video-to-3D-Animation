@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from pipeline.adapters.face_landmarks.face_landmarks_preprocess import crop_for_landmarker, landmarks_to_full_frame
+from pipeline.adapters.face_landmarks.face_landmarks_adapter import FaceLandmarksWorker
 from pipeline.adapters.face_landmarks.mp2dlib import dlib68_to_arcface5, dlib68_to_flame51, mediapipe_to_dlib68
 
 FACE_LANDMARKER_CHECKPOINT = Path(__file__).resolve().parent.parent / "checkpoints" / "face_landmarker.task"
@@ -92,3 +93,22 @@ def test_face_landmarker_checkpoint():
     image = np.random.randint(0, 256, size=(256, 256, 3), dtype=np.uint8)
     result = landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=image))
     assert isinstance(result.face_landmarks, list)  # no crash; random noise legitimately has 0 faces
+
+
+def test_face_landmarker_worker_owns_real_task_lifecycle():
+    """The combined Stage 9 phase creates and uses the task in one thread."""
+    if not FACE_LANDMARKER_CHECKPOINT.exists():
+        pytest.skip("needs the MediaPipe face_landmarker.task checkpoint (see README's Setup section)")
+
+    worker = FaceLandmarksWorker(1)
+    worker.start()
+    worker.submit(
+        [0], [np.zeros((256, 256, 3), dtype=np.uint8)], [np.array([32, 32, 224, 224], dtype=np.float32)],
+    )
+    out = worker.finish()
+
+    assert out["mp_landmarks"].shape == (1, 478, 3)
+    assert out["mp_blendshapes"].shape == (1, 52)
+    # A blank image may legitimately have no detection; this test exercises
+    # the task's creation, image-mode `detect`, ordered result write, and close.
+    assert out["mp_valid"].shape == (1,)

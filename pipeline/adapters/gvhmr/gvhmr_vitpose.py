@@ -174,3 +174,32 @@ def estimate_keypoints(
     preds[0] = _transform_preds(preds[0], np.array([cx, cy], dtype=np.float32), scale)
 
     return np.concatenate([preds[0], maxvals[0]], axis=-1)  # (17, 3)
+
+
+@torch.inference_mode()
+def estimate_keypoints_batch(
+    model: GVHMRViTPoseModel, frames_rgb: list[np.ndarray], bboxes_xywh: list[tuple[int, int, int, int]],
+    device: torch.device, dtype: torch.dtype,
+) -> np.ndarray:
+    """Batched equivalent of :func:`estimate_keypoints`.
+
+    Cropping and UDP/DARK decoding are deliberately unchanged and still occur
+    per source frame; only the fixed-size ViTPose forward pass is batched.
+    Returns ``(B, 17, 3)`` [x, y, confidence] in the same order as the input.
+    """
+    if len(frames_rgb) != len(bboxes_xywh):
+        raise ValueError("frames_rgb and bboxes_xywh must have the same length")
+    if not frames_rgb:
+        return np.empty((0, NUM_KEYPOINTS, 3), dtype=np.float32)
+
+    bbx_xys = [bbox_xywh_to_xys(bbox) for bbox in bboxes_xywh]
+    crops = torch.stack([crop_and_normalize(frame, bbx) for frame, bbx in zip(frames_rgb, bbx_xys)])
+    heatmap_np = model(crops.to(device=device, dtype=dtype)).float().cpu().numpy()
+    preds, maxvals = _get_max_preds(heatmap_np)
+    preds = _post_dark_udp(preds, heatmap_np)
+
+    for index, (cx, cy, size) in enumerate(bbx_xys):
+        scale = np.array([size * (HEATMAP_W / HEATMAP_H), size], dtype=np.float32) / 200.0
+        preds[index] = _transform_preds(preds[index], np.array([cx, cy], dtype=np.float32), scale)
+
+    return np.concatenate([preds, maxvals], axis=-1)

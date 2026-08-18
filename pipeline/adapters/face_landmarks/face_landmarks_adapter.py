@@ -12,16 +12,17 @@ FLAME->ARKit translation on every channel except lateral jaw, horizontal
 gaze, blink, and `NoseSneer`/`CheekSquint`; the later six-capture comparison
 also selects MediaPipe for `JawOpen` and `EyeWide`).
 
-Reuses this project's existing pieces exactly like `DecaAdapter` does: COCO-17
-ViTPose for the face keypoints that locate the crop, and the SAM 3.1 human
-mask for the person box. Unlike DECA/MICA, MediaPipe's Task API is not a
-torch module, it runs its own (CPU, XNNPACK-accelerated) TFLite graph, so
-there is no `device`/`dtype` to place it on.
+Receives face boxes from Stage 9's shared ViTPose/SAM pre-pass. Unlike
+DECA/MICA, MediaPipe's Task API is not a torch module: it runs its own CPU,
+XNNPACK-accelerated TFLite graph, so there is no ``device``/``dtype`` to
+place the landmarker itself on.
 """
 
 from __future__ import annotations
 
+from queue import Full, Queue
 from pathlib import Path
+from threading import Thread
 
 import cv2
 import mediapipe as mp
@@ -34,10 +35,6 @@ from pipeline.progress_tracker import StageName
 
 from ...helpers.progress_reporter import frame_progress
 from ...helpers.livelink_csv import ARKIT_BLENDSHAPE_NAMES
-from ..deca.deca_preprocess import face_box_from_body_kpts
-from ..gvhmr.gvhmr_adapter import VITPOSE_CHECKPOINT, _load_direct_state, _rescale_bbox_xywh, extract_bbox_from_numpy_mask
-from ..gvhmr.gvhmr_vitpose import GVHMRViTPoseModel, estimate_keypoints
-from ..sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from .face_landmarks_preprocess import crop_for_landmarker, landmarks_to_full_frame
 
 CHECKPOINT_DIR = Path(__file__).resolve().parents[3] / "checkpoints"
@@ -45,7 +42,7 @@ FACE_LANDMARKER_CHECKPOINT = CHECKPOINT_DIR / "face_landmarker.task"
 
 NUM_LANDMARKS = 478
 NUM_BLENDSHAPES = 52
-PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 2/5 (MediaPipe)"
+PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 1/5 (MediaPipe + ViTPose)"
 
 # infer() output keys (per-frame arrays).
 KEY_LANDMARKS = "mp_landmarks"  # (F, 478, 3): full-frame pixel x/y, relative z
@@ -68,17 +65,22 @@ KEY_VALID = "mp_valid"
 _ARKIT_NAME_TO_MP_NAME = {name: name[0].lower() + name[1:] for name in ARKIT_BLENDSHAPE_NAMES}
 
 
+def _empty_output(n: int) -> dict[str, np.ndarray]:
+    return {
+        KEY_LANDMARKS: np.zeros((n, NUM_LANDMARKS, 3), np.float32),
+        KEY_BLENDSHAPES: np.zeros((n, NUM_BLENDSHAPES), np.float32),
+        KEY_VALID: np.zeros(n, bool),
+    }
+
+
 class FaceLandmarksAdapter:
     def __init__(self, device: torch.device | None = None, dtype: torch.dtype = torch.float16):
-        # device/dtype are for the ViTPose sub-model only; the landmarker itself is CPU.
+        # Retained for API consistency with the other Stage 9 adapters.
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self._landmarker: mp_vision.FaceLandmarker | None = None
-        self._vitpose: GVHMRViTPoseModel | None = None
 
-    def load(
-        self, landmarker_checkpoint: Path = FACE_LANDMARKER_CHECKPOINT, vitpose_checkpoint: Path = VITPOSE_CHECKPOINT
-    ) -> None:
+    def load(self, landmarker_checkpoint: Path = FACE_LANDMARKER_CHECKPOINT) -> None:
         base_options = mp_python.BaseOptions(model_asset_path=str(landmarker_checkpoint))
         options = mp_vision.FaceLandmarkerOptions(
             base_options=base_options, num_faces=1, output_face_blendshapes=True,
@@ -86,15 +88,8 @@ class FaceLandmarksAdapter:
         )
         self._landmarker = mp_vision.FaceLandmarker.create_from_options(options)
 
-        self._vitpose = GVHMRViTPoseModel()
-        self._vitpose.load_state_dict(_load_direct_state(vitpose_checkpoint), strict=True)
-        self._vitpose.to(device=self.device, dtype=self.dtype).eval()
-
-    def _infer_one_frame(self, frame_bgr: np.ndarray, keypoints: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
-        box = face_box_from_body_kpts(keypoints)
-        if box is None:
-            return None
-        crop_rgb, offset_xy = crop_for_landmarker(frame_bgr, box)
+    def _infer_one_frame(self, frame_bgr: np.ndarray, face_box: np.ndarray) -> tuple[np.ndarray, np.ndarray] | None:
+        crop_rgb, offset_xy = crop_for_landmarker(frame_bgr, face_box)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=crop_rgb)
         result = self._landmarker.detect(mp_image)
         if not result.face_landmarks or not result.face_blendshapes:
@@ -108,27 +103,19 @@ class FaceLandmarksAdapter:
         )
         return landmarks, blendshapes
 
-    def infer(self, frame_paths: list[Path], human_masks: dict) -> dict[str, np.ndarray]:
-        packed = human_masks[KEY_PACKED_MASKS]
+    def infer(self, frame_paths: list[Path], face_boxes: list[np.ndarray | None]) -> dict[str, np.ndarray]:
+        """Runs MediaPipe over boxes from ``FacePrepassAdapter``."""
+        if len(face_boxes) != len(frame_paths):
+            raise ValueError("face_boxes must contain exactly one entry per frame")
         n = len(frame_paths)
-        out = {
-            KEY_LANDMARKS: np.zeros((n, NUM_LANDMARKS, 3), np.float32),
-            KEY_BLENDSHAPES: np.zeros((n, NUM_BLENDSHAPES), np.float32),
-            KEY_VALID: np.zeros(n, bool),
-        }
+        out = _empty_output(n)
 
         for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=PROGRESS_LABEL):
             frame_bgr = cv2.imread(str(frame_path))
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
-            mask = unpack_masks(packed[i])[0].numpy()
-            bbox = extract_bbox_from_numpy_mask(mask)
-            if bbox is None:
+            face_box = face_boxes[i]
+            if face_box is None:
                 continue
-            bbox = _rescale_bbox_xywh(bbox, from_hw=mask.shape, to_hw=frame_bgr.shape[:2])
-            keypoints = estimate_keypoints(self._vitpose, frame_rgb, bbox, self.device, self.dtype)
-
-            result = self._infer_one_frame(frame_bgr, keypoints)
+            result = self._infer_one_frame(frame_bgr, face_box)
             if result is None:
                 continue
             out[KEY_LANDMARKS][i], out[KEY_BLENDSHAPES][i] = result
@@ -137,6 +124,89 @@ class FaceLandmarksAdapter:
         return out
 
     def unload(self) -> None:
-        del self._landmarker, self._vitpose
-        self._landmarker = self._vitpose = None
-        torch.cuda.empty_cache()
+        del self._landmarker
+        self._landmarker = None
+        # This adapter no longer owns a torch/CUDA model. In the pipelined
+        # path unload() runs on the CPU worker while ViTPose may still be
+        # executing on the main thread, so it must not touch CUDA state.
+
+
+class FaceLandmarksWorker:
+    """One image-mode MediaPipe task running beside GPU ViTPose batches.
+
+    The task is constructed, used, and destroyed entirely in this one worker
+    thread. Its input queue is deliberately bounded to one batch: this keeps
+    memory bounded and applies back-pressure instead of retaining a clip's
+    worth of decoded frames. No two threads ever call ``detect`` on the same
+    task instance.
+    """
+
+    def __init__(self, n_frames: int, max_queued_batches: int = 1):
+        if max_queued_batches < 1:
+            raise ValueError("max_queued_batches must be positive")
+        self._queue: Queue[tuple[list[int], list[np.ndarray], list[np.ndarray]] | None] = Queue(maxsize=max_queued_batches)
+        self._out = _empty_output(n_frames)
+        self._error: BaseException | None = None
+        self._thread = Thread(target=self._run, name="stage9-mediapipe", daemon=True)
+        self._started = False
+        self._finished = False
+
+    def start(self) -> None:
+        self._thread.start()
+        self._started = True
+
+    def submit(self, indices: list[int], frames_bgr: list[np.ndarray], face_boxes: list[np.ndarray]) -> None:
+        if len(indices) != len(frames_bgr) or len(indices) != len(face_boxes):
+            raise ValueError("MediaPipe batch indices, frames, and face boxes must have the same length")
+        if not indices:
+            return
+        item = (indices, frames_bgr, face_boxes)
+        while True:
+            self._raise_if_failed()
+            try:
+                self._queue.put(item, timeout=0.1)
+                return
+            except Full:
+                continue
+
+    def finish(self) -> dict[str, np.ndarray]:
+        if not self._started:
+            raise RuntimeError("Call start() before finish().")
+        if self._finished:
+            raise RuntimeError("finish() may only be called once")
+        self._finished = True
+        while self._thread.is_alive():
+            self._raise_if_failed()
+            try:
+                self._queue.put(None, timeout=0.1)
+                break
+            except Full:
+                continue
+        self._thread.join()
+        self._raise_if_failed()
+        return self._out
+
+    def _raise_if_failed(self) -> None:
+        if self._error is not None:
+            raise RuntimeError("MediaPipe worker failed") from self._error
+
+    def _run(self) -> None:
+        adapter = FaceLandmarksAdapter()
+        try:
+            adapter.load()
+            while True:
+                item = self._queue.get()
+                if item is None:
+                    return
+                indices, frames_bgr, face_boxes = item
+                for frame_index, frame_bgr, face_box in zip(indices, frames_bgr, face_boxes):
+                    result = adapter._infer_one_frame(frame_bgr, face_box)
+                    if result is None:
+                        continue
+                    self._out[KEY_LANDMARKS][frame_index], self._out[KEY_BLENDSHAPES][frame_index] = result
+                    self._out[KEY_VALID][frame_index] = True
+        except BaseException as exc:
+            self._error = exc
+        finally:
+            if adapter._landmarker is not None:
+                adapter.unload()

@@ -19,13 +19,60 @@ from pipeline.algorithms.face.face_landmark_fit import (
     FLAME_NUM_BETAS, FLAME_NUM_EXPRESSION, JAW_AXIS0_BOUND_RAD, JAW_AXIS1_BOUND_RAD, JAW_AXIS1_DECA_DEVIATION_THRESHOLD,
     JAW_AXIS2_BOUND_RAD, MAX_BRIDGE_FRAMES, NUM_FLAME_LANDMARKS,
     FitInputs, KEY_EXPRESSION, KEY_GLOBAL_ORIENT, KEY_JAW_POSE, KEY_TRANSL, KEY_VALID,
-    _bridge_keep_mask, _bridge_short_gaps, _build_flame_model, _demote_short_valid_runs, _detect_outlier_frames,
+    _SparseFlameLandmarker, _bridge_keep_mask, _bridge_short_gaps, _build_flame_model, _demote_short_valid_runs, _detect_outlier_frames,
     _init_shared_betas, _init_translation, _lead_from_neutral, _project_points,
     _guard_face_recovery, _snap_jaw_to_deca_on_axis_deviation, calibrate_rotation_offset, fit_clip,
 )
 
 FLAME_ASSETS_PRESENT = (FLAME_MODEL_DIR / "flame" / "FLAME_NEUTRAL.npz").exists()
 TEST_FPS = 30.0  # fit_clip's own fps is always sourced from real clip data (RunRecord.scene.fps); no default to fall back to here either
+
+
+@pytest.mark.skipif(not FLAME_ASSETS_PRESENT, reason="needs the FLAME model (see README's Setup section)")
+@pytest.mark.parametrize(
+    "device", [torch.device("cpu")] + ([torch.device("cuda")] if torch.cuda.is_available() else []),
+)
+def test_sparse_flame_landmarks_and_gradients_match_full_flame(device):
+    """The fit fast path must remain a numerical replacement, not an approximation."""
+    n = 3
+    full_model = _build_flame_model(device, batch_size=n)
+    sparse = _SparseFlameLandmarker.from_flame_model(full_model)
+    torch.manual_seed(17)
+
+    def inputs():
+        return [
+            (torch.randn(n, FLAME_NUM_BETAS, device=device) * 0.02).requires_grad_(),
+            (torch.randn(n, FLAME_NUM_EXPRESSION, device=device) * 0.02).requires_grad_(),
+            (torch.randn(n, 3, device=device) * 0.1).requires_grad_(),
+            (torch.randn(n, 3, device=device) * 0.03).requires_grad_(),
+            (torch.randn(n, 3, device=device) * 0.1).requires_grad_(),
+            (torch.randn(n, 3, device=device) * 0.03).requires_grad_(),
+        ]
+
+    def forward_full(values):
+        betas, expression, global_orient, neck_pose, jaw_pose, transl = values
+        return full_model(
+            betas=betas, expression=expression, global_orient=global_orient, neck_pose=neck_pose,
+            jaw_pose=jaw_pose, leye_pose=torch.zeros_like(jaw_pose), reye_pose=torch.zeros_like(jaw_pose), transl=transl,
+        ).joints[:, -NUM_FLAME_LANDMARKS:]
+
+    def forward_sparse(values):
+        betas, expression, global_orient, neck_pose, jaw_pose, transl = values
+        return sparse.landmarks(
+            betas=betas, expression=expression, global_orient=global_orient, neck_pose=neck_pose,
+            jaw_pose=jaw_pose, leye_pose=torch.zeros_like(jaw_pose), reye_pose=torch.zeros_like(jaw_pose), transl=transl,
+        )
+
+    full_inputs = inputs()
+    full_landmarks = forward_full(full_inputs)
+    full_gradients = torch.autograd.grad(full_landmarks.square().sum(), full_inputs)
+    sparse_inputs = [value.detach().clone().requires_grad_() for value in full_inputs]
+    sparse_landmarks = forward_sparse(sparse_inputs)
+    sparse_gradients = torch.autograd.grad(sparse_landmarks.square().sum(), sparse_inputs)
+
+    torch.testing.assert_close(sparse_landmarks, full_landmarks, rtol=2e-5, atol=2e-6)
+    for sparse_gradient, full_gradient in zip(sparse_gradients, full_gradients):
+        torch.testing.assert_close(sparse_gradient, full_gradient, rtol=3e-5, atol=3e-6)
 
 
 def _random_rotations(n: int, seed: int) -> np.ndarray:

@@ -31,6 +31,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from pipeline.helpers.torch_helpers import empty_cuda_cache, sys_torch_device
+
 from ...adapters.gvhmr.gvhmr_rotation_math import axis_angle_to_matrix
 from ..contact_detection import contiguous_true_runs
 from ...helpers.progress_reporter import frame_progress
@@ -50,8 +52,8 @@ FLAME_NUM_BETAS = 300  # FLAME 2020's full shape-identity space (matches MICA's 
 FLAME_NUM_EXPRESSION = 50  # matches DECA's own n_exp
 NUM_FLAME_LANDMARKS = 51  # `use_face_contour=False`: FLAME's static embedding only
 
-_FIT_ORIENTATION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 5/6 (FLAME fit, head pose)"
-_FIT_EXPRESSION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 6/6 (FLAME fit, expression)"
+_FIT_ORIENTATION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 4/5 (FLAME fit, head pose)"
+_FIT_EXPRESSION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 5/5 (FLAME fit, expression)"
 
 # Reference points within the 51-point FLAME/dlib-inner set (0-indexed within
 # the 51, i.e. dlib index - 17) used to initialize head depth via the
@@ -355,6 +357,111 @@ def _build_flame_model(device: torch.device, batch_size: int):
         create_transl=False,
         batch_size=batch_size,
     ).to(device)
+
+
+@dataclass(frozen=True)
+class _SparseFlameLandmarker:
+    """Exact static-FLAME-landmark forward path without a full mesh output.
+
+    ``smplx.FLAME.forward`` always skins every mesh vertex before converting
+    the 51 static landmark triangles to points. The fit uses only those
+    points, so this class retains the model data required for their referenced
+    vertices plus analytically precomputed joint regressors. It implements
+    the same blend-shape, LBS, and barycentric interpolation operations as
+    ``smplx.lbs.lbs``/``vertices2landmarks``; tests compare both landmark
+    positions and gradients against the full model.
+    """
+
+    v_template: torch.Tensor  # (V_sparse, 3)
+    shapedirs: torch.Tensor  # (V_sparse, 3, 350)
+    joint_template: torch.Tensor  # (J, 3)
+    joint_shapedirs: torch.Tensor  # (J, 3, 350)
+    posedirs: torch.Tensor  # ((J - 1) * 9, V_sparse * 3)
+    parents: torch.Tensor  # (J,)
+    lbs_weights: torch.Tensor  # (V_sparse, J)
+    landmark_vertex_indices: torch.Tensor  # (51, 3), into sparse vertices
+    landmark_bary_coords: torch.Tensor  # (51, 3)
+
+    @classmethod
+    def from_flame_model(cls, model) -> _SparseFlameLandmarker:
+        if model.use_face_contour:
+            raise ValueError("Sparse landmark fitting supports FLAME's static landmark embedding only")
+
+        # ``faces`` has the exact vertex triplets full FLAME uses for its
+        # static landmark embedding. ``inverse`` maps each triplet vertex to
+        # the compact selected-vertex table below.
+        landmark_faces = model.faces_tensor.index_select(0, model.lmk_faces_idx)
+        sparse_vertex_indices, landmark_vertex_indices = torch.unique(
+            landmark_faces.reshape(-1), sorted=True, return_inverse=True,
+        )
+        landmark_vertex_indices = landmark_vertex_indices.view_as(landmark_faces)
+        shape_dirs = torch.cat([model.shapedirs, model.expr_dirs], dim=-1)
+
+        # FLAME's joints normally come from a regression over every shaped
+        # vertex. Linear regression and linear blend shapes compose exactly,
+        # so precomputing J_regressor @ v_template/shapedirs yields those same
+        # joints without materializing the full V-by-3 shaped mesh each step.
+        joint_template = torch.einsum("jv,vc->jc", model.J_regressor, model.v_template)
+        joint_shapedirs = torch.einsum("jv,vck->jck", model.J_regressor, shape_dirs)
+
+        vertex_coordinate_indices = (
+            sparse_vertex_indices[:, None] * 3 + torch.arange(3, device=sparse_vertex_indices.device)
+        ).reshape(-1)
+        return cls(
+            v_template=model.v_template.index_select(0, sparse_vertex_indices).detach(),
+            shapedirs=shape_dirs.index_select(0, sparse_vertex_indices).detach(),
+            joint_template=joint_template.detach(),
+            joint_shapedirs=joint_shapedirs.detach(),
+            posedirs=model.posedirs.index_select(1, vertex_coordinate_indices).detach(),
+            parents=model.parents.detach().clone(),
+            lbs_weights=model.lbs_weights.index_select(0, sparse_vertex_indices).detach(),
+            landmark_vertex_indices=landmark_vertex_indices.detach(),
+            landmark_bary_coords=model.lmk_bary_coords.detach(),
+        )
+
+    def landmarks(
+        self,
+        *,
+        betas: torch.Tensor,
+        expression: torch.Tensor,
+        global_orient: torch.Tensor,
+        neck_pose: torch.Tensor,
+        jaw_pose: torch.Tensor,
+        leye_pose: torch.Tensor,
+        reye_pose: torch.Tensor,
+        transl: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Matches the final 51 joints from ``FLAME.forward`` exactly."""
+        from smplx.lbs import batch_rigid_transform, batch_rodrigues
+
+        full_pose = torch.cat([global_orient, neck_pose, jaw_pose, leye_pose, reye_pose], dim=1)
+        batch_size = max(betas.shape[0], global_orient.shape[0], jaw_pose.shape[0])
+        if betas.shape[0] != batch_size:
+            # Same expansion rule used by smplx.body_models.FLAME.forward.
+            betas = betas.expand(int(batch_size / betas.shape[0]), -1)
+        shape_components = torch.cat([betas, expression], dim=-1)
+        v_shaped = self.v_template + torch.einsum("bl,mkl->bmk", shape_components, self.shapedirs)
+        joints = self.joint_template + torch.einsum("bl,jkl->bjk", shape_components, self.joint_shapedirs)
+
+        rot_mats = batch_rodrigues(full_pose.view(-1, 3)).view(batch_size, -1, 3, 3)
+        identity = torch.eye(3, dtype=shape_components.dtype, device=shape_components.device)
+        pose_feature = (rot_mats[:, 1:] - identity).reshape(batch_size, -1)
+        pose_offsets = torch.matmul(pose_feature, self.posedirs).view(batch_size, -1, 3)
+        v_posed = v_shaped + pose_offsets
+
+        _, transforms = batch_rigid_transform(rot_mats, joints, self.parents, dtype=shape_components.dtype)
+        skinning = torch.matmul(
+            self.lbs_weights.unsqueeze(0).expand(batch_size, -1, -1), transforms.view(batch_size, -1, 16),
+        ).view(batch_size, -1, 4, 4)
+        homogeneous = torch.cat(
+            [v_posed, torch.ones(batch_size, v_posed.shape[1], 1, dtype=v_posed.dtype, device=v_posed.device)], dim=2,
+        )
+        vertices = torch.matmul(skinning, homogeneous.unsqueeze(-1))[:, :, :3, 0]
+        landmark_vertices = vertices[:, self.landmark_vertex_indices]
+        landmarks = torch.einsum("blfi,lf->bli", landmark_vertices, self.landmark_bary_coords)
+        if transl is not None:
+            landmarks = landmarks + transl.unsqueeze(1)
+        return landmarks
 
 
 def _project_points(points_cam: torch.Tensor, K: torch.Tensor) -> torch.Tensor:
@@ -738,7 +845,7 @@ def fit_clip(
     jaw_deca_anchor_weight: float = DEFAULT_JAW_DECA_ANCHOR_WEIGHT,
     expr_deca_anchor_weight: float = DEFAULT_EXPR_DECA_ANCHOR_WEIGHT,
 ) -> dict[str, np.ndarray]:
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or sys_torch_device()
     n = len(inputs.landmarks_51)
     valid = inputs.landmarks_valid & inputs.deca_valid
     valid = _demote_short_valid_runs(valid, MIN_VALID_RUN_FRAMES)
@@ -752,8 +859,13 @@ def fit_clip(
         }
 
     model = _build_flame_model(device, batch_size=n)
+    sparse_landmarker = _SparseFlameLandmarker.from_flame_model(model)
+    # Every fitting forward below uses only `sparse_landmarker`; release the
+    # full mesh buffers before the 1,500-step autograd loop begins.
+    del model
+    empty_cuda_cache(device)
     with torch.no_grad():
-        template = model(
+        template_landmarks = sparse_landmarker.landmarks(
             betas=torch.zeros(1, FLAME_NUM_BETAS, device=device),
             expression=torch.zeros(1, FLAME_NUM_EXPRESSION, device=device),
             global_orient=torch.zeros(1, 3, device=device), neck_pose=torch.zeros(1, 3, device=device),
@@ -761,7 +873,7 @@ def fit_clip(
             leye_pose=torch.zeros(1, 3, device=device), reye_pose=torch.zeros(1, 3, device=device),
             transl=torch.zeros(1, 3, device=device),
         )
-        template_landmarks = template.joints[0, -NUM_FLAME_LANDMARKS:].cpu().numpy()
+        template_landmarks = template_landmarks[0].cpu().numpy()
 
     betas_init = _init_shared_betas(inputs.mica_shape, inputs.mica_valid, inputs.deca_shape, inputs.deca_valid)
     transl_init = _init_translation(inputs.landmarks_51, valid, template_landmarks, inputs.intrinsics_k)
@@ -853,11 +965,10 @@ def fit_clip(
             for group in optimizer1.param_groups:
                 group["lr"] = stage1_lr * STAGE1_LR_DECAY_FACTOR
         optimizer1.zero_grad()
-        out = model(
+        landmarks_pred = sparse_landmarker.landmarks(
             betas=betas_batch, expression=expression_fixed, global_orient=global_orient, neck_pose=neck_pose,
             jaw_pose=jaw_fixed, leye_pose=eye_pose, reye_pose=eye_pose, transl=transl,
         )
-        landmarks_pred = out.joints[:, -NUM_FLAME_LANDMARKS:, :]
         landmarks_pixels = _project_points(landmarks_pred, K)
 
         reprojection_error = (landmarks_pixels - landmarks_target).pow(2).sum(-1) * valid_mask
@@ -894,7 +1005,6 @@ def fit_clip(
             loss = loss + temporal_weight * temporal_loss
         loss.backward()
         optimizer1.step()
-
     global_orient_final = global_orient.detach()
     transl_final = transl.detach()
 
@@ -979,11 +1089,10 @@ def fit_clip(
         optimizer2.zero_grad()
         jaw_pose = _bounded_tanh(jaw_raw, jaw_bounds)
         expression = _bounded_tanh(expr_raw, expr_bounds)
-        out = model(
+        landmarks_pred = sparse_landmarker.landmarks(
             betas=betas_batch, expression=expression, global_orient=global_orient_final, neck_pose=neck_pose,
             jaw_pose=jaw_pose, leye_pose=eye_pose, reye_pose=eye_pose, transl=transl_final,
         )
-        landmarks_pred = out.joints[:, -NUM_FLAME_LANDMARKS:, :]
         landmarks_pixels = _project_points(landmarks_pred, K)
 
         reprojection_error = (landmarks_pixels - landmarks_target).pow(2).sum(-1) * valid_mask
@@ -1015,7 +1124,6 @@ def fit_clip(
             loss = loss + temporal_weight * temporal_loss
         loss.backward()
         optimizer2.step()
-
     jaw_pose_final = _bounded_tanh(jaw_raw, jaw_bounds).detach()
     expression_final = _bounded_tanh(expr_raw, expr_bounds).detach()
 
@@ -1129,12 +1237,15 @@ def local_landmark_delta(
     per-clip model build for. `jaw_pose`/`expression`: (F, 3)/(F, 50).
     Returns (F, 51, 3).
     """
-    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = device or sys_torch_device()
     n = len(jaw_pose)
     model = _build_flame_model(device, batch_size=n)
+    sparse_landmarker = _SparseFlameLandmarker.from_flame_model(model)
+    del model
+    empty_cuda_cache(device)
 
     with torch.no_grad():
-        neutral = model(
+        neutral_landmarks = sparse_landmarker.landmarks(
             betas=torch.zeros(1, FLAME_NUM_BETAS, device=device),
             expression=torch.zeros(1, FLAME_NUM_EXPRESSION, device=device),
             global_orient=torch.zeros(1, 3, device=device), neck_pose=torch.zeros(1, 3, device=device),
@@ -1142,9 +1253,8 @@ def local_landmark_delta(
             leye_pose=torch.zeros(1, 3, device=device), reye_pose=torch.zeros(1, 3, device=device),
             transl=torch.zeros(1, 3, device=device),
         )
-        neutral_landmarks = neutral.joints[0, -NUM_FLAME_LANDMARKS:].cpu().numpy()
 
-        out = model(
+        landmarks = sparse_landmarker.landmarks(
             betas=torch.zeros(n, FLAME_NUM_BETAS, device=device),
             expression=torch.tensor(expression, device=device, dtype=torch.float32),
             global_orient=torch.zeros(n, 3, device=device), neck_pose=torch.zeros(n, 3, device=device),
@@ -1152,6 +1262,5 @@ def local_landmark_delta(
             leye_pose=torch.zeros(n, 3, device=device), reye_pose=torch.zeros(n, 3, device=device),
             transl=torch.zeros(n, 3, device=device),
         )
-        landmarks = out.joints[:, -NUM_FLAME_LANDMARKS:].cpu().numpy()
 
-    return landmarks - neutral_landmarks[None]
+    return landmarks.cpu().numpy() - neutral_landmarks[0].cpu().numpy()[None]

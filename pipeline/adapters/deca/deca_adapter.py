@@ -1,12 +1,7 @@
 """Thin load()/infer()/unload() wrapper producing per-frame DECA-predicted
 FLAME parameters (shape/expression/pose/camera), for use as the fitting
-loop's initial guess, DECA's own iterative refinement and photometric
-rendering are not reproduced here (see `deca_encoder.py`'s module docstring).
-
-Reuses this project's existing pieces: our COCO-17 ViTPose (`gvhmr_vitpose`)
-for the face keypoints that locate the crop (see `deca_preprocess.py`), and
-the SAM 3.1 human mask (stage 1) for the person box, rescaled from SAM's
-working resolution to native like `gvhmr_adapter`/`hamer_adapter` do.
+loop's initial guess. Stage 9's shared face pre-pass supplies the exact
+per-frame face boxes, avoiding a redundant ViTPose invocation here.
 """
 
 from __future__ import annotations
@@ -21,11 +16,8 @@ from safetensors.torch import load_file
 from pipeline.progress_tracker import StageName
 
 from ...helpers.progress_reporter import frame_progress
-from ..gvhmr.gvhmr_adapter import VITPOSE_CHECKPOINT, _load_direct_state, _rescale_bbox_xywh, extract_bbox_from_numpy_mask
-from ..gvhmr.gvhmr_vitpose import GVHMRViTPoseModel, estimate_keypoints
-from ..sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from .deca_encoder import DecaEncoder
-from .deca_preprocess import crop_face, face_box_from_body_kpts
+from .deca_preprocess import crop_face
 
 CHECKPOINT_DIR = Path(__file__).resolve().parents[3] / "checkpoints"
 DECA_CHECKPOINT = CHECKPOINT_DIR / "deca.safetensors"
@@ -33,10 +25,8 @@ DECA_CHECKPOINT = CHECKPOINT_DIR / "deca.safetensors"
 N_SHAPE = 100
 N_EXP = 50
 
-# Plain string, not a StageName reference: the face-capture stage this adapter
-# feeds hasn't been wired into progress_tracker.py yet (that happens together
-# with the export-stage renumber, as its own dedicated step).
-PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 1/5 (DECA)"
+PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 2/5 (DECA)"
+DEFAULT_INFERENCE_BATCH_SIZE = 16
 
 # infer() output keys (per-frame arrays).
 KEY_SHAPE = "deca_shape"
@@ -51,29 +41,27 @@ class DecaAdapter:
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.dtype = dtype
         self._encoder: DecaEncoder | None = None
-        self._vitpose: GVHMRViTPoseModel | None = None
 
-    def load(self, deca_checkpoint: Path = DECA_CHECKPOINT, vitpose_checkpoint: Path = VITPOSE_CHECKPOINT) -> None:
+    def load(self, deca_checkpoint: Path = DECA_CHECKPOINT) -> None:
         self._encoder = DecaEncoder()
         self._encoder.load_state_dict(load_file(str(deca_checkpoint)), strict=True)
-        self._vitpose = GVHMRViTPoseModel()
-        self._vitpose.load_state_dict(_load_direct_state(vitpose_checkpoint), strict=True)
-
-        for module in (self._encoder, self._vitpose):
-            module.to(device=self.device, dtype=self.dtype).eval()
+        self._encoder.to(device=self.device, dtype=self.dtype).eval()
 
     @torch.inference_mode()
-    def _infer_one_frame(self, frame_bgr: np.ndarray, keypoints: np.ndarray):
-        box = face_box_from_body_kpts(keypoints)
-        if box is None:
-            return None
-        crop = crop_face(frame_bgr, box)
-        crop_t = torch.from_numpy(crop).unsqueeze(0).to(device=self.device, dtype=self.dtype)
+    def _infer_crops(self, crops: list[np.ndarray]) -> dict[str, np.ndarray]:
+        assert self._encoder is not None, "Call load() before infer()."
+        crop_t = torch.from_numpy(np.stack(crops)).to(device=self.device, dtype=self.dtype)
         out = self._encoder(crop_t)
-        return {k: v.float().cpu().numpy()[0] for k, v in out.items()}
+        return {k: v.float().cpu().numpy() for k, v in out.items()}
 
-    def infer(self, frame_paths: list[Path], human_masks: dict) -> dict[str, np.ndarray]:
-        packed = human_masks[KEY_PACKED_MASKS]
+    def infer(
+        self, frame_paths: list[Path], face_boxes: list[np.ndarray | None], batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE,
+    ) -> dict[str, np.ndarray]:
+        """Runs batched DECA inference over boxes from ``FacePrepassAdapter``."""
+        if len(face_boxes) != len(frame_paths):
+            raise ValueError("face_boxes must contain exactly one entry per frame")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
         n = len(frame_paths)
         out = {
             KEY_SHAPE: np.zeros((n, N_SHAPE), np.float32),
@@ -83,29 +71,37 @@ class DecaAdapter:
             KEY_VALID: np.zeros(n, bool),
         }
 
+        batch_indices: list[int] = []
+        batch_crops: list[np.ndarray] = []
+
+        def flush_batch() -> None:
+            if not batch_indices:
+                return
+            results = self._infer_crops(batch_crops)
+            for batch_index, frame_index in enumerate(batch_indices):
+                out[KEY_SHAPE][frame_index] = results["shape"][batch_index]
+                out[KEY_EXP][frame_index] = results["exp"][batch_index]
+                out[KEY_POSE][frame_index] = results["pose"][batch_index]
+                out[KEY_CAM][frame_index] = results["cam"][batch_index]
+                out[KEY_VALID][frame_index] = True
+            batch_indices.clear()
+            batch_crops.clear()
+
         for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=PROGRESS_LABEL):
             frame_bgr = cv2.imread(str(frame_path))
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
-            mask = unpack_masks(packed[i])[0].numpy()
-            bbox = extract_bbox_from_numpy_mask(mask)
-            if bbox is None:
+            face_box = face_boxes[i]
+            if face_box is None:
                 continue
-            bbox = _rescale_bbox_xywh(bbox, from_hw=mask.shape, to_hw=frame_bgr.shape[:2])
-            keypoints = estimate_keypoints(self._vitpose, frame_rgb, bbox, self.device, self.dtype)
+            batch_indices.append(i)
+            batch_crops.append(crop_face(frame_bgr, face_box))
+            if len(batch_indices) == batch_size:
+                flush_batch()
 
-            result = self._infer_one_frame(frame_bgr, keypoints)
-            if result is None:
-                continue
-            out[KEY_SHAPE][i] = result["shape"]
-            out[KEY_EXP][i] = result["exp"]
-            out[KEY_POSE][i] = result["pose"]
-            out[KEY_CAM][i] = result["cam"]
-            out[KEY_VALID][i] = True
+        flush_batch()
 
         return out
 
     def unload(self) -> None:
-        del self._encoder, self._vitpose
-        self._encoder = self._vitpose = None
+        del self._encoder
+        self._encoder = None
         torch.cuda.empty_cache()

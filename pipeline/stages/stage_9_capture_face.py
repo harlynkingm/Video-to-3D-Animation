@@ -6,22 +6,22 @@ returns `{}` when `RunInput.skip_face_capture` is set, downstream stages
 missing object track (see `stage_10_export.py`'s `object_shape_path is None`
 branch).
 
-Needs frames (stage 0), the human mask (stage 1), and body motion (stage 2)
--- each of DECA, MICA, and MediaPipe locates the face itself via its own
-ViTPose pass over the human mask's bounding box (the same pattern
-`DecaAdapter` already established alone before this stage existed), but
-stage 2's own tracked head rotation feeds `fit_clip` as a body-based
-orientation prior (see `face_landmark_fit.calibrate_rotation_offset`). MediaPipe's
-own dense landmarks also feed a second, independent orientation signal,
+Needs frames (stage 0), the human mask (stage 1), and body motion (stage 2).
+One shared ViTPose pass over the human-mask bounding box derives face boxes
+for both DECA and MediaPipe; stage 2's tracked head rotation feeds `fit_clip`
+as a body-based orientation prior (see `face_landmark_fit.calibrate_rotation_
+offset`). MediaPipe's own dense landmarks also feed a second, independent
+orientation signal,
 `face_pose_stabilization.stabilize_orientation`'s rigid-landmark Kabsch
 rotation, anchoring `fit_clip`'s global_orient without ever seeing
 chin/jaw/mouth geometry, see that module's own docstring.
 
-Three heavy models loaded and unloaded in sequence within one process,
-confirmed safe in practice (this is exactly the load/infer/unload chain
-exercised against real footage during this stage's own development), unlike
-the cross-*stage* segfault risk `pipeline/run.py`'s own docstring documents
-(which is why each stage still gets its own subprocess).
+ViTPose runs on the GPU while a single image-mode MediaPipe task runs on the
+CPU in a bounded worker thread. DECA and MICA still load and unload in
+sequence, retaining the safe GPU-memory pattern exercised against real
+footage during this stage's development. This avoids the cross-*stage*
+segfault risk `pipeline/run.py` documents, which is why each pipeline stage
+still gets its own subprocess.
 """
 
 from __future__ import annotations
@@ -32,9 +32,8 @@ import numpy as np
 import torch
 
 from ..adapters.deca.deca_adapter import DecaAdapter, KEY_EXP, KEY_POSE, KEY_SHAPE as DECA_KEY_SHAPE, KEY_VALID as DECA_KEY_VALID
-from ..adapters.face_landmarks.face_landmarks_adapter import (
-    FaceLandmarksAdapter, KEY_BLENDSHAPES as MP_KEY_BLENDSHAPES, KEY_LANDMARKS, KEY_VALID as MP_KEY_VALID,
-)
+from ..adapters.face_prepass_adapter import FacePrepassAdapter
+from ..adapters.face_landmarks.face_landmarks_adapter import FaceLandmarksWorker, KEY_BLENDSHAPES as MP_KEY_BLENDSHAPES, KEY_LANDMARKS, KEY_VALID as MP_KEY_VALID
 from ..adapters.face_landmarks.mp2dlib import dlib68_to_arcface5, dlib68_to_flame51, mediapipe_to_dlib68
 from ..adapters.gvhmr.gvhmr_adapter import (
     KEY_BODY_POSE, KEY_GLOBAL_ORIENT as GVHMR_KEY_GLOBAL_ORIENT, KEY_PRED_SMPL_PARAMS_INCAM, KEY_ROOT_MOTION_UNRELIABLE,
@@ -83,23 +82,27 @@ OUTPUT_FACE_CSV = "face_csv"
 
 
 def _run_landmark_adapters(frame_paths: list[Path], human_masks: dict, device: torch.device) -> dict[str, np.ndarray]:
-    """Runs DECA, MediaPipe, and MICA over every frame, each loaded, run,
-    and unloaded before the next starts, matching every other stage's own
-    single-adapter-at-a-time pattern (see this module's docstring for why
-    three in sequence is fine within one process)."""
+    """Pipelines GPU ViTPose with one CPU MediaPipe worker, then DECA/MICA."""
+    prepass = FacePrepassAdapter(device=device)
+    mp_worker = FaceLandmarksWorker(len(frame_paths))
+    mp_worker.start()
+    try:
+        prepass.load()
+        try:
+            face_boxes = prepass.infer(frame_paths, human_masks, on_face_boxes=mp_worker.submit)
+        finally:
+            prepass.unload()
+    finally:
+        # Finish drains the bounded queue and re-raises a worker error.
+        # It also guarantees the task is closed if localization fails.
+        mp_out = mp_worker.finish()
+
     deca = DecaAdapter(device=device)
     deca.load()
     try:
-        deca_out = deca.infer(frame_paths, human_masks)
+        deca_out = deca.infer(frame_paths, face_boxes)
     finally:
         deca.unload()
-
-    mp_adapter = FaceLandmarksAdapter(device=device)
-    mp_adapter.load()
-    try:
-        mp_out = mp_adapter.infer(frame_paths, human_masks)
-    finally:
-        mp_adapter.unload()
 
     # MICA needs 5-point ArcFace landmarks, derived from MediaPipe's 478 via
     # the shared Dlib-68 correspondence (see mp2dlib.py), the same table

@@ -32,6 +32,7 @@ _ARCFACE_PREFIX = "arcface."
 _REGRESSOR_PREFIX = "regressor."
 
 PROGRESS_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 3/5 (MICA)"
+DEFAULT_INFERENCE_BATCH_SIZE = 16
 
 # infer() output keys (per-frame arrays).
 KEY_SHAPE = "mica_shape"
@@ -62,10 +63,9 @@ class MicaAdapter:
             module.to(device=self.device, dtype=self.dtype).eval()
 
     @torch.inference_mode()
-    def _infer_one_frame(self, frame_bgr: np.ndarray, landmarks_5pt: np.ndarray) -> np.ndarray:
-        aligned = norm_crop(frame_bgr, landmarks_5pt)
-        crop = normalize_for_arcface(aligned)
-        crop_t = torch.from_numpy(crop).unsqueeze(0).to(device=self.device, dtype=self.dtype)
+    def _infer_crops(self, crops: list[np.ndarray]) -> np.ndarray:
+        assert self._backbone is not None and self._regressor is not None, "Call load() before infer()."
+        crop_t = torch.from_numpy(np.stack(crops)).to(device=self.device, dtype=self.dtype)
         embedding = self._backbone(crop_t)
         # L2-normalize to unit length before the regressor, matching MICA's own
         # `encode()` (`F.normalize(self.arcface(arcface_imgs))`). Load-bearing,
@@ -76,26 +76,46 @@ class MicaAdapter:
         # deforming the mesh into a caricature.
         embedding = torch.nn.functional.normalize(embedding)
         shape = self._regressor(embedding)
-        return shape.float().cpu().numpy()[0]
+        return shape.float().cpu().numpy()
 
     def infer(
-        self, frame_paths: list[Path], landmarks_5pt: np.ndarray, landmarks_valid: np.ndarray
+        self, frame_paths: list[Path], landmarks_5pt: np.ndarray, landmarks_valid: np.ndarray,
+        batch_size: int = DEFAULT_INFERENCE_BATCH_SIZE,
     ) -> dict[str, np.ndarray]:
         """landmarks_5pt: (F, 5, 2) per-frame left eye/right eye/nose/left
         mouth/right mouth pixel coordinates. landmarks_valid: (F,) bool, from
         whatever detected them, frames without usable landmarks are skipped."""
         n = len(frame_paths)
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
         out = {
             KEY_SHAPE: np.zeros((n, N_SHAPE), np.float32),
             KEY_VALID: np.zeros(n, bool),
         }
 
+        batch_indices: list[int] = []
+        batch_crops: list[np.ndarray] = []
+
+        def flush_batch() -> None:
+            if not batch_indices:
+                return
+            shapes = self._infer_crops(batch_crops)
+            for batch_index, frame_index in enumerate(batch_indices):
+                out[KEY_SHAPE][frame_index] = shapes[batch_index]
+                out[KEY_VALID][frame_index] = True
+            batch_indices.clear()
+            batch_crops.clear()
+
         for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=PROGRESS_LABEL):
             if not landmarks_valid[i]:
                 continue
             frame_bgr = cv2.imread(str(frame_path))
-            out[KEY_SHAPE][i] = self._infer_one_frame(frame_bgr, landmarks_5pt[i])
-            out[KEY_VALID][i] = True
+            batch_indices.append(i)
+            batch_crops.append(normalize_for_arcface(norm_crop(frame_bgr, landmarks_5pt[i])))
+            if len(batch_indices) == batch_size:
+                flush_batch()
+
+        flush_batch()
 
         return out
 
