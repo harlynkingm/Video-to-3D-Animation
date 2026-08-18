@@ -22,6 +22,7 @@ from pipeline.algorithms.motion_smoothing import (
     smooth_position_sequence,
     smooth_rotation_sequence,
     smooth_translation_sequence,
+    transient_rotation_reversal_mask,
 )
 
 
@@ -503,6 +504,52 @@ def test_one_euro_tracks_real_motion_with_low_lag():
     # Low lag: well before the end of the sustained motion, it should already
     # be most of the way there, not still trailing behind.
     assert filtered[35][0] > 1.3
+
+
+def test_one_euro_transient_reversal_suppression_damps_a_single_pose_pop():
+    """A large one-frame jump that immediately returns is estimator jitter,
+    not a sustained finger bend."""
+    seq = np.zeros((60, 3))
+    seq[30, 0] = 0.9
+
+    ordinary = one_euro_filter_rotation_sequence(seq, fps=30.0, min_cutoff_hz=0.225, beta=1.85, dcutoff_hz=2.75)
+    adaptive = one_euro_filter_rotation_sequence(
+        seq, fps=30.0, min_cutoff_hz=0.225, beta=1.85, dcutoff_hz=2.75,
+        transient_reversal_mask=transient_rotation_reversal_mask(seq, fps=30.0),
+    )
+
+    assert abs(adaptive[30, 0]) < 0.6 * abs(ordinary[30, 0])
+
+
+def test_one_euro_transient_reversal_suppression_keeps_a_three_frame_keypress():
+    """A finger press held for three frames remains a detailed,
+    responsive motion rather than being mistaken for a one-frame pose pop."""
+    seq = np.zeros((60, 3))
+    seq[28:31, 0] = 0.35
+
+    ordinary = one_euro_filter_rotation_sequence(seq, fps=30.0, min_cutoff_hz=0.225, beta=1.85, dcutoff_hz=2.75)
+    adaptive = one_euro_filter_rotation_sequence(
+        seq, fps=30.0, min_cutoff_hz=0.225, beta=1.85, dcutoff_hz=2.75,
+        transient_reversal_mask=transient_rotation_reversal_mask(seq, fps=30.0),
+    )
+
+    assert adaptive[:, 0].max() > 0.28
+    assert np.allclose(adaptive, ordinary, atol=1e-6)
+
+
+def test_one_euro_low_bandwidth_scale_damps_an_uncertain_reacquisition():
+    """A caller can temporarily favor stability without changing normal frames."""
+    seq = np.zeros((60, 3))
+    seq[30:34, 0] = 0.9
+    scale = np.ones(60)
+    scale[30:34] = 0.12
+
+    ordinary = one_euro_filter_rotation_sequence(seq, fps=30.0, min_cutoff_hz=0.225, beta=1.85, dcutoff_hz=2.75)
+    conservative = one_euro_filter_rotation_sequence(
+        seq, fps=30.0, min_cutoff_hz=0.225, beta=1.85, dcutoff_hz=2.75, beta_scale=scale,
+    )
+
+    assert conservative[31, 0] < 0.6 * ordinary[31, 0]
 
 
 def test_one_euro_returns_proper_rotations():

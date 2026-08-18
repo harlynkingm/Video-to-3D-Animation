@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
-from pipeline.progress_tracker import ObjectShapeHint, RunRecord, StageName, StageStatus
+from pipeline.progress_tracker import FingerMotion, ObjectShapeHint, RunRecord, StageName, StageStatus
 from pipeline.run import MAX_ORDERED_STAGE_NUMBER, ORDERED_STAGES
 
 # ui/ -> repo root, matching pipeline/run.py's own _REPO_ROOT (pipeline/ -> repo root).
@@ -41,7 +41,8 @@ class RunFormState:
     source_fps: float | None = None
     start_stage: int = 0
     stop_stage: int = MAX_ORDERED_STAGE_NUMBER
-    object_shape: str = "auto"
+    object_shape: str = ObjectShapeHint.AUTO.value
+    finger_motion: str = FingerMotion.SMOOTH.value
     force_all: bool = False
     render_previews: bool = False
 
@@ -63,6 +64,8 @@ def build_run_argv(state: RunFormState) -> list[str]:
     # existing run's recorded object_shape_hint when resuming.
     if state.object_shape != ObjectShapeHint.AUTO.value:
         argv += ["--object-shape-hint", state.object_shape]
+    if state.finger_motion != FingerMotion.SMOOTH.value:
+        argv += ["--finger-motion", state.finger_motion]
     if state.video_path:
         argv += ["--input-video", state.video_path]
     if state.human_prompt:

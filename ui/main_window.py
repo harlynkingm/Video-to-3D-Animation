@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pipeline.progress_tracker import PROGRESS_JSON_NAME, ObjectShapeHint, RunRecord, StageName, ordered_stages
+from pipeline.progress_tracker import PROGRESS_JSON_NAME, FingerMotion, ObjectShapeHint, RunRecord, StageName, ordered_stages
 
 from ui.pipeline_runner import PipelineRunner, RunFormState, build_run_argv, compute_stage_progress
 from ui.queue import QueueItem
@@ -63,6 +63,7 @@ UI_FPS = "FPS:"
 UI_FOCAL_LENGTH = "Focal length (mm):"
 UI_SENSOR_WIDTH = "Sensor width (mm):"
 UI_OBJECT_SHAPE = "Object shape:"
+UI_FINGER_MOTION = "Finger motion:"
 UI_ADVANCED_OPTIONS = "Advanced options"
 UI_STAGE_RANGE = "Stage range:"
 UI_CONSOLE_LOG = "Console"
@@ -231,10 +232,23 @@ class MainWindow(QMainWindow):
         # should only take the width their own content needs.
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.FieldsStayAtSizeHint)
 
+        combo_box_row = QWidget()
+        combo_box_layout = QHBoxLayout(combo_box_row)
+        combo_box_layout.setContentsMargins(0, 0, 0, 0)
+
         self.object_shape_combo = QComboBox()
         self.object_shape_combo.addItems([hint.value for hint in ObjectShapeHint])
         self.object_shape_combo.setCurrentText(ObjectShapeHint.AUTO.value)
-        form.addRow(UI_OBJECT_SHAPE, self.object_shape_combo)
+        combo_box_layout.addWidget(self.object_shape_combo)
+
+        combo_box_layout.addSpacing(SECTION_SPACING)
+        combo_box_layout.addWidget(QLabel(UI_FINGER_MOTION))
+        self.finger_motion_combo = QComboBox()
+        self.finger_motion_combo.addItems([hint.value for hint in FingerMotion])
+        self.finger_motion_combo.setCurrentText(FingerMotion.SMOOTH.value)
+        combo_box_layout.addWidget(self.finger_motion_combo)
+
+        form.addRow(UI_OBJECT_SHAPE, combo_box_row)
 
         stage_row = QWidget()
         stage_row_layout = QHBoxLayout(stage_row)
@@ -396,6 +410,7 @@ class MainWindow(QMainWindow):
             start_stage=self._stages_by_combo_index[self.stage_from_combo.currentIndex()].stage_number,
             stop_stage=self._stages_by_combo_index[self.stage_to_combo.currentIndex()].stage_number,
             object_shape=self.object_shape_combo.currentText(),
+            finger_motion=self.finger_motion_combo.currentText(),
             force_all=self.force_rerun_checkbox.isChecked(),
             render_previews=self.render_previews_checkbox.isChecked(),
         )
@@ -420,6 +435,7 @@ class MainWindow(QMainWindow):
             if stage.stage_number == state.stop_stage:
                 self.stage_to_combo.setCurrentIndex(index)
         self.object_shape_combo.setCurrentText(state.object_shape)
+        self.finger_motion_combo.setCurrentText(state.finger_motion)
         self.force_rerun_checkbox.setChecked(state.force_all)
         self.render_previews_checkbox.setChecked(state.render_previews)
 

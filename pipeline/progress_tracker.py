@@ -24,6 +24,7 @@ FIELD_STAGES = "stages"
 FIELD_STATUS = "status"
 FIELD_OUTPUTS = "outputs"
 FIELD_OBJECT_SHAPE_HINT = "object_shape_hint"
+FIELD_FINGER_MOTION = "finger_motion"
 FIELD_FINE_TUNING = "fine_tuning"
 FIELD_FINE_TUNING_OVERRIDES = "fine_tuning_overrides"
 
@@ -190,6 +191,34 @@ class ObjectShapeHint(enum.StrEnum):
     CYLINDER = "cylinder"
 
 
+class FingerMotion(enum.StrEnum):
+    """The run-level trade-off between stable and highly articulated fingers."""
+
+    SMOOTH = "smooth"
+    DETAILED = "detailed"
+
+
+@dataclass(frozen=True)
+class FingerMotionSettings:
+    """The base filter controls selected by one semantic finger-motion mode."""
+
+    hand_finger_smoothing_window: int
+    hand_finger_beta: float
+    hand_finger_derivative_cutoff_hz: float
+    hand_finger_min_cutoff_hz: float
+    hand_finger_decimate_deg: float
+
+
+# Smooth deliberately uses the original broad HaMeR cleanup pass: it removes
+# most occlusion/interlocking jitter at the cost of small, fast articulations.
+# Detailed is the balanced sharp movement profile, retaining a short pre-pass and a
+# responsive One Euro path. Fine-tuning pins layer over either base below.
+FINGER_MOTION_SETTINGS = {
+    FingerMotion.SMOOTH: FingerMotionSettings(15, 0.3, 1.0, 0.15, 1.5),
+    FingerMotion.DETAILED: FingerMotionSettings(5, 1.85, 2.75, 0.225, 0.375),
+}
+
+
 def cli_field(
     *,
     flag: str,
@@ -249,6 +278,15 @@ class RunInput:
     object_shape_hint: ObjectShapeHint = cli_field(
         flag="--object-shape-hint", default=ObjectShapeHint.AUTO, parse=ObjectShapeHint,
         choices=[hint.value for hint in ObjectShapeHint],
+    )
+    # HaMeR estimates each frame independently, so a clip with occluded or
+    # interlocked hands needs a different temporal trade-off from a clear
+    # performance clip. Smooth is the reliable default; detailed preserves
+    # more fast, subtle articulation when that detail is the point of the run.
+    finger_motion: FingerMotion = cli_field(
+        flag="--finger-motion", default=FingerMotion.SMOOTH, parse=FingerMotion,
+        choices=[motion.value for motion in FingerMotion],
+        help="Finger-motion profile: 'smooth' (stable default) or 'detailed' (preserves fast subtle articulation)",
     )
     # Camera intrinsics: either lens/sensor specs (the common case, a real
     # phone/camera shoot, no calibration available) or a raw K matrix (real
@@ -340,16 +378,19 @@ class FineTuningOptions:
     # and root-position cleanup.
     body_smoothing_window: int = 9
     body_translation_cutoff: float = 0.15
-    # HaMeR is per-frame. Fingers retain a short, responsive pre-pass, while
-    # the noisier load-bearing wrist keeps a more conservative profile.
+    # HaMeR is per-frame. The default finger profile is deliberately stable;
+    # `RunInput.finger_motion=DETAILED` selects its own responsive base values.
+    # Explicit numeric fine-tuning overrides always take precedence over either
+    # profile, so they remain useful for calibration without changing a run's
+    # semantic smooth/detailed choice.
     hand_smoothing_window: int = 15
     hand_beta: float = 0.3
-    hand_finger_smoothing_window: int = 5
-    hand_finger_beta: float = 1.85
-    hand_finger_derivative_cutoff_hz: float = 2.75
-    hand_finger_min_cutoff_hz: float = 0.225
+    hand_finger_smoothing_window: int = FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH].hand_finger_smoothing_window
+    hand_finger_beta: float = FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH].hand_finger_beta
+    hand_finger_derivative_cutoff_hz: float = FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH].hand_finger_derivative_cutoff_hz
+    hand_finger_min_cutoff_hz: float = FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH].hand_finger_min_cutoff_hz
     hand_wrist_min_cutoff_hz: float = 0.10
-    hand_finger_decimate_deg: float = 0.375
+    hand_finger_decimate_deg: float = FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH].hand_finger_decimate_deg
     hand_wrist_decimate_deg: float = 3.0
 
     # Wrist plausibility uses a strict angular seed plus a lower hysteretic
@@ -664,8 +705,14 @@ class RunRecord:
             **{
                 **input_data,
                 **(
-                    {FIELD_OBJECT_SHAPE_HINT: ObjectShapeHint(input_data[FIELD_OBJECT_SHAPE_HINT])}
-                    if FIELD_OBJECT_SHAPE_HINT in input_data else {}
+                    {
+                        name: enum_type(input_data[name])
+                        for name, enum_type in (
+                            (FIELD_OBJECT_SHAPE_HINT, ObjectShapeHint),
+                            (FIELD_FINGER_MOTION, FingerMotion),
+                        )
+                        if name in input_data
+                    }
                 ),
             }
         )

@@ -48,6 +48,13 @@ DEFAULT_POLYORDER = 3
 DEFAULT_BUTTER_ORDER = 2
 DEFAULT_ONE_EURO_DCUTOFF_HZ = 1.0  # the "1€" in One Euro Filter, the paper's own standard default
 
+# A per-frame hand estimator can briefly jump to a different pose, then jump
+# straight back on the next frame. A real fast finger reversal can have that
+# shape too, so this is deliberately only a *soft* ambiguity signal: Stage 4
+# reduces the adaptive bandwidth rather than invalidating the measurement.
+TRANSIENT_REVERSAL_MIN_DEGREES = 6.0
+TRANSIENT_REVERSAL_BETA_SCALE = 0.15
+
 
 def _odd_window(window: int, n_frames: int) -> int | None:
     """Clamp a requested savgol window to an odd value in [3, n_frames], or None
@@ -210,6 +217,46 @@ def _one_euro_alpha(cutoff_hz: float, dt: float) -> float:
     return 1.0 / (1.0 + tau / dt)
 
 
+def transient_rotation_reversal_mask(
+    axis_angle: np.ndarray, fps: float, valid: np.ndarray | None = None,
+) -> np.ndarray:
+    """Flag each joint's large one-frame pose pop before any smoothing.
+
+    A flagged frame sits between two large opposing raw rotations. The check
+    intentionally runs on the original sequence: a centered pre-pass would
+    spread a one-frame pop across its neighbours and erase the very reversal
+    that identifies it. A short held keypress has a zero/same-direction next
+    rotation and is therefore not flagged. A true rapid reversal can be
+    flagged too, but downstream treats the flag as soft smoothing evidence,
+    never as a rejected measurement.
+    """
+    axis_angle = np.asarray(axis_angle)
+    n_frames = axis_angle.shape[0]
+    flat = axis_angle.reshape(n_frames, -1)
+    if flat.shape[1] % POSE_AXIS_DIM != 0:
+        raise ValueError(f"rotation sequence trailing dims not divisible by {POSE_AXIS_DIM}: {axis_angle.shape}")
+    n_joints = flat.shape[1] // POSE_AXIS_DIM
+    joints = flat.reshape(n_frames, n_joints, POSE_AXIS_DIM)
+    out = np.zeros((n_frames, n_joints), dtype=bool)
+    if n_frames < 3:
+        return out
+
+    dt = 1.0 / fps
+    min_speed = np.radians(TRANSIENT_REVERSAL_MIN_DEGREES) / dt
+    for joint in range(n_joints):
+        quats = hemisphere_aligned_quats(joints[:, joint, :], valid)
+        rotations = Rotation.from_quat(quats)
+        omega = (rotations[1:] * rotations[:-1].inv()).as_rotvec() / dt
+        current = omega[:-1]
+        following = omega[1:]
+        out[1:-1, joint] = (
+            (np.linalg.norm(current, axis=1) >= min_speed)
+            & (np.linalg.norm(following, axis=1) >= min_speed)
+            & (np.einsum("ij,ij->i", current, following) < 0.0)
+        )
+    return out
+
+
 def slerp(q0: np.ndarray, q1: np.ndarray, frac: float) -> np.ndarray:
     """Spherical interpolation from unit quaternion q0 toward q1 by `frac`
     (0 -> q0, 1 -> q1), taking the shorter path across the double-cover."""
@@ -232,6 +279,8 @@ def one_euro_filter_rotation_sequence(
     beta: float,
     dcutoff_hz: float = DEFAULT_ONE_EURO_DCUTOFF_HZ,
     valid: np.ndarray | None = None,
+    transient_reversal_mask: np.ndarray | None = None,
+    beta_scale: np.ndarray | None = None,
 ) -> np.ndarray:
     """Adaptively smooth a per-frame rotation sequence: heavy smoothing while
     a joint is nearly still, loosening automatically (low lag) once it
@@ -263,6 +312,13 @@ def one_euro_filter_rotation_sequence(
             estimate itself.
         valid: optional (T,) bool, gap-filled like `smooth_rotation_
             sequence` (`fill_invalid`).
+        transient_reversal_mask: optional ``(T, J)`` flags produced from the
+            original, pre-smoothed sequence. A flagged joint/frame keeps the
+            adaptive bandwidth low to remove a brief estimator pose pop.
+        beta_scale: optional ``(T,)`` positive multiplier for the adaptive
+            bandwidth. Callers can lower it while a measurement is known to
+            be unreliable, then restore it gradually without changing the
+            ordinary motion profile elsewhere in the clip.
 
     Returns the same shape/dtype, unchanged if fewer than 2 (valid) frames.
     """
@@ -276,6 +332,21 @@ def one_euro_filter_rotation_sequence(
         raise ValueError(f"rotation sequence trailing dims not divisible by 3: {original_shape}")
     n_joints = flat.shape[1] // POSE_AXIS_DIM
     joints = flat.reshape(n_frames, n_joints, POSE_AXIS_DIM)
+
+    if transient_reversal_mask is not None:
+        transient_reversal_mask = np.asarray(transient_reversal_mask, dtype=bool)
+        if transient_reversal_mask.shape != (n_frames, n_joints):
+            raise ValueError(
+                "transient_reversal_mask must have shape "
+                f"{(n_frames, n_joints)}, got {transient_reversal_mask.shape}"
+            )
+
+    if beta_scale is not None:
+        beta_scale = np.asarray(beta_scale, dtype=float)
+        if beta_scale.shape != (n_frames,):
+            raise ValueError(f"beta_scale must have shape {(n_frames,)}, got {beta_scale.shape}")
+        if np.any(beta_scale <= 0.0):
+            raise ValueError("beta_scale must be strictly positive")
 
     if valid is not None:
         valid = np.asarray(valid, dtype=bool)
@@ -302,7 +373,13 @@ def one_euro_filter_rotation_sequence(
             smoothed_omega = speed_alpha * omega_seq[t - 1] + (1.0 - speed_alpha) * smoothed_omega
             speed = float(np.linalg.norm(smoothed_omega))
 
-            value_alpha = _one_euro_alpha(min_cutoff_hz + beta * speed, dt)
+            effective_beta = beta
+            if beta_scale is not None:
+                effective_beta *= beta_scale[t]
+            if transient_reversal_mask is not None and transient_reversal_mask[t, j]:
+                effective_beta *= TRANSIENT_REVERSAL_BETA_SCALE
+
+            value_alpha = _one_euro_alpha(min_cutoff_hz + effective_beta * speed, dt)
             filtered[t] = slerp(filtered[t - 1], quats[t], value_alpha)
 
         out[:, j, :] = Rotation.from_quat(filtered).as_rotvec()

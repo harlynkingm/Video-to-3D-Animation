@@ -16,6 +16,7 @@ from pipeline.progress_tracker import (
     STAGE_DEPENDS_ON,
     RunInput,
     RunRecord,
+    FingerMotion,
     FineTuningOptions,
     StageName,
     StageRecord,
@@ -151,10 +152,11 @@ def test_progress_json_keeps_run_defaults_but_omits_smoothness_defaults(tmp_path
     assert "hand_finger_min_cutoff_hz" not in data["input"]
     assert "hand_finger_decimate_deg" not in data["input"]
     assert data["input"]["render_hands_preview"] is False
+    assert data["input"]["finger_motion"] == "smooth"
     assert "sam_track_max_bridge_frames" not in data["input"]
     assert "hand_wrist_max_deviation_deg" not in data["input"]
     assert data["fine_tuning_overrides"] == {}
-    assert RunRecord.load(runRecord.progress_dir).fine_tuning.hand_finger_min_cutoff_hz == 0.225
+    assert RunRecord.load(runRecord.progress_dir).fine_tuning.hand_finger_min_cutoff_hz == 0.15
 
 
 def test_loading_legacy_record_drops_its_implicit_runtime_defaults(tmp_path):
@@ -163,13 +165,15 @@ def test_loading_legacy_record_drops_its_implicit_runtime_defaults(tmp_path):
     data.pop("fine_tuning_overrides")  # reproduce the version-1 serialization
     data["input"]["hand_finger_min_cutoff_hz"] = 0.15
     data["input"]["hand_finger_decimate_deg"] = 1.5
+    data["input"].pop("finger_motion")  # predates the run-level profile field
     runRecord.path.write_text(json.dumps(data))
 
     reloaded = RunRecord.load(runRecord.progress_dir)
 
-    assert reloaded.fine_tuning.hand_finger_min_cutoff_hz == 0.225
-    assert reloaded.fine_tuning.hand_finger_decimate_deg == 0.375
+    assert reloaded.fine_tuning.hand_finger_min_cutoff_hz == 0.15
+    assert reloaded.fine_tuning.hand_finger_decimate_deg == 1.5
     assert reloaded.fine_tuning_overrides == {}
+    assert reloaded.input.finger_motion is FingerMotion.SMOOTH
 
 
 def test_explicit_runtime_override_is_preserved_even_when_it_matches_a_default(tmp_path):
@@ -181,6 +185,31 @@ def test_explicit_runtime_override_is_preserved_even_when_it_matches_a_default(t
     assert "hand_finger_min_cutoff_hz" not in data["input"]
     assert data["fine_tuning_overrides"] == {"hand_finger_min_cutoff_hz": 0.18}
     assert RunRecord.load(runRecord.progress_dir).fine_tuning.hand_finger_min_cutoff_hz == 0.18
+
+
+def test_finger_motion_uses_a_string_enum_and_persists_as_its_string_value(tmp_path):
+    runRecord = create_run(tmp_path / "run", make_run_input(finger_motion=FingerMotion.DETAILED), run_id="test")
+    data = json.loads(runRecord.path.read_text())
+
+    assert data["input"]["finger_motion"] == "detailed"
+    assert RunRecord.load(runRecord.progress_dir).input.finger_motion is FingerMotion.DETAILED
+
+
+def test_finger_motion_cli_default_and_override_use_the_string_enum():
+    assert _parse_run_input([]).finger_motion is FingerMotion.SMOOTH
+    assert _parse_run_input(["--finger-motion", "detailed"]).finger_motion is FingerMotion.DETAILED
+
+
+def test_apply_run_input_overrides_changes_finger_motion_only_when_supplied():
+    existing = make_run_input()
+    parser = argparse.ArgumentParser()
+    add_run_input_arguments(parser, required=False)
+
+    unchanged = apply_run_input_overrides(existing, parser.parse_args([]))
+    detailed = apply_run_input_overrides(existing, parser.parse_args(["--finger-motion", "detailed"]))
+
+    assert unchanged.finger_motion is FingerMotion.SMOOTH
+    assert detailed.finger_motion is FingerMotion.DETAILED
 
 
 def test_non_smoothing_fine_tuning_override_uses_the_same_key_value_object(tmp_path):

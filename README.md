@@ -150,6 +150,7 @@ This creates a progress file at `runs/my_clip/progress.json` then runs every sta
 | `--run-id` | No | `--output-dir`'s own folder name | A human-readable label for the run. Doesn't affect anything on disk. |
 | `--object-prompt` | No | none | Text description of the object to track, e.g. `"a teddy bear"`. Omit if there's no object to track. |
 | `--object-shape-hint` | No | `auto` | Forces the tracked object's proxy shape to `box`, `ellipsoid`, or `cylinder` instead of letting stage 6 auto-fit whichever shape better matches the object. |
+| `--finger-motion` | No | `smooth` | Finger-motion profile: `smooth` prioritizes stable hands; `detailed` retains more rapid, subtle finger articulation. |
 | `--anchor-frame-override` | No | auto-selected | Forces a specific frame index as the "anchor" frame instead of letting stage 1 pick the frame with the clearest view of the object. |
 | `--start-on-stage` | No | runs every implemented stage | Starts the run on the given stage number, inclusive, e.g. `4` starts the run on stage 4. |
 | `--stop-after-stage` | No | runs every implemented stage | Stops after the given stage number, inclusive, e.g. `5` runs stages 0-5 and stops before stage 6. Can be combined with `--start-on-stage` to only run a range, and can be combined with `--force-all` to force-rerun a range. |
@@ -432,6 +433,8 @@ After updating, a backup of your previous version is saved in the same folder, i
 
 Stage 2 (body) and stage 4 (hands) temporally smooth their output before saving. The hands need much stronger smoothing than the body because HaMeR runs independently per frame, while GVHMR already runs a temporal model over the entire video.
 
+Finger articulation uses the run-level `--finger-motion` choice to have `smooth` or `detailed` finger motion.
+
 <details>
 <summary>Smoothness tuning</summary>
 
@@ -453,12 +456,12 @@ Here are the possible smoothing overrides:
 | `body_translation_cutoff` | `0.15` | Butterworth low-pass cutoff (fraction of Nyquist) for the body root position. Lower is smoother but adds lag. |
 | `hand_smoothing_window` | `15` | Savitzky-Golay pre-pass window for the wrist. It keeps broad wrist motion stable without affecting finger detail. |
 | `hand_beta` | `0.3` | Wrist adaptive-filter responsiveness. |
-| `hand_finger_smoothing_window` | `5` | Short fixed-window pre-pass for fingers (`0` disables it). This suppresses frame-to-frame jitter while retaining short articulations; larger odd values become progressively smoother and flatter. |
-| `hand_finger_beta` | `1.85` | Finger adaptive-filter responsiveness. Higher follows quick, small bends more closely, at the cost of allowing more movement-time jitter. |
-| `hand_finger_derivative_cutoff_hz` | `2.75` | How quickly the finger filter recognizes a change in speed. Higher retains short keypresses; lower is steadier but slower to react. |
-| `hand_finger_min_cutoff_hz` | `0.225` | Adaptive-filter smoothing strength at rest for the fingers. Lower is steadier when still but slower to respond. |
+| `hand_finger_smoothing_window` | `15` / `5` (smooth / detailed) | Savitzky-Golay pre-pass for fingers. The smooth profile uses broad cleanup; detailed uses a short pass to retain small articulations. |
+| `hand_finger_beta` | `0.3` / `1.85` (smooth / detailed) | Finger adaptive-filter responsiveness. Higher follows quick, small bends more closely, at the cost of allowing more movement-time jitter. |
+| `hand_finger_derivative_cutoff_hz` | `1.0` / `2.75` (smooth / detailed) | How quickly the finger filter recognizes a change in speed. Higher retains short keypresses; lower is steadier but slower to react. |
+| `hand_finger_min_cutoff_hz` | `0.15` / `0.225` (smooth / detailed) | Adaptive-filter smoothing strength at rest for the fingers. Lower is steadier when still but slower to respond. |
 | `hand_wrist_min_cutoff_hz` | `0.10` | Same, for the wrist — lower than the fingers, since the wrist starts from noisier data and needs more smoothing. |
-| `hand_finger_decimate_deg` | `0.375` | Keyframe-reduction tolerance for the fingers, in degrees: the most the refitted curve may deviate from the filtered motion. Keep this low for detail; larger means fewer keyframes and a flatter curve. |
+| `hand_finger_decimate_deg` | `1.5` / `0.375` (smooth / detailed) | Keyframe-reduction tolerance for the fingers, in degrees: the most the refitted curve may deviate from the filtered motion. Keep this low for detail; larger means fewer keyframes and a flatter curve. |
 | `hand_wrist_decimate_deg` | `3.0` | Same, for the wrist (looser than the fingers). |
 | `hand_max_wrist_deviation_deg` | `110.0` | Max plausible wrist rotation degrees relative to the forearm, checked against stage 2's body motion before smoothing. A raw estimate past this is treated as 'undetected'. Lower this value to be stricter, raise if a fast real wrist motion is ever incorrectly flagged. |
 </details>

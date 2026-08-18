@@ -65,6 +65,8 @@ def summarize_run_form_state(state: RunFormState) -> list[str]:
         lines.append(f"{state.source_fps}fps")
     if state.object_shape != _DEFAULT_STATE.object_shape:
         lines.append(f"object shape {state.object_shape}")
+    if state.finger_motion != _DEFAULT_STATE.finger_motion:
+        lines.append(f"finger motion {state.finger_motion}")
     if state.force_all:
         lines.append("force re-run")
     if state.render_previews:

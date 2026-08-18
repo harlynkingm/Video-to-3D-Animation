@@ -8,6 +8,8 @@ automatically otherwise (see conftest.py).
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -19,12 +21,189 @@ from pipeline.adapters.hamer.hamer_adapter import (
     KEY_RIGHT_HAND_POSE,
     KEY_RIGHT_VALID,
     MIN_ROLLING_WRIST_CONFIDENCE,
+    _hand_crop_has_object_contact,
+    _hand_crop_is_ambiguous,
     _reject_low_confidence_stretches,
 )
+from pipeline.stages.stage_4_estimate_hands import (
+    FINGER_AMBIGUITY_BETA_SCALE,
+    FINGER_AMBIGUITY_RECOVERY_FRAMES,
+    FINGER_OBJECT_CONTACT_BETA_SCALE,
+    FINGER_MOTION_SETTINGS,
+    _finger_ambiguity_beta_scale,
+    _finger_object_contact_beta_scale,
+    _finger_validity_after_sustained_wrist_failure,
+    _finger_motion_settings,
+    _smooth_hand_channel,
+)
+from pipeline.progress_tracker import FingerMotion
 from conftest import TEST_VIDEO_FRAME_COUNT
 
 MAX_PLAUSIBLE_FINGER_ROTATION_RAD = 3.15  # any single axis-angle rotation maxes out at pi
 MAX_PLAUSIBLE_FRAME_DELTA = 2.0  # generous bound on frame-to-frame full-hand pose change
+
+
+def test_sustained_wrist_failure_holds_finger_input_but_a_brief_one_does_not():
+    finger_valid = np.ones(20, bool)
+    wrist_valid = np.ones(20, bool)
+    wrist_valid[2:5] = False  # isolated/brief rejection: fingers remain usable
+    wrist_valid[8:15] = False  # sustained failure: treat fingers as occluded
+
+    filtered = _finger_validity_after_sustained_wrist_failure(finger_valid, wrist_valid)
+
+    assert filtered[2:5].all()
+    assert not filtered[8:15].any()
+
+
+def test_crop_ambiguity_is_a_soft_smoothing_cue_not_a_finger_hold():
+    finger_valid = np.ones(12, bool)
+    wrist_valid = np.ones(12, bool)
+    ambiguous = np.zeros(12, bool)
+    ambiguous[3:9] = True
+
+    filtered = _finger_validity_after_sustained_wrist_failure(finger_valid, wrist_valid, ambiguous)
+
+    assert filtered.all()
+
+
+def test_hand_crop_ambiguity_detects_nearby_hands_but_not_a_visible_object_grip():
+    hand = np.array([40.0, 40.0, 80.0, 80.0])
+    wrist = np.array([60.0, 60.0, 0.9])
+    object_mask = np.zeros((120, 120), bool)
+    object_mask[50:70, 50:70] = True
+
+    assert _hand_crop_has_object_contact(hand, object_mask)
+    assert not _hand_crop_is_ambiguous(hand, None, wrist, None)
+    assert _hand_crop_is_ambiguous(hand, np.array([50.0, 50.0, 90.0, 90.0]), wrist, wrist)
+
+
+def test_hand_crop_ambiguity_leaves_a_clear_crop_usable():
+    hand = np.array([40.0, 40.0, 80.0, 80.0])
+    other_hand = np.array([50.0, 50.0, 90.0, 90.0])
+    wrist = np.array([60.0, 60.0, 0.9])
+    other_wrist = np.array([110.0, 60.0, 0.9])
+
+    assert not _hand_crop_is_ambiguous(hand, other_hand, wrist, other_wrist)
+
+
+def test_ambiguous_hand_crop_gets_a_smooth_reacquisition_ramp():
+    ambiguous = np.zeros(50, bool)
+    ambiguous[10:15] = True
+
+    scale = _finger_ambiguity_beta_scale(ambiguous)
+
+    assert np.all(scale[10:15] == FINGER_AMBIGUITY_BETA_SCALE)
+    assert FINGER_AMBIGUITY_BETA_SCALE < scale[15] < 1.0
+    assert np.all(np.diff(scale[15:15 + FINGER_AMBIGUITY_RECOVERY_FRAMES]) > 0.0)
+    assert scale[14 + FINGER_AMBIGUITY_RECOVERY_FRAMES] == pytest.approx(1.0)
+    assert np.all(scale[15 + FINGER_AMBIGUITY_RECOVERY_FRAMES:] == 1.0)
+
+
+def test_object_contact_only_modestly_reduces_finger_bandwidth_without_holding():
+    scale = _finger_object_contact_beta_scale(np.array([False, True, True] + [False] * 27))
+
+    assert np.array_equal(scale[:3], [1.0, FINGER_OBJECT_CONTACT_BETA_SCALE, FINGER_OBJECT_CONTACT_BETA_SCALE])
+    assert FINGER_OBJECT_CONTACT_BETA_SCALE < scale[3] < 1.0
+
+
+def test_detailed_profile_preserves_a_short_small_finger_bend():
+    """A detailed finger movement can be just a few frames of low-amplitude finger motion.
+
+    The old shared 15-frame pre-pass erases that signal before One Euro gets a
+    speed measurement from it. The finger profile must retain it while the
+    wrist can continue using that stronger stabilization independently.
+    """
+    sequence = np.zeros((60, 3), np.float32)
+    sequence[28:31, 0] = 0.35  # 20 degrees for three frames, a light keypress
+    valid = np.ones(60, bool)
+
+    legacy = _smooth_hand_channel(sequence, valid, 30.0, 15, 0.15, 0.3, 1.5)
+    detailed = _smooth_hand_channel(sequence, valid, 30.0, 5, 0.225, 1.85, 0.375, 2.75)
+
+    assert legacy[:, 0].max() < 0.10  # demonstrates the regression we are avoiding
+    assert detailed[:, 0].max() > 0.28
+
+
+def test_finger_motion_mode_selects_a_profile_before_applying_numeric_pins():
+    smooth = _finger_motion_settings(SimpleNamespace(
+        input=SimpleNamespace(finger_motion=FingerMotion.SMOOTH), fine_tuning_overrides={},
+    ))
+    detailed = _finger_motion_settings(SimpleNamespace(
+        input=SimpleNamespace(finger_motion=FingerMotion.DETAILED), fine_tuning_overrides={},
+    ))
+    pinned = _finger_motion_settings(SimpleNamespace(
+        input=SimpleNamespace(finger_motion=FingerMotion.DETAILED),
+        fine_tuning_overrides={"hand_finger_beta": 1.25, "hand_wrist_min_cutoff_hz": 0.08},
+    ))
+
+    assert smooth == FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH]
+    assert detailed == FINGER_MOTION_SETTINGS[FingerMotion.DETAILED]
+    assert smooth.hand_finger_smoothing_window > detailed.hand_finger_smoothing_window
+    assert pinned.hand_finger_beta == 1.25
+    assert pinned.hand_finger_min_cutoff_hz == detailed.hand_finger_min_cutoff_hz
+
+
+def test_smooth_profile_strictly_prioritizes_resting_finger_stability():
+    """The default profile is the no-visible-jitter path, not a compromise."""
+    rng = np.random.default_rng(11)
+    resting = rng.normal(0, 0.035, (120, 3)).astype(np.float32)
+    valid = np.ones(120, bool)
+    smooth_settings = FINGER_MOTION_SETTINGS[FingerMotion.SMOOTH]
+    detailed_settings = FINGER_MOTION_SETTINGS[FingerMotion.DETAILED]
+
+    smooth = _smooth_hand_channel(
+        resting, valid, 30.0,
+        smooth_settings.hand_finger_smoothing_window,
+        smooth_settings.hand_finger_min_cutoff_hz,
+        smooth_settings.hand_finger_beta,
+        smooth_settings.hand_finger_decimate_deg,
+        smooth_settings.hand_finger_derivative_cutoff_hz,
+        suppress_transient_reversals=True,
+    )
+    detailed = _smooth_hand_channel(
+        resting, valid, 30.0,
+        detailed_settings.hand_finger_smoothing_window,
+        detailed_settings.hand_finger_min_cutoff_hz,
+        detailed_settings.hand_finger_beta,
+        detailed_settings.hand_finger_decimate_deg,
+        detailed_settings.hand_finger_derivative_cutoff_hz,
+        suppress_transient_reversals=True,
+    )
+    jitter = lambda values: float(np.abs(np.diff(values, n=2, axis=0)).mean())
+
+    assert jitter(smooth) < 0.25 * jitter(detailed)
+
+
+def test_detailed_profile_reduces_resting_frame_jitter():
+    """The detail-preserving finger profile must not look like noisy spider legs."""
+    rng = np.random.default_rng(7)
+    resting = rng.normal(0, 0.035, (120, 3)).astype(np.float32)
+    valid = np.ones(120, bool)
+
+    extra_detailed = _smooth_hand_channel(resting, valid, 30.0, 0, 0.30, 2.0, 0.35, 5.0)
+    detailed = _smooth_hand_channel(resting, valid, 30.0, 5, 0.225, 1.85, 0.375, 2.75)
+    jitter = lambda values: float(np.abs(np.diff(values, n=2, axis=0)).mean())
+
+    assert jitter(detailed) < 0.25 * jitter(extra_detailed)
+
+
+def test_adaptive_finger_path_detects_a_pop_before_the_centered_prepass():
+    """The short Savitzky-Golay pass spreads a one-frame bad estimate over
+    nearby frames, so the transient detector must inspect raw hand poses
+    before that pass, not after it."""
+    sequence = np.zeros((60, 3), np.float32)
+    sequence[30, 0] = 0.9
+    valid = np.ones(60, bool)
+
+    ordinary = _smooth_hand_channel(sequence, valid, 30.0, 5, 0.225, 1.85, 0.375, 2.75)
+    adaptive = _smooth_hand_channel(
+        sequence, valid, 30.0, 5, 0.225, 1.85, 0.375, 2.75,
+        suppress_transient_reversals=True,
+    )
+
+    assert adaptive[:, 0].max() < 0.8 * ordinary[:, 0].max()
+
+
 
 
 def _load(stage_4_result):

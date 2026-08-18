@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 import torch
 from safetensors import safe_open
-from scipy.ndimage import minimum_filter1d
+from scipy.ndimage import maximum_filter1d, minimum_filter1d
 
 from pipeline.progress_tracker import StageName
 
@@ -82,6 +82,16 @@ HAND_POSE_DIM = 45  # 15 MANO joints x 3 axis-angle
 MIN_ROLLING_WRIST_CONFIDENCE = 0.6
 WRIST_CONFIDENCE_WINDOW_FRAMES = 7  # centered rolling window
 
+# HaMeR regresses each hand from an independent crop. Nearby overlapping hands
+# can obscure fingers, whereas an object in the crop often means an intentional,
+# visible grip. Both are softer confidence cues, never missing-data evidence,
+# so real grip adjustments remain continuous. The small temporal dilation keeps
+# one-frame hand-crop-boundary flicker from changing that confidence abruptly.
+MIN_HAND_OBJECT_CROP_COVERAGE = 0.02
+MIN_HAND_OVERLAP_CROP_AREA = 0.10
+MIN_HAND_OVERLAP_WRIST_DISTANCE_CROP_SCALE = 0.35
+MIN_HAND_AMBIGUITY_WINDOW_FRAMES = 5
+
 
 def _reject_low_confidence_stretches(valid: np.ndarray, wrist_conf: np.ndarray) -> np.ndarray:
     """Demote to invalid any frame whose wrist-keypoint confidence, over a
@@ -111,6 +121,56 @@ KEY_LEFT_VALID = "left_valid"
 KEY_RIGHT_VALID = "right_valid"
 KEY_LEFT_WRIST_VALID = "left_wrist_valid"
 KEY_RIGHT_WRIST_VALID = "right_wrist_valid"
+KEY_LEFT_FINGER_AMBIGUOUS = "left_finger_ambiguous"
+KEY_RIGHT_FINGER_AMBIGUOUS = "right_finger_ambiguous"
+KEY_LEFT_FINGER_OBJECT_CONTACT = "left_finger_object_contact"
+KEY_RIGHT_FINGER_OBJECT_CONTACT = "right_finger_object_contact"
+
+
+def _box_overlapping_area(a: np.ndarray, b: np.ndarray) -> float:
+    left, top = np.maximum(a[:2], b[:2])
+    right, bottom = np.minimum(a[2:], b[2:])
+    overlap = np.maximum(right - left, 0.0) * np.maximum(bottom - top, 0.0)
+    area_a = np.prod(np.maximum(a[2:] - a[:2], 0.0))
+    area_b = np.prod(np.maximum(b[2:] - b[:2], 0.0))
+    union = area_a + area_b - overlap
+    return float(overlap / union) if union > 0 else 0.0
+
+
+def _hand_crop_has_object_contact(hand_box: np.ndarray, object_mask: np.ndarray | None) -> bool:
+    """Whether a tracked object occupies a meaningful part of the hand crop."""
+    if object_mask is None:
+        return False
+    height, width = object_mask.shape
+    x1, y1 = np.maximum(np.floor(hand_box[:2]).astype(int), 0)
+    x2, y2 = np.minimum(np.ceil(hand_box[2:]).astype(int), [width, height])
+    if x2 <= x1 or y2 <= y1:
+        return False
+    return float(object_mask[y1:y2, x1:x2].mean()) >= MIN_HAND_OBJECT_CROP_COVERAGE
+
+
+def _hand_crop_is_ambiguous(
+    hand_box: np.ndarray,
+    other_hand_box: np.ndarray | None,
+    wrist: np.ndarray,
+    other_wrist: np.ndarray | None,
+) -> bool:
+    """Whether nearby overlapping hands make a crop less reliable.
+
+    Crop overlap alone is insufficient because forearm-derived boxes can
+    overlap for two well-separated hands. Require the wrists to be nearby too.
+    Face proximity is deliberately not used: a nearby face does not establish
+    finger occlusion. Object contact is separately retained as a soft cue.
+    """
+    if other_hand_box is not None and other_wrist is not None:
+        crop_scale = float(min(np.max(hand_box[2:] - hand_box[:2]), np.max(other_hand_box[2:] - other_hand_box[:2])))
+        if (
+            _box_overlapping_area(hand_box, other_hand_box) >= MIN_HAND_OVERLAP_CROP_AREA
+            and np.linalg.norm(wrist[:2] - other_wrist[:2]) <= MIN_HAND_OVERLAP_WRIST_DISTANCE_CROP_SCALE * crop_scale
+        ):
+            return True
+
+    return False
 
 
 def _fliplr_axis_angle(aa: np.ndarray) -> np.ndarray:
@@ -150,8 +210,7 @@ class HamerAdapter:
             module.to(device=self.device, dtype=self.dtype).eval()
 
     @torch.inference_mode()
-    def _infer_one_hand(self, frame_bgr: np.ndarray, keypoints: np.ndarray, is_right: bool):
-        box = hand_box_from_body_kpts(keypoints, is_right)
+    def _infer_one_hand(self, frame_bgr: np.ndarray, box: np.ndarray, is_right: bool):
         if box is None:
             return None
         crop = crop_hand(frame_bgr, box, is_right)
@@ -166,7 +225,7 @@ class HamerAdapter:
             hand_pose = _fliplr_axis_angle(hand_pose)
         return global_orient.astype(np.float32), hand_pose.astype(np.float32)
 
-    def infer(self, frame_paths: list[Path], human_masks: dict) -> dict[str, np.ndarray]:
+    def infer(self, frame_paths: list[Path], human_masks: dict, object_masks: dict | None = None) -> dict[str, np.ndarray]:
         packed = human_masks[KEY_PACKED_MASKS]
         n = len(frame_paths)
         out = {
@@ -176,7 +235,12 @@ class HamerAdapter:
             KEY_RIGHT_GLOBAL_ORIENT: np.zeros((n, 3), np.float32),
             KEY_LEFT_VALID: np.zeros(n, bool),
             KEY_RIGHT_VALID: np.zeros(n, bool),
+            KEY_LEFT_FINGER_AMBIGUOUS: np.zeros(n, bool),
+            KEY_RIGHT_FINGER_AMBIGUOUS: np.zeros(n, bool),
+            KEY_LEFT_FINGER_OBJECT_CONTACT: np.zeros(n, bool),
+            KEY_RIGHT_FINGER_OBJECT_CONTACT: np.zeros(n, bool),
         }
+        object_packed = None if object_masks is None else object_masks.get(KEY_PACKED_MASKS)
         # Wrist keypoint confidence per frame, per hand, collected for the
         # rolling-confidence outlier pass below, which needs the whole sequence
         # (including frames after each one) so it can't run inline in this loop.
@@ -195,18 +259,44 @@ class HamerAdapter:
             wrist_conf[True][i] = keypoints[COCO_R_WRIST][2]
             wrist_conf[False][i] = keypoints[COCO_L_WRIST][2]
 
+            object_mask = None
+            if object_packed is not None:
+                object_mask = unpack_masks(object_packed[i])[0].numpy().astype(np.uint8)
+                object_mask = cv2.resize(
+                    object_mask, (frame_bgr.shape[1], frame_bgr.shape[0]), interpolation=cv2.INTER_NEAREST,
+                ).astype(bool)
+
+            hand_boxes = {
+                True: hand_box_from_body_kpts(keypoints, is_right=True),
+                False: hand_box_from_body_kpts(keypoints, is_right=False),
+            }
+            wrists = {
+                True: keypoints[COCO_R_WRIST],
+                False: keypoints[COCO_L_WRIST],
+            }
+
             for is_right, pose_key, go_key, valid_key in (
                 (True, KEY_RIGHT_HAND_POSE, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID),
                 (False, KEY_LEFT_HAND_POSE, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID),
             ):
-                result = self._infer_one_hand(frame_bgr, keypoints, is_right)
+                result = self._infer_one_hand(frame_bgr, hand_boxes[is_right], is_right)
                 if result is None:
                     continue
                 out[go_key][i], out[pose_key][i] = result
                 out[valid_key][i] = True
+                ambiguous_key = KEY_RIGHT_FINGER_AMBIGUOUS if is_right else KEY_LEFT_FINGER_AMBIGUOUS
+                object_contact_key = KEY_RIGHT_FINGER_OBJECT_CONTACT if is_right else KEY_LEFT_FINGER_OBJECT_CONTACT
+                out[ambiguous_key][i] = _hand_crop_is_ambiguous(
+                    hand_boxes[is_right], hand_boxes[not is_right], wrists[is_right], wrists[not is_right],
+                )
+                out[object_contact_key][i] = _hand_crop_has_object_contact(hand_boxes[is_right], object_mask)
 
         for is_right, valid_key in ((True, KEY_RIGHT_VALID), (False, KEY_LEFT_VALID)):
             out[valid_key] = _reject_low_confidence_stretches(out[valid_key], wrist_conf[is_right])
+        for ambiguous_key in (KEY_LEFT_FINGER_AMBIGUOUS, KEY_RIGHT_FINGER_AMBIGUOUS):
+            out[ambiguous_key] = maximum_filter1d(
+                out[ambiguous_key].astype(np.uint8), size=MIN_HAND_AMBIGUITY_WINDOW_FRAMES, mode="nearest",
+            ).astype(bool)
 
         return out
 
