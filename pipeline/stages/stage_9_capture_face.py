@@ -316,7 +316,16 @@ def _compute_arkit_channels(
       `HARD_ZERO_CHANNELS`).
     """
     jaw_pose, expression = motion[KEY_JAW_POSE], motion[KEY_EXPRESSION]
-    mp_landmarks, mp_valid = params["mp_landmarks"], params["mp_valid"]
+    mp_landmarks = params["mp_landmarks"]
+    # `flame_valid` contains the long-gap recovery gate from the fitter, as
+    # well as DECA's own detector validity. Only its *newly rejected* frames
+    # should gate MediaPipe channels: a brief DECA-only miss must retain the
+    # pre-existing MediaPipe export behavior. This shared recovery mask keeps
+    # a failed re-acquisition out of every face shape while FLAME jaw and
+    # expression are being held at the same time.
+    base_fit_valid = params["mp_valid"] & params["deca_valid"]
+    recovery_rejected = base_fit_valid & ~motion[FIT_KEY_VALID]
+    mp_valid = params["mp_valid"] & ~recovery_rejected
 
     jaw_channels = direct_arkit_jaw_channels(jaw_pose)
     lateral_jaw_channels = {name: jaw_channels[name] for name in FLAME_JAW_CHANNELS}

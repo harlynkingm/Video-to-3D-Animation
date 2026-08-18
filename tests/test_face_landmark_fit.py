@@ -21,7 +21,7 @@ from pipeline.algorithms.face.face_landmark_fit import (
     FitInputs, KEY_EXPRESSION, KEY_GLOBAL_ORIENT, KEY_JAW_POSE, KEY_TRANSL, KEY_VALID,
     _bridge_keep_mask, _bridge_short_gaps, _build_flame_model, _demote_short_valid_runs, _detect_outlier_frames,
     _init_shared_betas, _init_translation, _lead_from_neutral, _project_points,
-    _snap_jaw_to_deca_on_axis_deviation, calibrate_rotation_offset, fit_clip,
+    _guard_face_recovery, _snap_jaw_to_deca_on_axis_deviation, calibrate_rotation_offset, fit_clip,
 )
 
 FLAME_ASSETS_PRESENT = (FLAME_MODEL_DIR / "flame" / "FLAME_NEUTRAL.npz").exists()
@@ -317,6 +317,72 @@ def test_snap_jaw_to_deca_on_axis_deviation_ignores_invalid_frames():
 
     assert not flagged.any()
     assert np.array_equal(snapped, jaw_pose)
+
+
+def test_guard_face_recovery_demotes_bad_reacquisition_after_long_gap():
+    """A recovered face state which disagrees with DECA must not become the
+    endpoint of the long gap's glide, whatever face component was corrupted."""
+    n = 22
+    jaw_pose = np.zeros((n, 3), dtype=np.float32)
+    expression = np.zeros((n, FLAME_NUM_EXPRESSION), dtype=np.float32)
+    deca_jaw = np.zeros((n, 3), dtype=np.float32)
+    deca_expression = np.zeros((n, FLAME_NUM_EXPRESSION), dtype=np.float32)
+    valid = np.array([True] * 4 + [False] * 12 + [True] * 6)
+
+    # Frame 16 has a bad jaw opening; frame 17 has a bad non-jaw expression.
+    # Frames 18-20 agree for the three-frame settling period and establish
+    # the recovery for the entire facial state.
+    jaw_pose[16:18, 0] = 0.60
+    jaw_pose[17, 0] = 0.02
+    expression[17, 4] = 2.5
+    jaw_pose[18:21, 0] = 0.08
+    deca_jaw[16:18, 0] = 0.02
+    deca_jaw[18:21, 0] = 0.02
+
+    guarded = _guard_face_recovery(
+        jaw_pose, expression, deca_jaw, deca_expression, valid, max_bridge_frames=8,
+    )
+
+    assert not guarded[16] and not guarded[17]
+    assert guarded[18:22].all()
+    assert np.array_equal(guarded[:16], valid[:16])
+
+
+def test_guard_face_recovery_keeps_agreeing_long_gap_recovery():
+    """The guard has no effect when the independent jaw estimates agree."""
+    n = 20
+    jaw_pose = np.zeros((n, 3), dtype=np.float32)
+    expression = np.zeros((n, FLAME_NUM_EXPRESSION), dtype=np.float32)
+    deca_jaw = np.zeros((n, 3), dtype=np.float32)
+    deca_expression = np.zeros((n, FLAME_NUM_EXPRESSION), dtype=np.float32)
+    valid = np.array([True] * 3 + [False] * 10 + [True] * 7)
+    jaw_pose[13:, 0] = [0.10, 0.15, 0.20, 0.25, 0.20, 0.15, 0.10]
+    deca_jaw[13:, 0] = jaw_pose[13:, 0] - 0.04
+    expression[13:, 3] = [0.10, 0.15, 0.20, 0.25, 0.20, 0.15, 0.10]
+    deca_expression[13:, 3] = expression[13:, 3] - 0.04
+
+    guarded = _guard_face_recovery(
+        jaw_pose, expression, deca_jaw, deca_expression, valid, max_bridge_frames=8,
+    )
+
+    assert np.array_equal(guarded, valid)
+
+
+def test_guard_face_recovery_is_noop_without_a_long_loss():
+    """Ground-truth clips with uninterrupted face tracking must retain every
+    original fitted frame, regardless of harmless model disagreement."""
+    n = 12
+    jaw_pose = np.zeros((n, 3), dtype=np.float32)
+    expression = np.full((n, FLAME_NUM_EXPRESSION), 3.0, dtype=np.float32)
+    deca_jaw = np.full((n, 3), -0.5, dtype=np.float32)
+    deca_expression = np.zeros((n, FLAME_NUM_EXPRESSION), dtype=np.float32)
+    valid = np.ones(n, dtype=bool)
+
+    guarded = _guard_face_recovery(
+        jaw_pose, expression, deca_jaw, deca_expression, valid, max_bridge_frames=8,
+    )
+
+    assert np.array_equal(guarded, valid)
 
 
 def test_demote_short_valid_runs_demotes_a_brief_interior_island():

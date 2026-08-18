@@ -138,7 +138,7 @@ def test_compute_arkit_channels_uses_mediapipe_for_jaw_open_and_wide(tmp_path):
         mp_landmarks[:, bottom] = [0, y + 1, 0]
         mp_landmarks[:, iris] = [0, y, 0]
     params = {
-        "mp_landmarks": mp_landmarks, "mp_valid": np.ones(n, dtype=bool),
+        "mp_landmarks": mp_landmarks, "mp_valid": np.ones(n, dtype=bool), "deca_valid": np.ones(n, dtype=bool),
         "mp_blendshapes": np.zeros((n, len(ARKIT_BLENDSHAPE_NAMES)), dtype=np.float32),
     }
     params["mp_blendshapes"][:, ARKIT_BLENDSHAPE_NAMES.index("EyeWideLeft")] = 0.42

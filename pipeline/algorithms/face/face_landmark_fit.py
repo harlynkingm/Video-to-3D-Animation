@@ -50,8 +50,8 @@ FLAME_NUM_BETAS = 300  # FLAME 2020's full shape-identity space (matches MICA's 
 FLAME_NUM_EXPRESSION = 50  # matches DECA's own n_exp
 NUM_FLAME_LANDMARKS = 51  # `use_face_contour=False`: FLAME's static embedding only
 
-_FIT_ORIENTATION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 4/5 (FLAME fit, head pose)"
-_FIT_EXPRESSION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 5/5 (FLAME fit, expression)"
+_FIT_ORIENTATION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 5/6 (FLAME fit, head pose)"
+_FIT_EXPRESSION_LABEL = f"{StageName.STAGE_9_CAPTURE_FACE.label} 6/6 (FLAME fit, expression)"
 
 # Reference points within the 51-point FLAME/dlib-inner set (0-indexed within
 # the 51, i.e. dlib index - 17) used to initialize head depth via the
@@ -229,6 +229,20 @@ JAW_OUTLIER_BRIDGE_FRAMES = 3
 # that a drifted stretch is unambiguous. Flagged frames are snapped directly
 # to DECA's own jaw_pose (all 3 axes).
 JAW_AXIS1_DECA_DEVIATION_THRESHOLD = 0.05  # rad
+
+# A face tracker can reappear after a long occlusion on a pose which fits its
+# landmarks poorly, even though DECA provides an independent per-frame face
+# estimate. Do not let those frames become the endpoint for any facial-state
+# gap glide unless both FLAME's jaw opening and its expression vector agree
+# with DECA. The gate is confined to recovery from a long loss, so normal
+# continuously tracked face performance is unaffected.
+FACE_RECOVERY_JAW_AXIS0_DECA_DEVIATION_THRESHOLD = 0.25  # rad
+# Across the six continuously tracked ground-truth clips, the largest saved
+# FLAME-vs-DECA expression-vector distance is 1.64. Keep this slightly higher
+# margin for benign model disagreement; the guard only rejects clear recovery
+# failures, not an ordinary expression fit.
+FACE_RECOVERY_EXPRESSION_DECA_DEVIATION_THRESHOLD = 1.75  # FLAME PCA L2
+FACE_RECOVERY_STABLE_FRAMES = 3
 
 # `_bridge_short_gaps`'s own length cutoff: a detection dropout at or under
 # this many frames is treated as a brief flicker and bridged via
@@ -655,6 +669,59 @@ def _snap_jaw_to_deca_on_axis_deviation(
     return snapped, flagged
 
 
+def _guard_face_recovery(
+    jaw_pose: np.ndarray,
+    expression: np.ndarray,
+    deca_jaw: np.ndarray,
+    deca_expression: np.ndarray,
+    valid: np.ndarray,
+    max_bridge_frames: int,
+    jaw_axis0_deviation_threshold: float = FACE_RECOVERY_JAW_AXIS0_DECA_DEVIATION_THRESHOLD,
+    expression_deviation_threshold: float = FACE_RECOVERY_EXPRESSION_DECA_DEVIATION_THRESHOLD,
+    stable_frames: int = FACE_RECOVERY_STABLE_FRAMES,
+) -> np.ndarray:
+    """Demote an untrusted facial state at the start of a long recovery.
+
+    A long MediaPipe dropout is held at its last trustworthy pose and glides
+    only over its final ``max_bridge_frames``. Before this guard, the first
+    recovered FLAME fit was always the glide endpoint. A bad re-acquisition
+    could therefore create a visible facial distortion *before* landmarks had
+    even returned. Require ``stable_frames`` consecutive recovered fits whose
+    expression vector agree with DECA before accepting the recovery.
+    Bad initial fits are folded back into the existing gap handling, which
+    holds and then glides into the first settled fit.
+
+    Normal, continuously tracked facial motion remains untouched.
+    """
+    valid = np.asarray(valid, dtype=bool)
+    guarded = valid.copy()
+    if stable_frames < 1:
+        raise ValueError("stable_frames must be at least 1")
+
+    for start, end in contiguous_true_runs(~valid):
+        # A short gap is already safe to bridge, while a trailing gap has no
+        # recovery endpoint to validate.
+        if end == len(valid) - 1 or (end - start + 1) <= max_bridge_frames:
+            continue
+
+        settled = 0
+        for frame in range(end + 1, len(valid)):
+            if not valid[frame]:
+                break  # another loss before a stable recovery
+            jaw_agrees = abs(jaw_pose[frame, 0] - deca_jaw[frame, 0]) <= jaw_axis0_deviation_threshold
+            expression_agrees = np.linalg.norm(expression[frame] - deca_expression[frame]) <= expression_deviation_threshold
+            agrees = jaw_agrees and expression_agrees
+            if agrees:
+                settled += 1
+                if settled >= stable_frames:
+                    break
+            else:
+                guarded[frame] = False
+                settled = 0
+
+    return guarded
+
+
 def fit_clip(
     inputs: FitInputs,
     fps: float,
@@ -967,6 +1034,13 @@ def fit_clip(
         jaw_pose_final.cpu().numpy(), inputs.deca_pose[:, 3:6], valid, axis=1, threshold=JAW_AXIS1_DECA_DEVIATION_THRESHOLD,
     )
 
+    # Recoveries after a long landmark loss need independent confirmation
+    # before they can become a gap-glide endpoint for *any* facial state.
+    face_valid = _guard_face_recovery(
+        jaw_pose_snapped_np, expression_final.cpu().numpy(), inputs.deca_pose[:, 3:6], inputs.deca_exp,
+        valid, MAX_BRIDGE_FRAMES,
+    )
+
     # A leading or trailing invalid run needs the same freeze-at-a-real-value
     # treatment as an interior gap, but nothing upstream does that for
     # jaw_pose/expression automatically: with zero reprojection signal and
@@ -976,8 +1050,8 @@ def fit_clip(
     # neighbor via `fill_invalid`, except the leading run, which
     # `_lead_from_neutral` handles first since it has no real prior value to
     # freeze at (see its own docstring).
-    jaw_lead_np, jaw_lead_valid = _lead_from_neutral(jaw_pose_snapped_np, valid, MAX_BRIDGE_FRAMES)
-    expr_lead_np, expr_lead_valid = _lead_from_neutral(expression_final.cpu().numpy(), valid, MAX_BRIDGE_FRAMES)
+    jaw_lead_np, jaw_lead_valid = _lead_from_neutral(jaw_pose_snapped_np, face_valid, MAX_BRIDGE_FRAMES)
+    expr_lead_np, expr_lead_valid = _lead_from_neutral(expression_final.cpu().numpy(), face_valid, MAX_BRIDGE_FRAMES)
     jaw_pose_final_np = fill_invalid(jaw_lead_np, jaw_lead_valid)
     expression_final_np = fill_invalid(expr_lead_np, expr_lead_valid)
 
@@ -991,8 +1065,8 @@ def fit_clip(
     # the short-gap bridge below already does once `held_valid` marks the
     # held portion trustworthy. Leading/trailing runs are already frozen by
     # the `fill_invalid` pass just above; this only ever touches interior ones.
-    jaw_held_values, jaw_held_valid = cap_long_gaps_with_hold(jaw_pose_final_np, valid, MAX_BRIDGE_FRAMES)
-    expr_held_values, expr_held_valid = cap_long_gaps_with_hold(expression_final_np, valid, MAX_BRIDGE_FRAMES)
+    jaw_held_values, jaw_held_valid = cap_long_gaps_with_hold(jaw_pose_final_np, face_valid, MAX_BRIDGE_FRAMES)
+    expr_held_values, expr_held_valid = cap_long_gaps_with_hold(expression_final_np, face_valid, MAX_BRIDGE_FRAMES)
 
     _, jaw_bridged_init = _bridge_short_gaps(None, {"jaw_pose": jaw_held_values}, jaw_held_valid, MAX_BRIDGE_FRAMES)
     _, expr_bridged_init = _bridge_short_gaps(None, {"expression": expr_held_values}, expr_held_valid, MAX_BRIDGE_FRAMES)
@@ -1003,9 +1077,9 @@ def fit_clip(
     # joint go/transl fit, Stage 2 has no single shared signal to drive both
     # from), see JAW_OUTLIER_DEVIATION_THRESHOLD's own comment.
     jaw_outliers = _detect_outlier_frames(
-        bridged_final["jaw_pose"], valid, JAW_OUTLIER_DEVIATION_THRESHOLD, window=JAW_OUTLIER_WINDOW,
+        bridged_final["jaw_pose"], face_valid, JAW_OUTLIER_DEVIATION_THRESHOLD, window=JAW_OUTLIER_WINDOW,
     )
-    expr_outliers = _detect_outlier_frames(bridged_final["expression"], valid, EXPR_OUTLIER_DEVIATION_THRESHOLD)
+    expr_outliers = _detect_outlier_frames(bridged_final["expression"], face_valid, EXPR_OUTLIER_DEVIATION_THRESHOLD)
     if jaw_outliers.any():
         _, jaw_bridged = _bridge_short_gaps(
             None, {"jaw_pose": bridged_final["jaw_pose"]}, ~jaw_outliers, JAW_OUTLIER_BRIDGE_FRAMES,
@@ -1035,7 +1109,7 @@ def fit_clip(
         KEY_GLOBAL_ORIENT: global_orient_final.cpu().numpy(),
         KEY_JAW_POSE: jaw_pose_final_np,
         KEY_TRANSL: transl_final.cpu().numpy(),
-        KEY_VALID: valid,
+        KEY_VALID: face_valid,
     }
 
 
