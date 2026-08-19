@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
         row_layout.setContentsMargins(0, 0, 0, 0)
 
         self.destination_edit = DroppableLineEdit()
+        self.destination_edit.textChanged.connect(self._destination_path_updated)
         row_layout.addWidget(self.destination_edit, 1)
 
         browse_button = QPushButton(UI_BROWSE)
@@ -429,13 +430,9 @@ class MainWindow(QMainWindow):
             render_previews=self.render_previews_checkbox.isChecked(),
         )
 
-    def load_form_state(self, item: QueueItem) -> None:
-        """The inverse of _read_form_state(): populates every widget from a
-        queued item's state (used by QueueWindow's Edit button), and flips
-        the queue button into "Update in Queue" mode for that same item.
-        """
-        state = item.state
-        self.destination_edit.setText(state.destination_folder)
+    def load_form_state(self, state: RunFormState) -> None:
+        if state.destination_folder != "":
+            self.destination_edit.setText(state.destination_folder)
         self.video_path_edit.setText(state.video_path or "")
         self.human_prompt_edit.setText(state.human_prompt or "")
         self.object_prompt_edit.setText(state.object_prompt or "")
@@ -453,6 +450,14 @@ class MainWindow(QMainWindow):
         self.force_rerun_checkbox.setChecked(state.force_all)
         self.render_previews_checkbox.setChecked(state.render_previews)
 
+    def load_form_state_from_queueitem(self, item: QueueItem) -> None:
+        """The inverse of _read_form_state(): populates every widget from a
+        queued item's state (used by QueueWindow's Edit button), and flips
+        the queue button into "Update in Queue" mode for that same item.
+        """
+        state = item.state
+        self.load_form_state(state)
+
         self._editing_queue_item = item
         self.queue_button.setText(UI_UPDATE_IN_QUEUE_BUTTON)
         self.queue_button.setFixedWidth(DEFAULT_BUTTON_WIDTH + 20)
@@ -460,6 +465,28 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+
+    def load_form_state_from_runrecord(self, runrecord: RunRecord) -> None:
+        state = RunFormState.from_runrecord(runrecord)
+        self.load_form_state(state)
+
+        self._editing_queue_item = None
+        self.queue_button.setText(UI_ADD_TO_QUEUE_BUTTON)
+        self.queue_button.setFixedWidth(DEFAULT_BUTTON_WIDTH)
+
+    def _destination_path_updated(self, destination: str | None) -> None:
+        if destination is None:
+            return
+        destination_path: Path = Path(destination)
+        # A dropped path can be a file, and ordinary existing folders should
+        # not exercise the loader. In both cases there is nothing to restore.
+        if not (destination_path / PROGRESS_JSON_NAME).is_file():
+            return
+        try:
+            runrecord = RunRecord.load(destination_path)
+            self.load_form_state_from_runrecord(runrecord)
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+            return
 
     def _on_run_clicked(self) -> None:
         if self.pipeline_runner.is_running():

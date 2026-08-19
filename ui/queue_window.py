@@ -347,7 +347,7 @@ class QueueWindow(QWidget):
             self._remove_item(item)
 
     def _edit_item(self, item: QueueItem) -> None:
-        self.main_window.load_form_state(item)
+        self.main_window.load_form_state_from_queueitem(item)
 
     def _remove_item(self, item: QueueItem) -> None:
         if item.status != QueueItemStatus.RUNNING:

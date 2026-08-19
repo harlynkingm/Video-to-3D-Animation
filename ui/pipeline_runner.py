@@ -46,6 +46,31 @@ class RunFormState:
     force_all: bool = False
     render_previews: bool = False
 
+    @classmethod
+    def from_runrecord(cls, runrecord: RunRecord) -> RunFormState:
+        has_intrinsics_k = runrecord.input.intrinsics_k is not None
+        return RunFormState(
+            destination_folder="",
+            video_path=runrecord.input.video_path,
+            human_prompt=runrecord.input.human_prompt,
+            focal_length_mm=runrecord.input.focal_length_mm if not has_intrinsics_k else None,
+            sensor_width_mm=runrecord.input.sensor_width_mm if not has_intrinsics_k else None,
+            object_prompt=runrecord.input.object_prompt,
+            is_image_sequence=runrecord.input.source_fps is not None,
+            source_fps=runrecord.input.source_fps,
+            object_shape=runrecord.input.object_shape_hint,
+            finger_motion=runrecord.input.finger_motion,
+            render_previews=(
+                runrecord.input.render_contacts_preview and
+                runrecord.input.render_depth_preview and
+                runrecord.input.render_hands_preview and
+                runrecord.input.render_face_preview and
+                runrecord.input.render_motion_preview and
+                runrecord.input.render_mask_previews and
+                runrecord.input.render_retarget_preview and
+                runrecord.input.render_scene_preview
+            )
+        )
 
 def build_run_argv(state: RunFormState) -> list[str]:
     """`state` -> the same argv `pixi run -e main python -m pipeline.run ...`
