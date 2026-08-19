@@ -139,6 +139,18 @@ def test_load_accepts_utf8_progress_json_with_or_without_a_bom(tmp_path):
         assert reloaded.input == runRecord.input
 
 
+def test_load_rejects_an_obsolete_output_field_with_value_error(tmp_path):
+    """An old, unsupported schema should be reportable by UI callers, not
+    leak a dataclass-constructor TypeError from the loader."""
+    runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
+    data = json.loads(runRecord.path.read_text())
+    data["outputs"]["final_fbx"] = "output.fbx"
+    runRecord.path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="Invalid progress record"):
+        RunRecord.load(runRecord.progress_dir)
+
+
 def test_save_writes_utf8_without_a_bom(tmp_path):
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
 

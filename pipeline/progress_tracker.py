@@ -682,48 +682,52 @@ class RunRecord:
         # ``utf-8-sig`` consumes an optional UTF-8 BOM while decoding ordinary
         # UTF-8 unchanged. Some Windows tools save JSON with a BOM, whereas
         # pipeline-created and older records have none.
-        data = json.loads((Path(progress_dir) / PROGRESS_JSON_NAME).read_text(encoding="utf-8-sig"))
-        input_data = dict(data[FIELD_INPUT])
-        # Older records stored smoothing fields under `input`; do not let those
-        # stale defaults pin a clip to an old profile.
-        for f in fields(FineTuningOptions):
-            input_data.pop(f.name, None)
-        raw_fine_tuning_overrides = data.get(FIELD_FINE_TUNING_OVERRIDES)
-        if raw_fine_tuning_overrides is None:
-            fine_tuning_overrides = {}
-        elif isinstance(raw_fine_tuning_overrides, dict):
-            fine_tuning_overrides = dict(raw_fine_tuning_overrides)
-        else:
-            raise ValueError("fine_tuning_overrides must be an object")
-        unknown_overrides = set(fine_tuning_overrides) - {f.name for f in fields(FineTuningOptions)}
-        if unknown_overrides:
-            raise ValueError(f"Unknown fine-tuning override(s): {sorted(unknown_overrides)}")
-        if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in fine_tuning_overrides.values()):
-            raise ValueError("fine_tuning_overrides values must be ints or floats")
-        data[FIELD_FINE_TUNING_OVERRIDES] = fine_tuning_overrides
-        data[FIELD_INPUT] = RunInput(
-            **{
-                **input_data,
-                **(
-                    {
-                        name: enum_type(input_data[name])
-                        for name, enum_type in (
-                            (FIELD_OBJECT_SHAPE_HINT, ObjectShapeHint),
-                            (FIELD_FINGER_MOTION, FingerMotion),
-                        )
-                        if name in input_data
-                    }
-                ),
+        path = Path(progress_dir) / PROGRESS_JSON_NAME
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            input_data = dict(data[FIELD_INPUT])
+            # Older records stored smoothing fields under `input`; do not let those
+            # stale defaults pin a clip to an old profile.
+            for f in fields(FineTuningOptions):
+                input_data.pop(f.name, None)
+            raw_fine_tuning_overrides = data.get(FIELD_FINE_TUNING_OVERRIDES)
+            if raw_fine_tuning_overrides is None:
+                fine_tuning_overrides = {}
+            elif isinstance(raw_fine_tuning_overrides, dict):
+                fine_tuning_overrides = dict(raw_fine_tuning_overrides)
+            else:
+                raise ValueError("fine_tuning_overrides must be an object")
+            unknown_overrides = set(fine_tuning_overrides) - {f.name for f in fields(FineTuningOptions)}
+            if unknown_overrides:
+                raise ValueError(f"Unknown fine-tuning override(s): {sorted(unknown_overrides)}")
+            if any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in fine_tuning_overrides.values()):
+                raise ValueError("fine_tuning_overrides values must be ints or floats")
+            data[FIELD_FINE_TUNING_OVERRIDES] = fine_tuning_overrides
+            data[FIELD_INPUT] = RunInput(
+                **{
+                    **input_data,
+                    **(
+                        {
+                            name: enum_type(input_data[name])
+                            for name, enum_type in (
+                                (FIELD_OBJECT_SHAPE_HINT, ObjectShapeHint),
+                                (FIELD_FINGER_MOTION, FingerMotion),
+                            )
+                            if name in input_data
+                        }
+                    ),
+                }
+            )
+            data[FIELD_FINE_TUNING] = FineTuningOptions(**fine_tuning_overrides)
+            data[FIELD_SCENE] = SceneInfo(**data[FIELD_SCENE])
+            data[FIELD_STAGES] = {
+                name: StageRecord(**{**rec, FIELD_STATUS: StageStatus(rec[FIELD_STATUS])})
+                for name, rec in data[FIELD_STAGES].items()
             }
-        )
-        data[FIELD_FINE_TUNING] = FineTuningOptions(**fine_tuning_overrides)
-        data[FIELD_SCENE] = SceneInfo(**data[FIELD_SCENE])
-        data[FIELD_STAGES] = {
-            name: StageRecord(**{**rec, FIELD_STATUS: StageStatus(rec[FIELD_STATUS])})
-            for name, rec in data[FIELD_STAGES].items()
-        }
-        data[FIELD_OUTPUTS] = RunOutputs(**data[FIELD_OUTPUTS])
-        return cls(**data)
+            data[FIELD_OUTPUTS] = RunOutputs(**data[FIELD_OUTPUTS])
+            return cls(**data)
+        except (KeyError, TypeError) as exc:
+            raise ValueError(f"Invalid progress record at {path}: {exc}") from exc
 
     def is_complete(self, stage_name: StageName) -> bool:
         record = self.stages.get(stage_name)
