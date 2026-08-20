@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from pipeline.progress_tracker import RunRecord
 from ui.pipeline_runner import RunFormState
-from ui.queue import QueueItem, QueueItemStatus, QueueRunner, compute_queue_progress, summarize_run_form_state
+from ui.queue import QueueItem, QueueItemStatus, QueueRunner, build_queue_item, compute_queue_progress
 from ui.widgets import (
     ConsoleLog,
     RunStatusIndicator,
@@ -249,13 +249,15 @@ class QueueWindow(QWidget):
     # -- queue mutation (called by MainWindow, and by our own Remove) -----
 
     def add_item(self, state: RunFormState) -> None:
-        item = QueueItem(state=state)
+        item = build_queue_item(state)
         self.queue_runner.queue.append(item)
         self._refresh_list(select=item)
 
     def update_item(self, item: QueueItem, state: RunFormState) -> None:
-        item.state = state
+        updated = build_queue_item(state)
+        item.state = updated.state
         item.status = QueueItemStatus.PENDING
+        item.description = updated.description
         self._refresh_list(select=item)
 
     def remove_item(self, item: QueueItem) -> None:
@@ -311,8 +313,9 @@ class QueueWindow(QWidget):
             # rows end up too short.
             row_width = self.list_widget.viewport().width()
             for item in self.queue_runner.queue:
-                title = Path(item.state.destination_folder).name or item.state.destination_folder
-                description = summarize_run_form_state(item.state)[0]
+                destination = Path(item.state.destination_folder)
+                title = destination.name or item.state.destination_folder
+                description = item.description
                 color = None
                 if item.status == QueueItemStatus.COMPLETE:
                     color = _COMPLETE_COLOR

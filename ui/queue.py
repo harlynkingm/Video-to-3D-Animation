@@ -7,6 +7,7 @@ QueueRunner is the thin Qt-facing orchestrator that drives them.
 from __future__ import annotations
 
 import enum
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,9 +44,23 @@ class QueueItemStatus(enum.StrEnum):
 class QueueItem:
     state: RunFormState
     status: QueueItemStatus = QueueItemStatus.PENDING
+    # Frozen at add/edit time (see build_queue_item), not recomputed while the
+    # item sits in the queue or runs: once a run starts, pipeline.run itself
+    # overwrites progress.json's input to match this item's own state, so a
+    # live re-diff against it would collapse out from under the user right as
+    # the run they just kicked off begins, with no visible cause.
+    description: str = ""
 
 
-def summarize_run_form_state(state: RunFormState) -> list[str]:
+def build_queue_item(state: RunFormState, status: QueueItemStatus = QueueItemStatus.PENDING) -> QueueItem:
+    try:
+        existing_run_record = RunRecord.load(state.destination_folder)
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, ValueError):
+        existing_run_record = None  # progress.json doesn't exist yet, or is mid-write
+    return QueueItem(state=state, status=status, description=summarize_run_form_state(state, existing_run_record))
+
+
+def summarize_run_form_state(state: RunFormState, existing_run_record: RunRecord | None = None) -> str:
     # Ends up being a single line summary of the form state
     lines: list[str] = []
     if (state.start_stage, state.stop_stage) != (_DEFAULT_STATE.start_stage, _DEFAULT_STATE.stop_stage):
@@ -56,22 +71,46 @@ def summarize_run_form_state(state: RunFormState) -> list[str]:
     else:
         lines.append("all stages")
     if state.human_prompt:
-        lines.append(f"\"{state.human_prompt}\"")
+        # Only add human prompt if different than existing run
+        if existing_run_record is None:
+            lines.append(f"\"{state.human_prompt}\"")
+        elif state.human_prompt != existing_run_record.input.human_prompt:
+            lines.append(f"\"{state.human_prompt}\"")
     if state.object_prompt:
-        lines.append(f"\"{state.object_prompt}\"")
+        # Only add object prompt if different than existing run
+        if existing_run_record is None:
+            lines.append(f"\"{state.object_prompt}\"")
+        elif state.object_prompt != existing_run_record.input.object_prompt:
+            lines.append(f"\"{state.object_prompt}\"")
     if state.focal_length_mm is not None and state.sensor_width_mm is not None:
-        lines.append(f"focal length {state.focal_length_mm}mm, sensor width {state.sensor_width_mm}mm")
+        # Only add focal length/sensor width if different than existing run
+        if existing_run_record is None:
+            lines.append(f"focal length {state.focal_length_mm}mm, sensor width {state.sensor_width_mm}mm")
+        elif state.focal_length_mm != existing_run_record.input.focal_length_mm or state.sensor_width_mm != existing_run_record.input.sensor_width_mm:
+            lines.append(f"focal length {state.focal_length_mm}mm, sensor width {state.sensor_width_mm}mm")
     if state.is_image_sequence and state.source_fps is not None:
-        lines.append(f"{state.source_fps}fps")
+        # Only add source fps if different than existing run
+        if existing_run_record is None:
+            lines.append(f"{state.source_fps}fps")
+        elif state.source_fps != existing_run_record.input.source_fps:
+            lines.append(f"{state.source_fps}fps")
     if state.object_shape != _DEFAULT_STATE.object_shape:
-        lines.append(f"object shape {state.object_shape}")
+        # Only add object shape if different than existing run
+        if existing_run_record is None:
+            lines.append(f"object shape {state.object_shape}")
+        elif state.object_shape != existing_run_record.input.object_shape_hint:
+            lines.append(f"object shape {state.object_shape}")
     if state.finger_motion != _DEFAULT_STATE.finger_motion:
-        lines.append(f"finger motion {state.finger_motion}")
+        # Only add finger motion if different than existing run
+        if existing_run_record is None:
+            lines.append(f"finger motion {state.finger_motion}")
+        elif state.finger_motion != existing_run_record.input.finger_motion:
+            lines.append(f"finger motion {state.finger_motion}")
     if state.force_all:
         lines.append("force re-run")
     if state.render_previews:
         lines.append("render previews")
-    return [", ".join(lines)]
+    return ", ".join(lines)
 
 
 def next_pending_index(queue: list[QueueItem]) -> int | None:
