@@ -135,10 +135,7 @@ def reject_biomechanically_implausible_wrist(
     chaotic stretch doesn't end the region early). Never expands from
     anything but a confirmed-bad seed. `max_expansion_frames` caps it because
     a long stretch of real large motion (e.g. gripping a strap) can sit above
-    `release_deg` for many seconds without itself seeding, confirmed on a
-    real clip, an 80+ frame stretch reading a smooth, plausible 60-100 deg
-    got entirely rejected because two seed frames sat at its edge; capping
-    expansion keeps the reject region local to the actual bad frame.
+    `release_deg` for many seconds without itself seeding.
 
     A validity gate, not a clamp, marking frames invalid lets the existing
     gap-fill (`motion_smoothing.fill_invalid`) bridge across with a plausible
@@ -183,9 +180,7 @@ def reject_wrist_velocity_spikes(
     to a wrong orientation for an isolated frame or two, not real motion.
     Catches what `reject_biomechanically_implausible_wrist` structurally
     can't: a flip can pass entirely through a "plausible" magnitude on its way
-    up and back down (confirmed on a real clip: a 150-175 deg/frame spike
-    against a ~5-20 deg/frame baseline, magnitude staying under 110 the whole
-    time). Different question from the velocity check already tried and
+    up and back down. Different question from the velocity check already tried and
     rejected for `hamer_adapter`'s confidence gate, that needed to separate
     *sustained* noise from *sustained* real fast motion and couldn't; this is
     an isolated single-frame reversal, a different signature entirely.
@@ -297,10 +292,8 @@ def reject_hand_swung_past_forearm(
     way): rejecting on twist directly doesn't work, since composing two
     legitimate swing rotations (pure flex + pure deviate) produces large
     *apparent* twist purely from how compound 3D rotations compose, not from
-    real axial rotation (confirmed both synthetically and on a real clip,
-    a strap-grip pose read swing under 30 deg while blended magnitude spiked
-    past 150, almost all of it twist from adjusting the strap, correctly left
-    alone). Swing has none of that artifact, it's just the angle between
+    real axial rotation.
+    Swing has none of that artifact, it's just the angle between
     two directions, not a decomposition of one rotation into two parts.
 
     Single instantaneous threshold, not hysteresis like the other wrist gates,

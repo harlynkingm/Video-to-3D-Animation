@@ -42,9 +42,7 @@ KP_LANKLE, KP_RANKLE = 15, 16
 
 # Shoulder->wrist, hip->ankle, everything but the face (nose/eyes/ears,
 # KP_NOSE..KP_REAR above). Face-keypoint confidence is a poor proxy for
-# whether a frame's *body* pose evidence is trustworthy (confirmed against a
-# real clip, where a fast tumble crashed confidence across every body joint
-# together but didn't isolate cleanly via face keypoints alone).
+# whether a frame's *body* pose evidence is trustworthy.
 BODY_KEYPOINT_INDICES = [
     KP_LSHOULDER, KP_RSHOULDER, KP_LELBOW, KP_RELBOW, KP_LWRIST, KP_RWRIST,
     KP_LHIP, KP_RHIP, KP_LKNEE, KP_RKNEE, KP_LANKLE, KP_RANKLE,
