@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import numpy as np
 from scipy.ndimage import distance_transform_edt, maximum_filter1d
 
-# Pixel distance (at the object mask's own resolution) beyond which a joint is
+# Pixel distance (at SAM's native resolution) beyond which a joint is
 # considered definitely not touching the object. Confidence decays linearly
 # from 1.0 (inside the mask) to 0.0 at this distance. Loose enough to bridge
 # a real, temporary retargeted-hand-position drift during fast object motion
@@ -206,11 +206,13 @@ def _confidence_from_distance_field(pixels: np.ndarray, dist_outside: np.ndarray
     return np.clip(1.0 - distance / CONTACT_PIXEL_THRESHOLD, 0.0, 1.0)
 
 
-def _confidence_from_mask_distance(pixels: np.ndarray, object_mask: np.ndarray) -> np.ndarray:
+def _confidence_from_mask_distance(
+    pixels: np.ndarray, object_mask: np.ndarray, distance_sampling: tuple[float, float] | None = None,
+) -> np.ndarray:
     """(N,) confidence: 1.0 if a pixel lands inside the mask, decaying to 0 at
     CONTACT_PIXEL_THRESHOLD, distance to the mask's nearest True pixel."""
     height, width = object_mask.shape
-    dist_outside = distance_transform_edt(~object_mask)
+    dist_outside = distance_transform_edt(~object_mask, sampling=distance_sampling)
     return _confidence_from_distance_field(pixels, dist_outside, height, width)
 
 
@@ -250,7 +252,10 @@ def frame_confidence_for_region(
 
 
 def per_frame_region_confidence(
-    frame_joints: np.ndarray, K: np.ndarray, object_mask: np.ndarray | None,
+    frame_joints: np.ndarray,
+    K: np.ndarray,
+    object_mask: np.ndarray | None,
+    distance_sampling: tuple[float, float] | None = None,
 ) -> dict[str, tuple[float, int]]:
     """Confidence + winning candidate-joint index for every region, for a
     SINGLE frame. Computes the mask's own distance field once and shares it
@@ -265,7 +270,9 @@ def per_frame_region_confidence(
         return {region: (0.0, -1) for region in REGION_NAMES}
 
     height, width = object_mask.shape
-    dist_outside = distance_transform_edt(~object_mask)
+    # A low-resolution mask can still report source-image pixel distances when
+    # `distance_sampling` contains its per-axis source-pixel scale.
+    dist_outside = distance_transform_edt(~object_mask, sampling=distance_sampling)
 
     result: dict[str, tuple[float, int]] = {}
     for region in REGION_NAMES:

@@ -248,9 +248,7 @@ def _select_shape_candidate_frames(masks_path: str, n_candidates: int) -> list[i
     genuinely round somewhere in the clip, or just because `fit_object_shape`
     AUTO's residual comparison happened to favor it for a non-round object at
     the anchor, and for a non-round object, circularity isn't a "how clean
-    is this frame" signal at all (confirmed on a real clip: it ranked a
-    frame with a badly inflated mask measurement as the single cleanest one,
-    while `mask_solidity` correctly excluded it)."""
+    is this frame" signal at all."""
     scored = _score_frames_by_mask(masks_path, mask_solidity)
     return [frame for _, frame in scored[:n_candidates]]
 

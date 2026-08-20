@@ -149,10 +149,7 @@ def _qualifying_attachment_events(contact_events: list[dict], fps: float) -> lis
     any short gap that resolution reopened (see `_bridge_resolved_events`).
 
     A region outside `GRIP_CAPABLE_REGIONS` also has to clear stage 7's own
-    `is_low_confidence` flag to qualify at all, confirmed on a real clip:
-    a tracked object resting on the floor near a passing foot produced a
-    16-frame `left_leg` event (0.55 mean confidence, a 0.043m depth gap)
-    that cleared the duration bar here despite the foot never touching it.
+    `is_low_confidence` flag to qualify at all.
     A hand/arm region's own low-confidence events still qualify regardless
     (unchanged), the real evidence for trusting a weak hand/arm signal
     despite the flag (a full grip commonly wraps around/behind the object,
@@ -228,7 +225,11 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             def object_position_fn(frame: int) -> tuple[np.ndarray, np.ndarray] | None:
                 if frame in position_cache:
                     return position_cache[frame]
-                object_mask = object_masks[frame]
+                # Stage 7's contact pass intentionally consumes the packed
+                # 1008x1008 SAM mask. This depth fit instead indexes a
+                # native-resolution depth cloud, so its boolean selector must
+                # be expanded to that same native resolution first.
+                object_mask = object_masks.native(frame)
                 if object_mask is None:
                     position_cache[frame] = None
                     return None

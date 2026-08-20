@@ -178,6 +178,41 @@ def test_per_frame_region_confidence_matches_frame_confidence_for_region():
     assert REGION_JOINT_NAMES["left_hand"][result["left_hand"][1]] == "wrist"
 
 
+def test_low_resolution_mask_uses_native_pixel_distances_when_scaled():
+    """Stage 7 keeps SAM's working-resolution masks. Scaling K into that
+    mask's coordinates and asking EDT to measure source-image pixels must
+    preserve the contact decision that a native nearest-neighbour expansion
+    would make, within one working-mask cell at the boundary."""
+    working_h, working_w = 8, 16
+    native_h, native_w = 32, 64
+    working_mask = np.zeros((working_h, working_w), dtype=bool)
+    working_mask[2:6, 5:11] = True
+    native_mask = np.repeat(np.repeat(working_mask, 4, axis=0), 4, axis=1)
+
+    native_K = np.array([[20.0, 0.0, 32.0], [0.0, 20.0, 16.0], [0.0, 0.0, 1.0]])
+    mask_K = np.diag([working_w / native_w, working_h / native_h, 1.0]) @ native_K
+    frame_joints = np.zeros((HEAD_TOP_JOINT_INDEX + 1, 3))
+    frame_joints[..., 2] = 1.0
+    # One hand candidate lies a short native-pixel distance outside the mask;
+    # the wrist remains the winning candidate under both representations.
+    joint_ids = candidate_joint_indices("left_hand")
+    frame_joints[joint_ids] = [3.0, 3.0, 1.0]
+    frame_joints[LEFT_WRIST_JOINT] = [0.85, 0.0, 1.0]
+
+    native = per_frame_region_confidence(frame_joints, native_K, native_mask)
+    working = per_frame_region_confidence(
+        frame_joints,
+        mask_K,
+        working_mask,
+        distance_sampling=(native_h / working_h, native_w / working_w),
+    )
+
+    assert native["left_hand"][1] == working["left_hand"][1]
+    assert native["left_hand"][0] > 0.0
+    assert working["left_hand"][0] > 0.0
+    assert abs(native["left_hand"][0] - working["left_hand"][0]) <= 4.0 / CONTACT_PIXEL_THRESHOLD
+
+
 def test_per_frame_region_confidence_covers_every_region():
     K = np.eye(3)
     frame_joints = np.zeros((HEAD_TOP_JOINT_INDEX + 1, 3))

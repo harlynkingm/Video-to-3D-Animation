@@ -338,13 +338,9 @@ def _save_packed_masks(path: Path, raw_masks: torch.Tensor) -> None:
     torch.save({KEY_PACKED_MASKS: pack_masks(raw_masks)}, path)
 
 
-def test_lazy_mask_loader_decodes_and_resizes_each_frame_on_access(tmp_path):
-    """Regression test for a real crash: the old eager loader unpacked and
-    native-resized every frame up front, holding the whole clip's masks in
-    memory at once, on a real 4K/675-frame clip (two such lists: object +
-    human) that was 10+GB simultaneously, and caused a hard Windows access
-    violation later in this same stage. This loader must decode lazily,
-    per-frame, instead.
+def test_lazy_mask_loader_decodes_sam_masks_and_only_resizes_for_depth(tmp_path):
+    """The contact pass must stay at SAM resolution; only an event selected
+    for depth verification may ask this lazy loader for a native-size mask.
     """
     working_h, working_w = 8, 16  # W must be divisible by 8 for pack_masks
     raw_masks = torch.zeros((3, 1, working_h, working_w), dtype=torch.bool)
@@ -355,16 +351,23 @@ def test_lazy_mask_loader_decodes_and_resizes_each_frame_on_access(tmp_path):
     masks_path = tmp_path / "masks.pt"
     _save_packed_masks(masks_path, raw_masks)
 
-    native_hw = (32, 64)  # 4x upsample in both dims, like resizing to native resolution
+    native_hw = (32, 64)  # 4x upsample in both dims, used only by native()
     loader = _LazyMaskLoader(str(masks_path), n_frames=3, native_hw=native_hw)
 
     assert len(loader) == 3
 
     frame0 = loader[0]
     assert frame0 is not None
-    assert frame0.shape == native_hw
+    assert frame0.shape == (working_h, working_w)
     assert frame0.dtype == np.bool_
     assert frame0.any()
+
+    native_frame0 = loader.native(0)
+    assert native_frame0 is not None
+    assert native_frame0.shape == native_hw
+    assert native_frame0.dtype == np.bool_
+    assert native_frame0.any()
+    assert loader.mask_hw == (working_h, working_w)
 
     assert loader[1] is None  # nothing tracked that frame
 

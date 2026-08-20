@@ -159,11 +159,10 @@ def _all_frame_joints(motion: dict) -> np.ndarray:
 
 
 class _LazyMaskLoader:
-    """`[frame_idx] -> (H, W) bool mask at native resolution, or None`,
-    decoded one frame at a time instead of unpacking a whole clip's worth of
-    native-resolution masks into memory up front (mirrors
-    `sam31_adapter._LazyFrameLoader`'s own fix for the same class of bug in
-    stage 1).
+    """`[frame_idx] -> SAM-resolution bool mask, or None`, decoded one frame
+    at a time instead of unpacking a whole clip's worth of masks into memory
+    up front (mirrors `sam31_adapter._LazyFrameLoader`'s own fix for the same
+    class of bug in stage 1).
 
     The eager version of this (unpack every frame, resize to native, hold
     the whole list) is a real, demonstrated memory bottleneck at high
@@ -175,11 +174,11 @@ class _LazyMaskLoader:
     already run in the same process. The packed tensor this reads from is
     both bit-packed (8 pixels/byte, `sam31_tracker.pack_masks`) AND stored
     at SAM 3.1's own small working resolution, not native, tiny by
-    comparison, so keeping it packed until each frame is actually needed
-    removes the bottleneck entirely; each frame's mask is used at most twice
-    (once during detection, once more only if that exact frame becomes an
-    event's `peak_frame` during depth verification), so re-decoding on
-    access rather than caching costs nothing meaningful.
+    comparison. Contact detection uses that working resolution directly:
+    scaled intrinsics and source-pixel distance sampling retain the existing
+    geometry without an otherwise-wasted native-scale distance transform.
+    `native()` expands a frame only for depth verification, where it is
+    genuinely needed.
     """
 
     def __init__(self, masks_path: str, n_frames: int, native_hw: tuple[int, int]):
@@ -190,15 +189,27 @@ class _LazyMaskLoader:
     def __len__(self) -> int:
         return self._n_frames
 
+    @property
+    def mask_hw(self) -> tuple[int, int]:
+        """SAM working resolution, without unpacking a frame."""
+        return int(self._packed.shape[-2]), int(self._packed.shape[-1] * 8)
+
     def __getitem__(self, index: int) -> np.ndarray | None:
         if index >= self._packed.shape[0]:
             return None
         unpacked = unpack_masks(self._packed[index])[0]
         if not unpacked.any():
             return None
+        return unpacked.numpy()
+
+    def native(self, index: int) -> np.ndarray | None:
+        """Return one mask at source resolution for depth verification only."""
+        unpacked = self[index]
+        if unpacked is None:
+            return None
         height, width = self._native_hw
         return cv2.resize(
-            unpacked.numpy().astype(np.uint8), (width, height), interpolation=cv2.INTER_NEAREST,
+            unpacked.astype(np.uint8), (width, height), interpolation=cv2.INTER_NEAREST,
         ).astype(bool)
 
 
@@ -264,8 +275,11 @@ def _verify_events_with_depth(
     try:
         for event in events:
             frame = event.peak_frame
-            object_mask = object_masks[frame]
-            human_mask = human_masks[frame]
+            # Unit-level callers may provide ordinary lists; the pipeline's
+            # lazy loaders provide `native()` so only this rare depth pass
+            # expands their packed SAM masks.
+            object_mask = object_masks.native(frame) if hasattr(object_masks, "native") else object_masks[frame]
+            human_mask = human_masks.native(frame) if hasattr(human_masks, "native") else human_masks[frame]
             if object_mask is None or human_mask is None:
                 continue
 
@@ -360,12 +374,24 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         object_masks = _LazyMaskLoader(stage_1_outputs[OUTPUT_OBJECT_MASKS], n_frames, native_hw)
         human_masks = _LazyMaskLoader(stage_1_outputs[OUTPUT_HUMAN_MASKS], n_frames, native_hw)
         K = np.array(runRecord.scene.intrinsics_K)
+        # SAM tracks every frame in its fixed square working resolution. Keep
+        # contact detection there: nearest-neighbour upsampling creates no new
+        # segmentation detail, but it makes every distance transform much more
+        # expensive at high source resolution. Distances remain in native pixels
+        # so CONTACT_PIXEL_THRESHOLD keeps its current meaning.
+        mask_height, mask_width = object_masks.mask_hw
+        scale_x = mask_width / native_hw[1]
+        scale_y = mask_height / native_hw[0]
+        mask_K = np.diag([scale_x, scale_y, 1.0]) @ K
+        distance_sampling = (1.0 / scale_y, 1.0 / scale_x)
 
         region_confidence = {region: np.zeros(n_frames) for region in REGION_NAMES}
         region_joint_idx = {region: np.full(n_frames, -1, dtype=int) for region in REGION_NAMES}
 
         for f in frame_progress(range(n_frames), total=n_frames, label=StageName.STAGE_7_ANNOTATE_CONTACTS.label):
-            for region, (confidence, joint_idx) in per_frame_region_confidence(joints[f], K, object_masks[f]).items():
+            for region, (confidence, joint_idx) in per_frame_region_confidence(
+                joints[f], mask_K, object_masks[f], distance_sampling,
+            ).items():
                 region_confidence[region][f] = confidence
                 region_joint_idx[region][f] = joint_idx
 
