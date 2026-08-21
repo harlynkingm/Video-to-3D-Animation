@@ -145,10 +145,10 @@ def overall_blendshape_tracking(
     """Mean signed Pearson correlation, expressed as a percentage.
 
     Every valid ARKit blendshape channel gets equal weight, so a strongly
-    active channel cannot drown out the rest of the face.  ``shared_with_key``
+    active channel cannot drown out the rest of the face. ``shared_with_key``
     restricts the result to channels where a second estimator also has a
     defined correlation; this is used for the report's fair pipeline versus
-    MediaPipe headline comparison.  A flat signal has no defined correlation
+    MediaPipe headline comparison. A flat signal has no defined correlation
     and is excluded rather than being assigned an arbitrary score. Head/eye
     rotations are excluded because this is the summary of ARKit blendshapes.
     """

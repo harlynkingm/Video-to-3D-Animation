@@ -434,7 +434,7 @@ class QueueWindow(QWidget):
         has_selection = self._selected_queue_item() is not None
         # Keep the list enabled while work is active: disabling the widget
         # also disables its viewport and vertical scrollbar, preventing the
-        # user from reviewing the queue's progress.  NoSelection locks out
+        # user from reviewing the queue's progress. NoSelection locks out
         # queue interaction while leaving wheel and scrollbar scrolling
         # available.
         self.list_widget.setSelectionMode(

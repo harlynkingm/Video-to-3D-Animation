@@ -128,7 +128,7 @@ def test_load_accepts_utf8_progress_json_with_or_without_a_bom(tmp_path):
     runRecord = create_run(tmp_path / "run", make_run_input(), run_id="test")
     original_json = runRecord.path.read_text(encoding="utf-8")
 
-    # The pipeline writes ordinary UTF-8.  External Windows tools may rewrite
+    # The pipeline writes ordinary UTF-8. External Windows tools may rewrite
     # the same JSON as UTF-8-with-BOM; both must remain resumable.
     for encoding in ("utf-8", "utf-8-sig"):
         runRecord.path.write_text(original_json, encoding=encoding)

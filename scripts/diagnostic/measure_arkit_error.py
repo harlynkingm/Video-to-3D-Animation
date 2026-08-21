@@ -157,7 +157,7 @@ def aligned_mediapipe_blendshape_data(run_dir: Path) -> tuple[np.ndarray, np.nda
 
     The baseline is MediaPipe's native ARKit-named output saved by stage 9,
     gap-filled and one-euro smoothed with the *same* production path used by
-    ``stage_9_capture_face._smoothed_mediapipe_blendshapes``.  It is aligned
+    ``stage_9_capture_face._smoothed_mediapipe_blendshapes``. It is aligned
     to the neutral-subtracted LiveLink data through the same frame-log join
     as ``aligned_channel_data``, so an HTML report can compare the pipeline
     and MediaPipe without a second timing convention.

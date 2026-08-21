@@ -84,7 +84,7 @@ def build_run_argv(state: RunFormState) -> list[str]:
         "--start-on-stage", str(state.start_stage),
         "--stop-after-stage", str(state.stop_stage),
     ]
-    # `auto` is the UI's no-override choice.  Omitting the flag lets a new
+    # `auto` is the UI's no-override choice. Omitting the flag lets a new
     # run use the pipeline default and, more importantly, preserves an
     # existing run's recorded object_shape_hint when resuming.
     if state.object_shape != ObjectShapeHint.AUTO.value:

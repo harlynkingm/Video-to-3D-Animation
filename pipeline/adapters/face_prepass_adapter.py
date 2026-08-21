@@ -56,7 +56,7 @@ class FacePrepassAdapter:
         calculation intentionally match the former DECA/MediaPipe code paths.
         When ``on_face_boxes`` is given, it receives each completed ViTPose
         batch's source indices, already-decoded BGR frames, and non-null face
-        boxes.  Stage 9 uses this to overlap the unchanged CPU MediaPipe image
+        boxes. Stage 9 uses this to overlap the unchanged CPU MediaPipe image
         inference with the next GPU ViTPose batch.
         """
         assert self._vitpose is not None, "Call load() before infer()."
