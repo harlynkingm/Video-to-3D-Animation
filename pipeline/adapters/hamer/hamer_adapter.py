@@ -41,7 +41,7 @@ from ..gvhmr.gvhmr_adapter import (
     extract_bbox_from_numpy_mask,
 )
 from ..gvhmr.gvhmr_rotation_math import matrix_to_axis_angle
-from ..gvhmr.gvhmr_vitpose import GVHMRViTPoseModel, estimate_keypoints
+from ..gvhmr.gvhmr_vitpose import GVHMRViTPoseModel, estimate_keypoints_batch
 from ..sam31.sam31_tracker import KEY_PACKED_MASKS, unpack_masks
 from .hamer_mano_head import MANOTransformerDecoderHead
 from .hamer_preprocess import COCO_L_WRIST, COCO_R_WRIST, crop_hand, hand_box_from_body_kpts
@@ -92,6 +92,11 @@ MIN_HAND_OBJECT_CROP_COVERAGE = 0.02
 MIN_HAND_OVERLAP_CROP_AREA = 0.10
 MIN_HAND_OVERLAP_WRIST_DISTANCE_CROP_SCALE = 0.35
 MIN_HAND_AMBIGUITY_WINDOW_FRAMES = 5
+
+# ViT-H inference has substantial fixed per-launch overhead. Four source
+# frames means at most eight hand crops in one HaMeR pass, a conservative
+# default that improves GPU utilization without requiring unusually large VRAM.
+INFERENCE_FRAME_BATCH_SIZE = 4
 
 
 def _reject_low_confidence_stretches(valid: np.ndarray, wrist_conf: np.ndarray) -> np.ndarray:
@@ -211,19 +216,26 @@ class HamerAdapter:
             module.to(device=self.device, dtype=self.dtype).eval()
 
     @torch.inference_mode()
-    def _infer_one_hand(self, frame_bgr: np.ndarray, box: np.ndarray, is_right: bool):
-        if box is None:
-            return None
-        crop = crop_hand(frame_bgr, box, is_right)
-        crop_t = torch.from_numpy(crop).unsqueeze(0).to(device=self.device, dtype=self.dtype)
+    def _infer_hand_crops(self, crops: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+        """Run a batch of already-oriented hand crops through HaMeR.
+
+        The returned arrays retain crop order; the caller applies the
+        left-hand axis-angle mirror after matching each result back to its
+        source frame.
+        """
+        if not crops:
+            return np.empty((0, 3), np.float32), np.empty((0, HAND_POSE_DIM), np.float32)
+        crop_t = torch.from_numpy(np.stack(crops)).to(device=self.device, dtype=self.dtype)
         feats = self._backbone(crop_t[:, :, :, _WIDTH_CROP:-_WIDTH_CROP])
         out = self._head(feats)
 
-        global_orient = matrix_to_axis_angle(out["global_orient"].float().reshape(1, 3, 3)).reshape(3).cpu().numpy()
-        hand_pose = matrix_to_axis_angle(out["hand_pose"].float().reshape(-1, 3, 3)).reshape(-1).cpu().numpy()
-        if not is_right:
-            global_orient = _fliplr_axis_angle(global_orient)
-            hand_pose = _fliplr_axis_angle(hand_pose)
+        batch_size = len(crops)
+        global_orient = matrix_to_axis_angle(
+            out["global_orient"].float().reshape(batch_size, 3, 3),
+        ).reshape(batch_size, 3).cpu().numpy()
+        hand_pose = matrix_to_axis_angle(
+            out["hand_pose"].float().reshape(batch_size * 15, 3, 3),
+        ).reshape(batch_size, HAND_POSE_DIM).cpu().numpy()
         return global_orient.astype(np.float32), hand_pose.astype(np.float32)
 
     def infer(self, frame_paths: list[Path], human_masks: dict, object_masks: dict | None = None) -> dict[str, np.ndarray]:
@@ -247,50 +259,71 @@ class HamerAdapter:
         # (including frames after each one) so it can't run inline in this loop.
         wrist_conf = {True: np.zeros(n, np.float32), False: np.zeros(n, np.float32)}
 
-        for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=StageName.STAGE_4_ESTIMATE_HANDS.label):
-            frame_bgr = cv2.imread(str(frame_path))
-            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        def process_batch(records: list[tuple[int, np.ndarray, np.ndarray, tuple[int, int, int, int] | None]]) -> None:
+            tracked = [record for record in records if record[3] is not None]
+            if not tracked:
+                return
 
-            mask = unpack_masks(packed[i])[0].numpy()
-            bbox = extract_bbox_from_numpy_mask(mask)
-            if bbox is None:
-                continue
-            bbox = _rescale_bbox_xywh(bbox, from_hw=mask.shape, to_hw=frame_bgr.shape[:2])
-            keypoints = estimate_keypoints(self._vitpose, frame_rgb, bbox, self.device, self.dtype)
-            wrist_conf[True][i] = keypoints[COCO_R_WRIST][2]
-            wrist_conf[False][i] = keypoints[COCO_L_WRIST][2]
+            keypoints_batch = estimate_keypoints_batch(
+                self._vitpose,
+                [record[2] for record in tracked],
+                [record[3] for record in tracked],
+                self.device,
+                self.dtype,
+            )
+            crops: list[np.ndarray] = []
+            crop_metadata: list[tuple[int, bool, dict[bool, np.ndarray | None], dict[bool, np.ndarray], np.ndarray | None]] = []
+            for (i, frame_bgr, _frame_rgb, _bbox), keypoints in zip(tracked, keypoints_batch):
+                wrist_conf[True][i] = keypoints[COCO_R_WRIST][2]
+                wrist_conf[False][i] = keypoints[COCO_L_WRIST][2]
+                object_mask = None
+                if object_packed is not None:
+                    object_mask = unpack_masks(object_packed[i])[0].numpy().astype(np.uint8)
+                    object_mask = cv2.resize(
+                        object_mask, (frame_bgr.shape[1], frame_bgr.shape[0]), interpolation=cv2.INTER_NEAREST,
+                    ).astype(bool)
+                hand_boxes = {
+                    True: hand_box_from_body_kpts(keypoints, is_right=True),
+                    False: hand_box_from_body_kpts(keypoints, is_right=False),
+                }
+                wrists = {True: keypoints[COCO_R_WRIST], False: keypoints[COCO_L_WRIST]}
+                for is_right in (True, False):
+                    hand_box = hand_boxes[is_right]
+                    if hand_box is None:
+                        continue
+                    crops.append(crop_hand(frame_bgr, hand_box, is_right))
+                    crop_metadata.append((i, is_right, hand_boxes, wrists, object_mask))
 
-            object_mask = None
-            if object_packed is not None:
-                object_mask = unpack_masks(object_packed[i])[0].numpy().astype(np.uint8)
-                object_mask = cv2.resize(
-                    object_mask, (frame_bgr.shape[1], frame_bgr.shape[0]), interpolation=cv2.INTER_NEAREST,
-                ).astype(bool)
-
-            hand_boxes = {
-                True: hand_box_from_body_kpts(keypoints, is_right=True),
-                False: hand_box_from_body_kpts(keypoints, is_right=False),
-            }
-            wrists = {
-                True: keypoints[COCO_R_WRIST],
-                False: keypoints[COCO_L_WRIST],
-            }
-
-            for is_right, pose_key, go_key, valid_key in (
-                (True, KEY_RIGHT_HAND_POSE, KEY_RIGHT_GLOBAL_ORIENT, KEY_RIGHT_VALID),
-                (False, KEY_LEFT_HAND_POSE, KEY_LEFT_GLOBAL_ORIENT, KEY_LEFT_VALID),
+            global_orients, hand_poses = self._infer_hand_crops(crops)
+            for (i, is_right, hand_boxes, wrists, object_mask), global_orient, hand_pose in zip(
+                crop_metadata, global_orients, hand_poses,
             ):
-                result = self._infer_one_hand(frame_bgr, hand_boxes[is_right], is_right)
-                if result is None:
-                    continue
-                out[go_key][i], out[pose_key][i] = result
-                out[valid_key][i] = True
+                if not is_right:
+                    global_orient = _fliplr_axis_angle(global_orient)
+                    hand_pose = _fliplr_axis_angle(hand_pose)
+                pose_key = KEY_RIGHT_HAND_POSE if is_right else KEY_LEFT_HAND_POSE
+                go_key = KEY_RIGHT_GLOBAL_ORIENT if is_right else KEY_LEFT_GLOBAL_ORIENT
+                valid_key = KEY_RIGHT_VALID if is_right else KEY_LEFT_VALID
                 ambiguous_key = KEY_RIGHT_FINGER_AMBIGUOUS if is_right else KEY_LEFT_FINGER_AMBIGUOUS
                 object_contact_key = KEY_RIGHT_FINGER_OBJECT_CONTACT if is_right else KEY_LEFT_FINGER_OBJECT_CONTACT
+                out[go_key][i], out[pose_key][i], out[valid_key][i] = global_orient, hand_pose, True
                 out[ambiguous_key][i] = _hand_crop_is_ambiguous(
                     hand_boxes[is_right], hand_boxes[not is_right], wrists[is_right], wrists[not is_right],
                 )
                 out[object_contact_key][i] = _hand_crop_has_object_contact(hand_boxes[is_right], object_mask)
+
+        batch: list[tuple[int, np.ndarray, np.ndarray, tuple[int, int, int, int] | None]] = []
+        for i, frame_path in frame_progress(enumerate(frame_paths), total=n, label=StageName.STAGE_4_ESTIMATE_HANDS.label):
+            frame_bgr = cv2.imread(str(frame_path))
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            mask = unpack_masks(packed[i])[0].numpy()
+            bbox = extract_bbox_from_numpy_mask(mask)
+            if bbox is not None:
+                bbox = _rescale_bbox_xywh(bbox, from_hw=mask.shape, to_hw=frame_bgr.shape[:2])
+            batch.append((i, frame_bgr, frame_rgb, bbox))
+            if len(batch) == INFERENCE_FRAME_BATCH_SIZE or i == n - 1:
+                process_batch(batch)
+                batch.clear()
 
         for is_right, valid_key in ((True, KEY_RIGHT_VALID), (False, KEY_LEFT_VALID)):
             out[valid_key] = _reject_low_confidence_stretches(out[valid_key], wrist_conf[is_right])
