@@ -56,6 +56,8 @@ from .gvhmr_postprocess import (
     pp_static_joint_cam,
     pp_static_joint_incam,
     process_ik,
+    relock_stance_feet_with_ik,
+    stance_vertical_grounding_correction,
 )
 from .gvhmr_preprocess import bbox_xywh_to_xys, crop_and_normalize
 from .gvhmr_rotation_math import axis_angle_to_matrix, matrix_to_axis_angle
@@ -63,6 +65,7 @@ from .gvhmr_transformer import GVHMRTemporalTransformer
 from .gvhmr_translation_math import get_tgtcoord_rootparam, rollout_local_transl_vel
 from .gvhmr_vitpose import BODY_KEYPOINT_INDICES, GVHMRViTPoseModel, estimate_keypoints
 
+from ...algorithms.camera_gravity import LEVEL_CAMERA_UP
 from ...helpers.progress_reporter import frame_progress
 
 # Repo root is 3 levels up from this file (gvhmr/ -> adapters/ -> pipeline/ -> root).
@@ -229,6 +232,76 @@ class GVHMRAdapter:
         empty_cuda_cache(self.device)
         self._loaded = False
 
+    def relock_smoothed_incam_feet(
+        self, pred_smpl_params_incam: dict[str, torch.Tensor], static_conf_logits: torch.Tensor,
+    ) -> torch.Tensor:
+        """Restore the static-foot translation lock after stage 2 smooths pose.
+
+        The final stage-level filter intentionally smooths rotations and root
+        translation together. That is normally desirable, but it means a
+        filter can slightly move a foot which `pp_static_joint_incam` had
+        already locked. Re-running the same lock against the filtered FK
+        result makes the lock the last operation, including on camera-space Y
+        (the eventual Blender Z axis), while leaving frames without a confident
+        static foot free to retain genuine vertical motion.
+
+        ``infer`` returns unbatched tensors whereas the postprocessor operates
+        on the model's original batch dimension, so this small adapter keeps
+        that implementation detail out of the stage.
+        """
+        if not self._loaded:
+            raise RuntimeError("GVHMRAdapter must be loaded to re-lock smoothed feet")
+        outputs = {
+            KEY_PRED_SMPL_PARAMS_INCAM: {key: value.unsqueeze(0) for key, value in pred_smpl_params_incam.items()},
+            KEY_STATIC_CONF_LOGITS: static_conf_logits.unsqueeze(0),
+        }
+        return pp_static_joint_incam(outputs, self.endecoder)[0]
+
+    def ground_smoothed_incam_vertical(
+        self, pred_smpl_params_incam: dict[str, torch.Tensor], static_conf_logits: torch.Tensor, fps: float,
+        camera_up: list[float] | None = None,
+    ) -> torch.Tensor:
+        """Stabilize root height from per-foot stance evidence after smoothing.
+
+        This follows the final all-axis re-lock: the latter protects known
+        static joints; this pass also uses FK foot speed/height to suppress
+        slow vertical body wobble during a stance. It returns only translation
+        because the correction is intentionally height-only, along the clip's
+        own measured gravity direction (`camera_up`, defaulting to a level
+        camera) rather than along camera Y.
+        """
+        if not self._loaded:
+            raise RuntimeError("GVHMRAdapter must be loaded to ground smoothed motion")
+        batched_params = {key: value.unsqueeze(0) for key, value in pred_smpl_params_incam.items()}
+        post_c_j3d = self.endecoder.fk_v2(**batched_params)
+        correction = stance_vertical_grounding_correction(
+            post_c_j3d, static_conf_logits.unsqueeze(0), fps, camera_up,
+        )
+        up = torch.tensor(
+            LEVEL_CAMERA_UP if camera_up is None else camera_up,
+            device=correction.device, dtype=correction.dtype,
+        )
+        transl = pred_smpl_params_incam[KEY_TRANSL].clone()
+        transl += correction[0, :, None] * (up / torch.linalg.norm(up))
+        return transl
+
+    def relock_stance_feet(
+        self, pred_smpl_params_incam: dict[str, torch.Tensor], static_conf_logits: torch.Tensor, fps: float,
+        camera_up: list[float] | None = None,
+    ) -> torch.Tensor:
+        """Hold planted feet in all three axes by rotating the legs.
+
+        Runs after `ground_smoothed_incam_vertical`, which takes the part of
+        the drift a whole-body move can fix; this takes the per-foot remainder
+        and the horizontal component, and returns `body_pose` only, since it
+        deliberately leaves the root alone.
+        """
+        if not self._loaded:
+            raise RuntimeError("GVHMRAdapter must be loaded to relock stance feet")
+        return relock_stance_feet_with_ik(
+            pred_smpl_params_incam, static_conf_logits, self.endecoder, fps, camera_up,
+        )
+
     def infer(self, frame_paths: list[Path], masks: torch.Tensor, K_fullimg: torch.Tensor) -> dict:
         """
         Args:
@@ -241,8 +314,9 @@ class GVHMRAdapter:
         Returns {"pred_smpl_params_incam": {...}, "pred_smpl_params_global": {...}},
         each a dict of (N, ...) tensors: body_pose (63), betas (10),
         global_orient (3), transl (3), plus top-level KEY_TRANSL_INCAM_RAW
-        (N, 3) and KEY_ROOT_MOTION_UNRELIABLE (N,) bool, see their own
-        comments above.
+        (N, 3), KEY_ROOT_MOTION_UNRELIABLE (N,) bool, and the temporary
+        KEY_STATIC_CONF_LOGITS (N, 6) used by stage 2's final foot re-lock;
+        see their own comments above.
         """
         N = len(frame_paths)
         assert masks.shape[0] == N
@@ -368,4 +442,7 @@ class GVHMRAdapter:
             KEY_PRED_SMPL_PARAMS_GLOBAL: {k: v[0] for k, v in outputs[KEY_PRED_SMPL_PARAMS_GLOBAL].items()},
             KEY_TRANSL_INCAM_RAW: transl_incam_raw[0],
             KEY_ROOT_MOTION_UNRELIABLE: root_motion_unreliable[0],
+            # Not a persistent stage artifact: stage 2 consumes this after
+            # smoothing then removes it before serializing human_motion.pt.
+            KEY_STATIC_CONF_LOGITS: static_conf_logits[0],
         }

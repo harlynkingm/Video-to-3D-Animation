@@ -17,6 +17,7 @@ from scipy.spatial.transform import Rotation
 
 from pipeline.helpers.bvh_export import (
     CAMERA_TO_BVH_ROOT_ROTATION,
+    camera_to_upright_rotation,
     camera_to_upright_rotation_matrix,
     camera_to_upright_translation,
     root_camera_to_upright,
@@ -144,3 +145,43 @@ def test_root_camera_to_upright_is_built_from_the_shared_primitives():
     expected_orient = Rotation.from_matrix(expected_matrix).as_rotvec()
     assert np.allclose(orient, expected_orient, atol=1e-5)
     assert np.allclose(transl_out, camera_to_upright_translation(transl), atol=1e-5)
+
+
+def test_camera_to_upright_rotation_is_the_bare_constant_for_a_level_camera():
+    """Every pre-existing caller, and every run whose progress.json predates
+    the measurement, must keep behaving exactly as before."""
+    assert np.allclose(camera_to_upright_rotation(None), CAMERA_TO_BVH_ROOT_ROTATION)
+    assert np.allclose(camera_to_upright_rotation([0.0, -1.0, 0.0]), CAMERA_TO_BVH_ROOT_ROTATION)
+    # Magnitude carries no information; only the direction does.
+    assert np.allclose(camera_to_upright_rotation([0.0, -7.5, 0.0]), CAMERA_TO_BVH_ROOT_ROTATION)
+
+
+def test_camera_to_upright_rotation_stands_a_tilted_camera_upright():
+    """The whole point of the measurement: whichever way the camera was
+    actually tilted, the scene's own vertical must land on the target frame's
+    up axis, so the character stands on a level floor rather than a sloped
+    one."""
+    for pitch, roll in [(17.0, 0.0), (0.0, 11.0), (-9.0, 6.0)]:
+        tilt = Rotation.from_euler("xz", [pitch, roll], degrees=True).as_matrix()
+        camera_up = tilt @ np.array([0.0, -1.0, 0.0])
+
+        rotation = camera_to_upright_rotation(camera_up)
+
+        assert np.allclose(rotation @ camera_up, [0.0, 1.0, 0.0], atol=1e-9)
+        assert np.isclose(np.linalg.det(rotation), 1.0)
+        assert np.allclose(rotation @ rotation.T, np.eye(3), atol=1e-10)
+
+
+def test_root_camera_to_upright_applies_the_measured_tilt_to_both_outputs():
+    """Orientation and translation must go through the same correction, or
+    the body's pose and its position disagree about which way is up."""
+    camera_up = Rotation.from_euler("x", 17.0, degrees=True).as_matrix() @ np.array([0.0, -1.0, 0.0])
+    global_orient = np.zeros((1, 3), dtype=np.float32)
+    transl = np.asarray(camera_up, dtype=np.float32)[None]
+
+    corrected_orient, corrected_transl = root_camera_to_upright(global_orient, transl, camera_up)
+
+    # A one-metre step along the measured vertical is a one-metre step up.
+    assert np.allclose(corrected_transl, [[0.0, 1.0, 0.0]], atol=1e-6)
+    expected = Rotation.from_matrix(camera_to_upright_rotation(camera_up)).as_rotvec()
+    assert np.allclose(corrected_orient[0], expected, atol=1e-6)

@@ -31,6 +31,7 @@ from ..adapters.gvhmr.gvhmr_adapter import (
     KEY_GLOBAL_ORIENT,
     KEY_PRED_SMPL_PARAMS_GLOBAL,
     KEY_PRED_SMPL_PARAMS_INCAM,
+    KEY_STATIC_CONF_LOGITS,
     KEY_TRANSL,
     KEY_TRANSL_INCAM_RAW,
     GVHMRAdapter,
@@ -85,16 +86,36 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     adapter.load()
     try:
         result = adapter.infer(frame_paths, masks, K_fullimg)
+
+        # The generic final smoother runs after GVHMR's first static-foot
+        # correction. Re-lock against the filtered FK result so it cannot
+        # turn the vertical component of a planted foot back into float.
+        window = runRecord.fine_tuning.body_smoothing_window
+        cutoff = runRecord.fine_tuning.body_translation_cutoff
+        _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
+        _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_GLOBAL], window, cutoff)
+        result[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL] = adapter.relock_smoothed_incam_feet(
+            result[KEY_PRED_SMPL_PARAMS_INCAM], result[KEY_STATIC_CONF_LOGITS]
+        )
+        result[KEY_PRED_SMPL_PARAMS_INCAM][KEY_TRANSL] = adapter.ground_smoothed_incam_vertical(
+            result[KEY_PRED_SMPL_PARAMS_INCAM], result[KEY_STATIC_CONF_LOGITS], runRecord.scene.fps,
+            runRecord.scene.camera_up or None,
+        )
+        # Last, and after the root move above: a whole-body shift can only fix
+        # the drift both feet share, so this takes the per-foot remainder (and
+        # the horizontal component, which nothing else constrains) by rotating
+        # the legs instead of moving the root.
+        result[KEY_PRED_SMPL_PARAMS_INCAM][KEY_BODY_POSE] = adapter.relock_stance_feet(
+            result[KEY_PRED_SMPL_PARAMS_INCAM], result[KEY_STATIC_CONF_LOGITS], runRecord.scene.fps,
+            runRecord.scene.camera_up or None,
+        )
     finally:
         adapter.unload()
 
-    # Smooth both coordinate frames (incam feeds stage 5/6, the real export,
-    # and this stage's own Blender preview; global is otherwise vestigial but
-    # still smoothed the same way for consistency) before anything reads them.
-    window = runRecord.fine_tuning.body_smoothing_window
-    cutoff = runRecord.fine_tuning.body_translation_cutoff
-    _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_INCAM], window, cutoff)
-    _smooth_body_params(result[KEY_PRED_SMPL_PARAMS_GLOBAL], window, cutoff)
+    # Static confidences are working data for the final re-lock above, not a
+    # public motion artifact (and keeping them would unnecessarily bloat the
+    # serialized stage result).
+    del result[KEY_STATIC_CONF_LOGITS]
 
     # Same translation smoothing as the corrected incam transl above (just not
     # the foot-lock drift correction, which this value is deliberately kept
@@ -119,7 +140,8 @@ def run(runRecord: RunRecord) -> dict[str, str]:
         # in the pipeline (left/right default to flat/neutral).
         incam_params = result[KEY_PRED_SMPL_PARAMS_INCAM]
         preview_orient, preview_transl = root_camera_to_upright(
-            incam_params[KEY_GLOBAL_ORIENT].numpy(), incam_params[KEY_TRANSL].numpy()
+            incam_params[KEY_GLOBAL_ORIENT].numpy(), incam_params[KEY_TRANSL].numpy(),
+            runRecord.scene.camera_up or None,
         )
         write_amass_npz(
             global_orient=preview_orient,

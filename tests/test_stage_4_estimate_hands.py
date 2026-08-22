@@ -8,12 +8,17 @@ automatically otherwise (see conftest.py).
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
+import cv2
 import numpy as np
 import pytest
+import torch
 
+from pipeline.adapters.hamer import hamer_adapter
 from pipeline.adapters.hamer.hamer_adapter import (
+    HamerAdapter,
     KEY_LEFT_GLOBAL_ORIENT,
     KEY_LEFT_HAND_POSE,
     KEY_LEFT_VALID,
@@ -25,6 +30,8 @@ from pipeline.adapters.hamer.hamer_adapter import (
     _hand_crop_is_ambiguous,
     _reject_low_confidence_stretches,
 )
+from pipeline.adapters.hamer.hamer_preprocess import COCO_L_ELBOW, COCO_L_WRIST, COCO_R_ELBOW, COCO_R_WRIST
+from pipeline.adapters.sam31.sam31_tracker import KEY_PACKED_MASKS, pack_masks
 from pipeline.stages.stage_4_estimate_hands import (
     FINGER_AMBIGUITY_BETA_SCALE,
     FINGER_AMBIGUITY_RECOVERY_FRAMES,
@@ -293,6 +300,60 @@ def test_confidence_gate_passes_through_uniformly_confident_sequence():
     conf = np.full(n, MIN_ROLLING_WRIST_CONFIDENCE + 0.1)
     gated = _reject_low_confidence_stretches(valid, conf)
     assert gated.all()
+
+
+def test_adapter_batches_pose_and_hand_inference_without_reordering(tmp_path, monkeypatch):
+    """Stage 4 should run one ViTPose batch per source-frame batch and one
+    HaMeR batch across its left/right crops, while storing each output back at
+    the source frame and hand side that produced it."""
+    class FakeBackbone:
+        def __init__(self):
+            self.batch_sizes: list[int] = []
+
+        def __call__(self, crops):
+            self.batch_sizes.append(crops.shape[0])
+            return crops
+
+    class FakeHead:
+        def __call__(self, features):
+            batch_size = features.shape[0]
+            return {
+                "global_orient": torch.eye(3).repeat(batch_size, 1, 1),
+                "hand_pose": torch.eye(3).repeat(batch_size, 15, 1, 1),
+            }
+
+    pose_batch_sizes: list[int] = []
+
+    def fake_estimate_keypoints_batch(_model, frames_rgb, _bboxes, _device, _dtype):
+        pose_batch_sizes.append(len(frames_rgb))
+        keypoints = np.zeros((len(frames_rgb), 17, 3), np.float32)
+        keypoints[:, COCO_R_ELBOW] = [30.0, 30.0, 0.9]
+        keypoints[:, COCO_R_WRIST] = [50.0, 45.0, 0.9]
+        keypoints[:, COCO_L_ELBOW] = [90.0, 30.0, 0.9]
+        keypoints[:, COCO_L_WRIST] = [70.0, 45.0, 0.9]
+        return keypoints
+
+    monkeypatch.setattr(hamer_adapter, "INFERENCE_FRAME_BATCH_SIZE", 2)
+    monkeypatch.setattr(hamer_adapter, "estimate_keypoints_batch", fake_estimate_keypoints_batch)
+    frame_paths: list[Path] = []
+    for frame in range(3):
+        path = tmp_path / f"{frame:06d}.jpg"
+        assert cv2.imwrite(str(path), np.zeros((128, 128, 3), dtype=np.uint8))
+        frame_paths.append(path)
+    raw_masks = torch.ones((3, 1, 8, 16), dtype=torch.bool)
+
+    adapter = HamerAdapter(device=torch.device("cpu"), dtype=torch.float32)
+    adapter._vitpose = object()
+    adapter._backbone = FakeBackbone()
+    adapter._head = FakeHead()
+    result = adapter.infer(frame_paths, {KEY_PACKED_MASKS: pack_masks(raw_masks)})
+
+    assert pose_batch_sizes == [2, 1]
+    assert adapter._backbone.batch_sizes == [4, 2]
+    assert result[KEY_LEFT_VALID].all()
+    assert result[KEY_RIGHT_VALID].all()
+    assert np.allclose(result[KEY_LEFT_HAND_POSE], 0.0)
+    assert np.allclose(result[KEY_RIGHT_GLOBAL_ORIENT], 0.0)
 
 
 def test_hands_bvh_preview_is_structurally_valid(tmp_path):

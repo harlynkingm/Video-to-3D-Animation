@@ -286,19 +286,16 @@ def test_run_with_face_motion_keyframes_jaw_and_expression_but_never_eyes(tmp_pa
 
 
 @pytest.mark.skipif(not HAS_BPY, reason="needs the export pixi environment")
-def test_run_grounds_the_lowest_foot_position_near_zero(tmp_path):
+def test_run_grounds_the_first_motion_frame_foot_position_near_zero(tmp_path):
     """Regression test for a real bug: incam space has no
     floor reference, so without the offset the character sits wherever
     GVHMR's raw numbers happened to put it (~1.7m underground on a real
-    clip). After `run()`, the lowest point any foot/ankle bone reaches
-    across the whole clip should land at (approximately) Z=0.
+    clip). After `run()`, the lowest point of a foot/ankle on the first
+    real motion frame should land at (approximately) Z=0.
 
-    Uses 300 frames (not the usual N_FRAMES=5) deliberately, a real bug
-    was found and fixed at this exact frame count boundary: Blender's own
-    scene.frame_end defaults to 250 and the addon never extends it to match
-    a longer animation, so trusting it (instead of the armature's own
-    action.frame_range, what `_lowest_foot_z` actually uses) would silently
-    stop scanning partway through a clip like this one.
+    Uses 300 frames (not the usual N_FRAMES=5) so the opening reference is
+    verified independently of a long clip's later motion. Frame 1 is the
+    prepended rest pose; frame 2 is the first source frame.
     """
     import bpy
 
@@ -324,7 +321,9 @@ def test_run_grounds_the_lowest_foot_position_near_zero(tmp_path):
     # test below (`test_run_with_an_object_shape...`) covers a real
     # save->reopen round trip.
     armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
-    assert abs(_lowest_foot_z(armature)) < 0.01
+    assert abs(_lowest_foot_z(
+        armature, frame_start=_FIRST_MOTION_BLENDER_FRAME, frame_end=_FIRST_MOTION_BLENDER_FRAME,
+    )) < 0.01
 
 
 def _bone_keyframed_frames(action, bone_name: str) -> set[int]:
@@ -480,19 +479,18 @@ def test_run_with_an_object_shape_combines_body_and_object_into_one_blend_file(t
     wrist_bone = armature.pose.bones["right_wrist"]
     scene = bpy.context.scene
 
-    assert abs(_lowest_foot_z(armature)) < 0.01
+    assert abs(_lowest_foot_z(
+        armature, frame_start=_FIRST_MOTION_BLENDER_FRAME, frame_end=_FIRST_MOTION_BLENDER_FRAME,
+    )) < 0.01
     floor_offset = -_lowest_foot_z(armature)
 
     def blender_frame(raw_frame: int) -> int:
         return raw_frame + _FIRST_MOTION_BLENDER_FRAME
 
-    # `floor_offset` re-derived this way is near-zero (grounding is already
-    # correct post-reload), NOT the original, generally-nonzero value `run()`
-    # itself used internally when it keyframed the object, re-deriving the
-    # true value isn't possible from the saved file alone. floor_offset only
-    # ever shifts Blender's own Z (see `_object_pose_to_blender_world`), so
-    # the checks below only compare the two axes it never touches: X and Y
-    # (same reasoning this test used before the constraint-based redesign).
+    # This global-minimum-derived value need not be zero: grounding now uses
+    # the opening motion frame, not a later foot position. It still only
+    # shifts Blender's own Z (see `_object_pose_to_blender_world`), so the
+    # checks below compare the two axes it never touches: X and Y.
     expected_held, _ = _object_pose_to_blender_world(held_value, np.eye(3), pelvis_rest, floor_offset)
 
     # Held, before the event.

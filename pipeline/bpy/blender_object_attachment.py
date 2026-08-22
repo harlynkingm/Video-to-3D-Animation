@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from ..algorithms.object_extent_fit import KEY_KIND, KIND_BOX, KIND_CYLINDER, KIND_ELLIPSOID
-from ..helpers.bvh_export import CAMERA_TO_BVH_ROOT_ROTATION
+from ..helpers.bvh_export import camera_to_upright_rotation
 from .blender_constants import _FIRST_MOTION_BLENDER_FRAME
 from .blender_scene import _iter_action_fcurves
 
@@ -52,7 +52,8 @@ _AMASS_TO_BLENDER_WORLD_ROTATION = np.array([
 
 
 def _object_pose_to_blender_world(
-    center: np.ndarray, rotation: np.ndarray, pelvis_rest: np.ndarray, floor_offset: float
+    center: np.ndarray, rotation: np.ndarray, pelvis_rest: np.ndarray, floor_offset: float,
+    camera_up: list[float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Maps one frame of the object's pose (`center`/`rotation`, in stage
     6/8's shared incam body-space) into Blender's live-scene world space:
@@ -71,9 +72,10 @@ def _object_pose_to_blender_world(
     center = np.asarray(center, dtype=np.float64)
     rotation = np.asarray(rotation, dtype=np.float64)
 
-    upright_center = CAMERA_TO_BVH_ROOT_ROTATION @ (center - pelvis_rest) + pelvis_rest
+    camera_to_upright = camera_to_upright_rotation(camera_up)
+    upright_center = camera_to_upright @ (center - pelvis_rest) + pelvis_rest
     upright_center[1] += floor_offset  # AMASS's own up axis, same as the body's
-    upright_rotation = CAMERA_TO_BVH_ROOT_ROTATION @ rotation
+    upright_rotation = camera_to_upright @ rotation
 
     blender_location = _AMASS_TO_BLENDER_WORLD_ROTATION @ upright_center
     blender_rotation = _AMASS_TO_BLENDER_WORLD_ROTATION @ upright_rotation
@@ -129,7 +131,7 @@ def _held_frame_mask(n_frames: int, attachment_events: list[dict]) -> np.ndarray
 
 def _keyframe_held_object_pose(
     obj: bpy.types.Object, translations: np.ndarray, rotations: np.ndarray, held_mask: np.ndarray,
-    pelvis_rest: np.ndarray, floor_offset: float,
+    pelvis_rest: np.ndarray, floor_offset: float, camera_up: list[float] | None = None,
 ) -> None:
     """Keyframes `obj`'s own location/rotation for every *held* frame only
     (see `_held_frame_mask`); an attached frame must NOT also carry a baked
@@ -163,7 +165,7 @@ def _keyframe_held_object_pose(
             continue  # strictly redundant, both neighbors already pin this exact value
 
         blender_location, blender_rotation = _object_pose_to_blender_world(
-            translations[i], rotations[i], pelvis_rest, floor_offset,
+            translations[i], rotations[i], pelvis_rest, floor_offset, camera_up,
         )
         obj.location = tuple(blender_location)
         obj.rotation_quaternion = Matrix(blender_rotation.tolist()).to_quaternion()
@@ -213,7 +215,7 @@ def _reset_object_base_transform(obj: bpy.types.Object, frame: int) -> None:
 
 def _add_attachment_constraint(
     bpy: types.ModuleType, obj: bpy.types.Object, armature: bpy.types.Object, event: dict, n_frames: int,
-    pelvis_rest: np.ndarray, floor_offset: float,
+    pelvis_rest: np.ndarray, floor_offset: float, camera_up: list[float] | None = None,
 ) -> None:
     """Adds one Child Of constraint driving `obj` rigidly from the event's
     own attaching bone during `[start_frame, end_frame]`, instead of baking
@@ -245,7 +247,7 @@ def _add_attachment_constraint(
     bone_world = armature.matrix_world @ armature.pose.bones[bone_name].matrix
 
     blender_location, blender_rotation = _object_pose_to_blender_world(
-        np.array(event["ref_center"]), np.array(event["ref_rotation"]), pelvis_rest, floor_offset,
+        np.array(event["ref_center"]), np.array(event["ref_rotation"]), pelvis_rest, floor_offset, camera_up,
     )
     ref_transform = Matrix.Translation(blender_location) @ Matrix(blender_rotation.tolist()).to_4x4()
 

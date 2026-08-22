@@ -16,6 +16,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from ..algorithms.camera_gravity import LEVEL_CAMERA_UP
+
 _ROT_CHANNELS = "Zrotation Xrotation Yrotation"
 _EULER_ORDER = "ZXY"  # matches _ROT_CHANNELS; scipy intrinsic convention
 
@@ -51,24 +53,49 @@ _EULER_ORDER = "ZXY"  # matches _ROT_CHANNELS; scipy intrinsic convention
 CAMERA_TO_BVH_ROOT_ROTATION = np.array([[0, 0, -1], [0, -1, 0], [-1, 0, 0]], dtype=float)
 
 
-def camera_to_upright_rotation_matrix(root_matrix: np.ndarray) -> np.ndarray:
+def camera_to_upright_rotation(camera_up: np.ndarray | list[float] | None = None) -> np.ndarray:
+    """The full camera-space -> upright-space rotation for one clip.
+
+    `CAMERA_TO_BVH_ROOT_ROTATION` alone is only correct for a perfectly level
+    camera, since it maps camera -Y to world up unconditionally. `camera_up`
+    is the clip's measured camera-space up direction
+    (`camera_gravity.estimate_camera_up`, stored on `SceneInfo.camera_up`);
+    this first rotates that measured direction onto the level camera's own -Y
+    by the shortest arc, so a tilted camera's footage lands on a level floor
+    instead of a tilted one, and only then applies the fixed change of basis.
+
+    Passing `None` (or a direction already equal to the level one) reproduces
+    the bare constant exactly, which is what a clip with no measurable scene
+    vertical, or a run whose `progress.json` predates this measurement, gets.
+    """
+    if camera_up is None:
+        return CAMERA_TO_BVH_ROOT_ROTATION
+    camera_up = np.asarray(camera_up, dtype=float)
+    camera_up = camera_up / np.linalg.norm(camera_up)
+    level_up, _ = Rotation.align_vectors(LEVEL_CAMERA_UP[None], camera_up[None])
+    return CAMERA_TO_BVH_ROOT_ROTATION @ level_up.as_matrix()
+
+
+def camera_to_upright_rotation_matrix(root_matrix: np.ndarray, camera_up: np.ndarray | None = None) -> np.ndarray:
     """Left-multiplies a root joint's own (..., 3, 3) rotation matrix by
-    `CAMERA_TO_BVH_ROOT_ROTATION`, not the other joints, whose rotations
-    are relative to their parent already. The one actual reorientation step
-    every consumer below shares; `root_camera_to_upright` wraps it for a
-    caller working in axis-angle (SMPL-X's own convention) instead of
-    matrices directly."""
-    return CAMERA_TO_BVH_ROOT_ROTATION @ root_matrix
+    `camera_to_upright_rotation(camera_up)`, not the other joints, whose
+    rotations are relative to their parent already. The one actual
+    reorientation step every consumer below shares; `root_camera_to_upright`
+    wraps it for a caller working in axis-angle (SMPL-X's own convention)
+    instead of matrices directly."""
+    return camera_to_upright_rotation(camera_up) @ root_matrix
 
 
-def camera_to_upright_translation(transl: np.ndarray) -> np.ndarray:
+def camera_to_upright_translation(transl: np.ndarray, camera_up: np.ndarray | None = None) -> np.ndarray:
     """A position vector needs the same reorientation a direction does,
     applied as a per-frame matrix-vector product, not a left-multiply of a
     rotation, since translation isn't a rotation to compose."""
-    return transl @ CAMERA_TO_BVH_ROOT_ROTATION.T
+    return transl @ camera_to_upright_rotation(camera_up).T
 
 
-def root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def root_camera_to_upright(
+    global_orient: np.ndarray, transl: np.ndarray, camera_up: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Reorients a root joint from camera space into the upright frame above,
     given as axis-angle (SMPL-X's own convention) rather than a matrix,
     see `camera_to_upright_rotation_matrix`/`camera_to_upright_translation`
@@ -76,9 +103,9 @@ def root_camera_to_upright(global_orient: np.ndarray, transl: np.ndarray) -> tup
     consumer that has to hand GVHMR's own incam root to something expecting
     an upright/gravity-aligned one, stage 10's own export and stage 2's
     `--render-motion-preview` both need this exact correction."""
-    root_matrix = camera_to_upright_rotation_matrix(Rotation.from_rotvec(global_orient).as_matrix())
+    root_matrix = camera_to_upright_rotation_matrix(Rotation.from_rotvec(global_orient).as_matrix(), camera_up)
     corrected_orient = Rotation.from_matrix(root_matrix).as_rotvec()
-    corrected_transl = camera_to_upright_translation(transl)
+    corrected_transl = camera_to_upright_translation(transl, camera_up)
     return corrected_orient, corrected_transl
 
 

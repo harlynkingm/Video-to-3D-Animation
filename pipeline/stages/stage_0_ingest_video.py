@@ -1,5 +1,6 @@
 """ingest: reads the input video (or a pre-extracted image-sequence folder),
-extracts frames to disk, and computes camera intrinsics.
+extracts frames to disk, and computes camera intrinsics plus the camera's
+own gravity ("up") direction.
 
 The only stage with no dependencies, everything else in the pipeline builds
 on the frames and scene info this produces.
@@ -11,6 +12,7 @@ from pathlib import Path
 
 import cv2
 
+from ..algorithms.camera_gravity import estimate_camera_up
 from ..helpers.camera_info_helpers import compute_intrinsics_matrix
 from ..helpers.progress_reporter import frame_progress
 from ..pipeline_stage_base import cli_entrypoint
@@ -145,6 +147,13 @@ def run(runRecord: RunRecord) -> dict[str, str]:
             image_width_px=width,
             image_height_px=height,
         )
+
+    # Which way is up, measured from the scene rather than assumed. Needs the
+    # intrinsics, so it runs after both branches above. `None` (no measurable
+    # vertical structure) is stored as an empty list, which every consumer
+    # already reads as "assume a level camera".
+    camera_up = estimate_camera_up(sorted(frames_dir.glob("*.jpg")), runRecord.scene.intrinsics_K)
+    runRecord.scene.camera_up = camera_up or []
 
     return {"frames_dir": str(frames_dir)}
 

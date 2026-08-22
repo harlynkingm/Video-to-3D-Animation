@@ -248,3 +248,19 @@ def test_image_folder_intrinsics_use_output_width_as_the_sensor_width(tmp_path):
     assert K[0][0] == pytest.approx(expected_focal_px)
     assert K[0][2] == pytest.approx(16 / 2)
     assert K[1][2] == pytest.approx(12 / 2)
+
+
+def test_scene_info_records_a_camera_up_measurement_attempt(runRecord, stage_0_result):
+    """Stage 0 always leaves `camera_up` in one of its two valid states: a
+    measured unit direction, or empty for "nothing measurable, assume level".
+    The test clip is tiny and synthetic, so which one it lands on is not the
+    point; storing a well-formed answer either way is."""
+    camera_up = runRecord.scene.camera_up
+
+    assert isinstance(camera_up, list)
+    if camera_up:
+        assert len(camera_up) == 3
+        assert np.isclose(np.linalg.norm(camera_up), 1.0)
+        # Up is up: the measurement is sign-resolved toward camera -Y, so a
+        # result that points downward would be a convention bug.
+        assert camera_up[1] < 0.0

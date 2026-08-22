@@ -608,6 +608,11 @@ class SceneInfo:
     frame_count: int = 0
     intrinsics_K: list[list[float]] = field(default_factory=list)
     anchor_frame_index: int = 0
+    # Measured camera-space up direction (`camera_gravity.estimate_camera_up`),
+    # empty when the scene has no measurable vertical structure or
+    # for a run whose progress.json predates the measurement. Consumers treat
+    # empty as "assume a level camera"
+    camera_up: list[float] = field(default_factory=list)
 
 
 @dataclass

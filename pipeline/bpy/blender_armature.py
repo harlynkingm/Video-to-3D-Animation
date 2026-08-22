@@ -26,7 +26,9 @@ _PELVIS_BONE_NAME = "pelvis"
 _QUATERNION_COMPONENTS = 4  # w, x, y, z, one F-curve each
 
 
-def _lowest_foot_z(armature: bpy.types.Object) -> float:
+def _lowest_foot_z(
+    armature: bpy.types.Object, *, frame_start: int | None = None, frame_end: int | None = None,
+) -> float:
     """Scans every frame of the already-keyframed armature and returns the
     lowest world-space Z any foot/ankle bone reaches across the whole clip,
     Blender's own native internal convention is always Z-up regardless of
@@ -34,17 +36,18 @@ def _lowest_foot_z(armature: bpy.types.Object) -> float:
     applied only at export time), so this reads Z directly rather than
     guessing which axis is "up" at this point in the pipeline.
 
-    The frame range comes from the armature's own action
+    By default the frame range comes from the armature's own action
     (`animation_data.action.frame_range`), NOT `scene.frame_start`/
-    `frame_end`, confirmed on a real 676-frame clip that the addon never
-    updates the scene's own frame range when it builds a longer animation
-    (it stayed at Blender's stock default, 1-250), so trusting the scene
-    would silently scan only the first ~37% of a clip like that one.
+    `frame_end`
     """
     import bpy
 
     scene = bpy.context.scene
-    frame_start, frame_end = (int(v) for v in armature.animation_data.action.frame_range)
+    action_start, action_end = (int(v) for v in armature.animation_data.action.frame_range)
+    frame_start = action_start if frame_start is None else frame_start
+    frame_end = action_end if frame_end is None else frame_end
+    if frame_start > frame_end:
+        raise ValueError("frame_start must not be after frame_end")
     foot_bones = [b for b in armature.pose.bones if "foot" in b.name.lower() or "ankle" in b.name.lower()]
     lowest = float("inf")
     for frame in range(frame_start, frame_end + 1):

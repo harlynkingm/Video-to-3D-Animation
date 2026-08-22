@@ -208,11 +208,16 @@ def _prepend_rest_pose_frame(
 
 def _write_body_amass(
     motion: dict, fps: float, out_path: Path, *, floor_offset: float = 0.0, jaw_pose: np.ndarray | None = None,
+    camera_up: list[float] | None = None,
 ) -> None:
     """Maps retarget_hands' npz schema into the AMASS format the addon
     expects. Pure numpy (+ scipy for the root's rotation-matrix round trip),
     no bpy needed, kept separate from `run()` so it's testable under any
     environment, not just `export`.
+
+    `camera_up` is the clip's measured camera-space up direction
+    (`SceneInfo.camera_up`); omitting it assumes a level camera, see
+    `bvh_export.camera_to_upright_rotation`.
 
     `floor_offset` shifts the root's own up-axis translation by a constant
     (added post-rotation, in the same upright frame `root_camera_to_upright`
@@ -229,7 +234,7 @@ def _write_body_amass(
     consumed from `output_face.csv` downstream instead, not from
     `output.blend`'s own skeleton.
     """
-    global_orient, transl = root_camera_to_upright(motion[_KEY_GLOBAL_ORIENT], motion[_KEY_TRANSL])
+    global_orient, transl = root_camera_to_upright(motion[_KEY_GLOBAL_ORIENT], motion[_KEY_TRANSL], camera_up)
     transl = transl.copy()
     transl[:, 1] += floor_offset  # AMASS's own up axis
 
@@ -310,20 +315,28 @@ def run(runRecord: RunRecord) -> dict[str, str]:
     # First pass, floor_offset=0: incam space has no inherent floor
     # reference, so how far below (or above) Y=0 the character's own feet
     # land can only be measured empirically, not derived from the source
-    # data, build once to find out. Jaw/eye pose don't affect foot height,
-    # so they're omitted here and only passed on the real second pass below.
-    _write_body_amass(motion, runRecord.scene.fps, amass_path)
+    # data, build once to find out. The first *real* source frame is the
+    # grounding reference, rather than a later, lowest foot in the clip: the
+    # latter made otherwise stationary opening poses visibly float. Jaw/eye
+    # pose do not affect foot height, so they're omitted here and only passed
+    # on the real second pass below.
+    camera_up = runRecord.scene.camera_up or None
+    _write_body_amass(motion, runRecord.scene.fps, amass_path, camera_up=camera_up)
     _clear_scene(bpy)
     bpy.ops.object.smplx_add_animation(filepath=str(amass_path), anim_format=_ADDON_ANIM_FORMAT)
     armature = next(o for o in bpy.data.objects if o.type == "ARMATURE")
-    floor_offset = -_lowest_foot_z(armature)
+    floor_offset = -_lowest_foot_z(
+        armature, frame_start=_FIRST_MOTION_BLENDER_FRAME, frame_end=_FIRST_MOTION_BLENDER_FRAME,
+    )
 
     # Second pass: rebuild with that offset baked into the root's own
     # per-frame translation curve, keeps the addon's separate, always-
     # static "root" bone at true world origin, since only the *pelvis*'s
     # translation is shifted, not an object-level transform that would move
     # everything including "root".
-    _write_body_amass(motion, runRecord.scene.fps, amass_path, floor_offset=floor_offset, jaw_pose=jaw_pose)
+    _write_body_amass(
+        motion, runRecord.scene.fps, amass_path, floor_offset=floor_offset, jaw_pose=jaw_pose, camera_up=camera_up,
+    )
     _clear_scene(bpy)
     bpy.ops.object.smplx_add_animation(filepath=str(amass_path), anim_format=_ADDON_ANIM_FORMAT)
 
@@ -376,17 +389,17 @@ def run(runRecord: RunRecord) -> dict[str, str]:
 
         obj = _add_object_mesh(bpy, object_shape)
         held_mask = _held_frame_mask(n_frames, attachment_events)
-        _keyframe_held_object_pose(obj, translations, rotations, held_mask, pelvis_rest, floor_offset)
+        _keyframe_held_object_pose(obj, translations, rotations, held_mask, pelvis_rest, floor_offset, camera_up)
         for event in frame_progress(attachment_events, total=len(attachment_events),
                                      label=StageName.STAGE_10D_ATTACH_TRACKED_OBJECT.label, unit="event"):
             _reset_object_base_transform(obj, event["start_frame"] + _FIRST_MOTION_BLENDER_FRAME)
             _reset_object_base_transform(obj, event["end_frame"] + _FIRST_MOTION_BLENDER_FRAME)
-            _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset)
+            _add_attachment_constraint(bpy, obj, armature, event, n_frames, pelvis_rest, floor_offset, camera_up)
 
-    # Include the source footage in the final deliverable too.  This reuses
+    # Include the source footage in the final deliverable too. This reuses
     # the preview blends' own plane builder, including its fixed world-space
     # placement, image-sequence setup, and source-frame -> Blender-frame
-    # alignment.  Unlike the face preview data, retargeted motion is always
+    # alignment. Unlike the face preview data, retargeted motion is always
     # available, so this remains useful on --skip-face-capture runs.
     if frames_dir is not None:
         _add_video_reference_plane(bpy, frames_dir, len(motion[_KEY_GLOBAL_ORIENT]))
